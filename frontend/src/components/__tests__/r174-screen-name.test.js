@@ -32,7 +32,7 @@ const PAGE_TITLE_RE = /<header\b[^>]*class="[^"]*\bpanel-head\b[^"]*"[^>]*>[\s\S
 
 const BUSINESS_WORD = '报销'
 const OLD_TITLE = '报销自查'
-const TITLE = '审批与待办'
+const TITLE = '待办事项'
 
 describe('R174③ · 定名：审批与待办', () => {
   it('meta.title 就是定名，旧名一枚字都不许多留', () => {
@@ -65,7 +65,7 @@ describe('R174③ · 名实相符：这个名字撑得住屏上的内容', () =>
   it('「待办」那一块是真的：这一屏挂的是读服务端账本的组件', () => {
     const code = source('ApprovalPanel.vue')
     expect(code).toMatch(/import HitlPendingPanel from '\.\/hitl\/HitlPendingPanel\.vue'/)
-    expect(code).toMatch(/<HitlPendingPanel\s*\/>/)
+    expect(code).toMatch(/<HitlPendingPanel v-if="showPending"\s*\/>/)
   })
 
   it('「审批」那一半也是真的：行上确有批准与驳回两个动作', async () => {
@@ -82,7 +82,7 @@ describe('R174③ · 名实相符：这个名字撑得住屏上的内容', () =>
 
   it('改名没把自查那一格的诚实声明一起洗掉：它仍然自己说清不办理审批', () => {
     const code = source('ApprovalPanel.vue')
-    for (const phrase of ['自查工具，不是审批', '它不办理审批', '不会生成工单', '演示数据']) {
+    for (const phrase of ['自查工具，不是审批', '不办理正式业务审批', '不会生成工单', '演示数据']) {
       expect(code, `改名时把「${phrase}」弄丢了`).toContain(phrase)
     }
   })

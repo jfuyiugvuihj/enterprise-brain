@@ -435,7 +435,9 @@ def _authorized_dataset_files(
             )
             return [], f"暂无可访问的数据文件（error_code={decision.reason_code}）"
         task = conf.get("task_context") or conf.get('data_context') or {}
-        if task:
+        # A report-only context may carry just report_body. It is not a bound data task
+        # and must not be treated as one with a missing version.
+        if task and (task.get("version_id") or task.get("sha256")):
             bound_scope = (conf.get('data_context') or {}).get('scope')
             if bound_scope and (bound_scope.get('role') != principal.role
                     or bound_scope.get('department') != (principal.department or '')
@@ -505,6 +507,7 @@ class _CalculationPersistenceError(RuntimeError):
 def _start_calculation(config, filename: str, query: str, *, operation: str):
     from app.storage.datasets import dataset_registry
     from app.storage.calculations import calculation_storage
+    from app.storage.artifacts import owner_department_scope
 
     dataset = dataset_registry.get_active_by_filename(filename)
     principal = _tool_principal(config)
@@ -526,7 +529,7 @@ def _start_calculation(config, filename: str, query: str, *, operation: str):
                 "department": principal.department,
                 "clearance": principal.clearance,
                 "authorization_department_ids": sorted(principal.department_ids),
-                "scope": {"department_ids": list(principal.department_ids),
+                "scope": {"department_ids": owner_department_scope(principal),
                           "classification": dataset.classification, "visibility": "private"},
             },
         )["calculation_run_id"]
@@ -730,7 +733,7 @@ def _named_row_hits(df, query: str, txt_cols: list[str]) -> list[tuple[str, str,
 
     两条通路，先便宜后兜底：
       ① 拿候选名去和文本列的**整值**比（pandas 向量化，一个字符都不猜）；
-      ② ① 一枚都不中时，只在**引号里**找"这一列的某枚真值整段出现在引号中"——
+      ② ① 一枚都不中时，在引号里或明确的“这一行”前找列中完整真值——
         客户打的是「走查标记425273这一行」而表里存的是「走查标记425273」时走这里。
     只收"至少挑出一行、又没挑走整张表、且行数不超过 _MAX_NAMED_ROWS"的命中：
     整张表都姓「市场部」时那不是点名一行，一次挑出二十行也不是。
@@ -759,7 +762,7 @@ def _named_row_hits(df, query: str, txt_cols: list[str]) -> list[tuple[str, str,
                 text = str(value)
                 if len(text) < 2:
                     continue
-                if any(text in item for item in quoted):
+                if any(text in item for item in quoted) or text + "这一行" in query:
                     keep(column, text)
     hits.sort(key=lambda item: (item[0], -item[1]))
     return [(item[2], item[3], item[4]) for item in hits[:_MAX_NAMED_HITS]]
@@ -1520,7 +1523,11 @@ def preload_pipeline():
 def rebuild_bm25():
     """C1: 文档增删后重建 BM25 索引，新文档免重启即可被关键词检索"""
     if _search_pipeline is not None:
-        _search_pipeline.bm25.build_index()
+        try:
+            _search_pipeline.bm25.build_index()
+        except Exception:
+            _search_pipeline.bm25.invalidate()
+            raise
         logger.info("[BM25] 索引已重建")
 
 
@@ -1541,7 +1548,8 @@ def search_docs(query: str, config: RunnableConfig) -> str:
         return _authorization_error()
 
     with start_tool_call(config, tool_name="search_docs", arguments={"query": query}) as span:
-        task = ((config or {}).get('configurable') or {}).get('task_context') or {}
+        conf = ((config or {}).get('configurable') or {})
+        task = conf.get('task_context') or conf.get('document_selection') or {}
         from app.agents.task_review import requested_documents_valid
         if not requested_documents_valid(task, principal):
             record_tool_status(bag_from_config(config), tool='search_docs', status='rejected', error_code='validation_error')
@@ -2620,6 +2628,10 @@ def _report_data_facts(filename: str, df, question: str, *, version_id: str = ""
     named = [column for column in numeric if str(column) in question]
     chosen = named or numeric
     dimension = _named_dimension_column(question, [str(c) for c in df.columns])
+    if not dimension:
+        # A general report can use a real time column without asking the model
+        # to invent a grouping. Keep explicit dimensions from the question first.
+        dimension = next((str(c) for c in df.columns if "月份" in str(c) or "日期" in str(c)), None)
     facts = {"filename": filename, "version_id": version_id, "sha256": sha256,
         "rows": len(df), "sheet": df.attrs.get("sheet_name", ""),
         "filter": df.attrs.get("filter_note", ""), "period": "未提供日期字段", "observed_period": "未提供日期字段", "metrics": [],
@@ -2627,12 +2639,35 @@ def _report_data_facts(filename: str, df, question: str, *, version_id: str = ""
         "record_columns": [str(c) for c in df.columns[:8]],
         "records": [[str(value) if pd.notna(value) else "未标注" for value in row]
                     for row in df.iloc[:100, :8].itertuples(index=False, name=None)]}
-    dates = [c for c in df.columns if "日期" in str(c) or pd.api.types.is_datetime64_any_dtype(df[c])]
-    if dates and not df.empty:
-        parsed = pd.to_datetime(df[dates[0]], errors="coerce").dropna()
+    # A request for one named row is a lookup, not an instruction to sum the
+    # entire table. Resolve it from the same authorized frame used above.
+    if (re.search(r"(?:多少|是什么|等于多少|为多少)", question)
+            and not re.search(r"(?:合计|总计|汇总|统计|平均|均值|总数)", question)):
+        from app.tools.excel import select_text_columns
+        requested = [str(column) for column in df.select_dtypes(include=['number']).columns
+                     if str(column) in question]
+        numeric_columns = requested or [str(column) for column in df.select_dtypes(include=['number']).columns]
+        facts["named_rows"] = [
+            {"name_column": column, "name": value,
+             "values": [{metric: (row[metric].item() if hasattr(row[metric], "item") else row[metric])
+                         if pd.notna(row[metric]) else None
+                         for metric in numeric_columns}
+                        for _, row in frame.iterrows()]}
+            for column, value, frame in _named_row_hits(df, question, select_text_columns(df))
+        ]
+    dates = [c for c in df.columns if "日期" in str(c) or "月份" in str(c)
+             or pd.api.types.is_datetime64_any_dtype(df[c])]
+    named_dates = [column for column in dates if str(column) in question]
+    date_column = named_dates[0] if len(named_dates) == 1 else dates[0] if len(dates) == 1 else None
+    if date_column is not None and not df.empty:
+        parsed = pd.to_datetime(df[date_column], errors="coerce").dropna()
         if not parsed.empty:
-            facts["observed_period"] = f"{parsed.min():%Y-%m-%d} 至 {parsed.max():%Y-%m-%d}（{dates[0]}）"
+            date_format = "%Y-%m" if "月份" in str(date_column) else "%Y-%m-%d"
+            facts["observed_period"] = (f"{parsed.min().strftime(date_format)} 至 "
+                                        f"{parsed.max().strftime(date_format)}（{date_column}）")
             facts["period"] = facts["observed_period"]
+            facts["date_extremes"] = {"column": str(date_column),
+                "earliest": parsed.min().strftime(date_format), "latest": parsed.max().strftime(date_format)}
     if df.attrs.get("requested_period"):
         facts["period"] = df.attrs["requested_period"]
     for column in chosen:
@@ -2643,17 +2678,39 @@ def _report_data_facts(filename: str, df, question: str, *, version_id: str = ""
             "missing": int(df[column].isna().sum()), "negative": bool((values < 0).any()),
             "dimension": dimension, "groups": []}
         if dimension and dimension in df.columns:
-            grouped = df.groupby(dimension, dropna=False)[column].sum().sort_values(ascending=False)
+            grouped = df.groupby(dimension, dropna=False)[column].sum()
+            grouped = grouped.sort_index() if dimension in dates else grouped.sort_values(ascending=False)
             metric["groups"] = [(str(label) if pd.notna(label) else "未标注", float(value)) for label, value in grouped.items()]
+            metric["time_dimension"] = dimension in dates
         facts["metrics"].append(metric)
     return facts
 
 
-def _verified_data_answer(facts: list[dict]) -> str:
+def _verified_data_answer(facts: list[dict], *, question: str = "") -> str:
     """Present calculated table facts without model-written units or artifact claims."""
     parts = []
     for source in facts:
+        if source.get("named_rows"):
+            for hit in source["named_rows"]:
+                parts.append(f"按 {hit['name_column']}＝{hit['name']} 找到 {len(hit['values'])} 条授权记录。")
+                for row in hit["values"]:
+                    for column, value in row.items():
+                        unit = re.search(r"[（(]([^）)]+)[）)]", column)
+                        shown = f"{float(value):,.2f}" if value is not None else "未标注"
+                        parts.append(f"**{column}：{shown}（{unit.group(1) if unit else '单位未标注'}）**。")
+            parts.append(f"来源：{source['filename']}；工作表：{source['sheet'] or '单表'}；"
+                         f"版本：{source['version_id'] or '未登记'}。")
+            continue
         parts.append(f"当前授权范围内纳入 **{source['rows']} 条记录**。")
+        if re.search(r"最早|最晚", question):
+            extremes = source.get("date_extremes")
+            if extremes:
+                if "最早" in question:
+                    parts.append(f"最早{extremes['column']}：{extremes['earliest']}。")
+                if "最晚" in question:
+                    parts.append(f"最晚{extremes['column']}：{extremes['latest']}。")
+            else:
+                parts.append("日期字段或有效日期不足，无法确定最早或最晚日期。")
         if source.get('non_additive_columns'):
             parts.append('未直接求和的字段：' + '、'.join(source['non_additive_columns']) + '；编号、比例及单价等需要各自的计算口径。')
         for metric in source["metrics"]:
@@ -2728,6 +2785,40 @@ def _analysis_body_sections(body: str) -> list[dict]:
     return sections
 
 
+def _report_sections(facts: list[dict], analysis: str, original_body: str) -> list[dict]:
+    """The answer the user saw comes first; verified fact tables remain underneath."""
+    if original_body:
+        return _analysis_body_sections(original_body)
+    sections = _verified_report_sections(facts, analysis)
+    if facts:
+        return sections
+    narrative = _analysis_body_sections(analysis)
+    if narrative:
+        sections = [{"type": "heading", "content": "分析结论原文"}] + narrative + sections
+    return sections
+
+
+def _report_chart_from_facts(facts: list[dict]) -> str:
+    """Draw one useful chart from the same verified groups used by the report."""
+    from app.tools.chart import bar_chart, line_chart
+
+    for source in facts:
+        for metric in source.get("metrics", []):
+            groups = metric.get("groups") or []
+            if not 2 <= len(groups) <= 12:
+                continue
+            labels = [label for label, _ in groups]
+            values = [value for _, value in groups]
+            title = f"{metric['column']}（按{metric['dimension']}）"
+            ylabel = f"{metric['column']}（{metric['unit']}）"
+            if metric.get("time_dimension"):
+                return line_chart(labels, {metric["column"]: values}, title=title,
+                                  xlabel=metric["dimension"], ylabel=ylabel)
+            return bar_chart(labels, values, title=title,
+                             xlabel=metric["dimension"], ylabel=ylabel)
+    return ""
+
+
 def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
     """Business narrative whose numerical assertions share the actual calculation input."""
     sections = []
@@ -2753,7 +2844,8 @@ def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
                 text += f"有 {metric['missing']} 条记录缺失该数值，未作为零值填充。"
             groups = metric["groups"]
             if groups:
-                top, value = groups[0]
+                ranked = sorted(groups, key=lambda item: item[1], reverse=True)
+                top, value = ranked[0]
                 if len(groups) > 1 and metric["sum"] > 0 and not metric["negative"]:
                     text += f"\n{top}指标值最高，占当前筛选合计的 {value / metric['sum']:.2%}。"
                 elif metric["negative"]:
@@ -2761,7 +2853,7 @@ def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
                 if len(groups) == 1:
                     text += "\n只有一个可见分组，不能用于部门之间的比较。"
                 elif len(groups) >= 2 and metric["sum"] > 0 and not metric["negative"]:
-                    combined = sum(value for _, value in groups[:2])
+                    combined = sum(group_value for _, group_value in ranked[:2])
                     text += f"\n前两位合计 {combined:,.2f}，占比 {combined / metric['sum']:.2%}；可优先核对对应业务明细。"
             sections.append({"type": "callout", "content": text})
             if groups:
@@ -2871,7 +2963,7 @@ def _export_report(report_title: str, sections_json: str,
             return _denial_text(config, tool="export_report", code="validation_error", head=_EXPORT_BAD_SECTIONS_HEAD)
         conf = (config or {}).get("configurable", {}) or {}
         filename = str(conf.get("data_filename") or "").strip()
-        original_body = str((conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
+        original_body = str(conf.get('report_body') or (conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
         from app.agents.task_review import requested_documents_valid
         if not requested_documents_valid(conf.get('task_context') or {}, principal):
             return _denial_text(config, tool='export_report', code='validation_error',
@@ -2888,9 +2980,8 @@ def _export_report(report_title: str, sections_json: str,
                 return _denial_text(config, tool="export_report", code="validation_error",
                                     head="选中数据未能完成授权核验，未生成报告。")
             facts = verified_bag.get("report_facts") or []
-            original_body = str((conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
-            sections = (_analysis_body_sections(original_body) if original_body
-                        else _verified_report_sections(facts, analysis))
+            original_body = str(conf.get('report_body') or (conf.get('task_context') or conf.get('data_context') or {}).get('report_body') or '')
+            sections = _report_sections(facts, analysis, original_body)
             if conf.get("task_context"):
                 from app.agents.task_review import policy_review_text, policy_identity, _applicable_policy_documents
                 search_docs.invoke({"query": question}, config=verified_config)
@@ -2917,6 +3008,10 @@ def _export_report(report_title: str, sections_json: str,
         #: 装箱由产品自己做：模型交回的 sections 里那一格图永远填不出来（它只拿到 URL，
         #: 拿不到容器路径），所以这里按台账取本轮的图，连同 include_charts 里它点名的那几枚。
         charts = _round_chart_paths(config, principal)
+        if filename and facts and not charts and not original_body:
+            derived_chart = _report_chart_from_facts(facts)
+            if derived_chart:
+                charts = [derived_chart]
         referenced_charts = set(re.findall(r'!\[[^\]]*\]\(/api/v1/artifacts/([a-zA-Z0-9_-]+)/content\)', original_body))
         if referenced_charts and len(charts) != len(referenced_charts):
             return _denial_text(config, tool='export_report', code='validation_error',

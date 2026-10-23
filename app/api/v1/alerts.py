@@ -1125,11 +1125,12 @@ def evaluate_all(principal=None, scan_summary: dict | None = None, rule_ids: lis
                         system_department=system_department)
                     if effective_actor:
                         from app.storage.calculations import calculation_storage
+                        from app.storage.artifacts import owner_department_scope
                         run = calculation_storage.start_run(effective_actor.user_id, dataset.version_id, None,
                             {'filename': dataset_name, 'operation': 'alert_threshold', 'query': evidence['query'],
                              'rule_id': rule['id'], 'role': effective_actor.role, 'department': effective_actor.department,
                              'clearance': effective_actor.clearance, 'authorization_department_ids': sorted(effective_actor.department_ids),
-                             'scope': {'department_ids': list(effective_actor.department_ids), 'classification': dataset.classification}},
+                             'scope': {'department_ids': owner_department_scope(effective_actor), 'classification': dataset.classification}},
                             formula=f"SUM({rule['metric']}) {rule['op']} {rule['threshold']}")
                         calculation_storage.complete_run(run['calculation_run_id'], evidence)
                         evidence['calculation_run_id'] = run['calculation_run_id']
@@ -1354,7 +1355,7 @@ async def acknowledge_alert(alert_id: int, request: Request):
     principal = _require_alert_management(request, ALERT_DISPOSAL_RESOURCE)
     with _migrations_first_at_http_exit("acknowledge_alert"):
         alert = _dispose_alert(principal, alert_id, ALERT_ACTION_ACK)
-    return {"alert": alert}
+    return {"alert": _with_linked_artifacts([alert], principal)[0]}
 
 
 @router.post("/alerts/{alert_id}/close")
@@ -1367,7 +1368,7 @@ async def close_alert(alert_id: int, request: Request):
     principal = _require_alert_management(request, ALERT_DISPOSAL_RESOURCE)
     with _migrations_first_at_http_exit("close_alert"):
         alert = _dispose_alert(principal, alert_id, ALERT_ACTION_CLOSE)
-    return {"alert": alert}
+    return {"alert": _with_linked_artifacts([alert], principal)[0]}
 
 
 @router.post("/alerts/{alert_id}/assign")
@@ -1380,4 +1381,4 @@ async def assign_alert(alert_id: int, data: AlertAssignCreate, request: Request)
     principal = _require_alert_management(request, ALERT_DISPOSAL_RESOURCE)
     with _migrations_first_at_http_exit("assign_alert"):
         alert = _dispose_alert(principal, alert_id, ALERT_ACTION_ASSIGN, data.assignee)
-    return {"alert": alert}
+    return {"alert": _with_linked_artifacts([alert], principal)[0]}

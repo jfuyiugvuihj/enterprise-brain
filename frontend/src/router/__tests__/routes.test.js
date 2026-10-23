@@ -58,6 +58,7 @@ import { FEED_SCREEN, FEED_TABS, LEGACY_FEED_NAMES } from '../feed-tabs.js'
 
 const read = rel => readFileSync(new URL(rel, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const app = read('../../App.vue')
+const workspaceNav = read('../../components/WorkspaceNavigation.vue')
 const main = read('../../main.js')
 
 /** 一屏一条：深链地址、路由名、期望挂载的面板组件。 */
@@ -65,9 +66,9 @@ const SCREENS = [
   ['/overview', 'overview', DashboardPanel],
   // R136：文档与数据并成一屏两标签，挂的是 FeedPanel（两块面板由 feed-tabs.js 那张表带来）
   ['/feed', 'feed', FeedPanel],
+  ['/chat', 'chat', ChatPanel],
   ['/insights', 'insights', InsightPanel],
   ['/approval', 'approval', ApprovalPanel],
-  ['/chat', 'chat', ChatPanel],
   // R315 判据①⑥ 追加一枚屏：/artifacts 深链直达要真渲染出那枚壳，同时它也是一级入口。
   // 下面两条定长名单（screenIds 与面板名）各多一项，写法仍是逐字 toEqual，多一枚少一枚都红。
   ['/artifacts', 'artifacts', ArtifactsPanel],
@@ -137,7 +138,7 @@ describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视�
     // R136 判据② · 一级屏五枚：文档 + 数据 合成「喂料」，侧栏于是少一项，不是多一项。
     // R315 判据④ 换号理由：「交成果」进一级入口，名单加一项就是六枚；断言强度未降——
     // 仍然逐字相等，多一枚、少一枚、换顺序三种走法都当场红，没有改成 toContain / >=。
-    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
+    expect(screenIds).toEqual(['overview', 'feed', 'chat', 'insights', 'approval', 'artifacts'])
     // 屏的全集比一级多图谱、「账号与角色」、「运行留痕」与 R505 那三枚管理屏（R316 / R399 / R505：
     // 管理员屏都不派生一级入口）；屏之外的入口（老屏名）不许被当成屏。原断言 = ['graph', ...LEGACY]，
     // 新断言只是往同一枚定长名单里加项，toEqual 的逐字相等与「不许多一枚」都还在。
@@ -163,7 +164,7 @@ describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视�
   it('R316 的「账号与角色」仍不派生一级入口；第六枚是 R315 的「交成果」', () => {
     // 这条原钉「screenIds 一枚未增」（五枚）。R315 补进第六枚是判据④ 要求的加，不是放宽：
     // 名单换成六枚后仍逐字相等，admin 那四条断言一字未动 —— 它依旧 primary:false、依旧不在导航里。
-    expect(screenIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
+    expect(screenIds).toEqual(['overview', 'feed', 'chat', 'insights', 'approval', 'artifacts'])
     expect(navigation.map(item => item.id)).not.toContain('admin')
     expect(screenRouteIds).toContain('admin')
     const admin = screenRoutes.find(route => route.name === 'admin')
@@ -239,8 +240,9 @@ describe('R104 判据 3 · 深链直达解析并渲染同一屏', () => {
     const router = await routerAt('/graph')
     expect(router.currentRoute.value.name).toBe('graph')
     expect(navigation.map(item => item.id)).not.toContain('graph')
-    const listed = app.match(/nav-\$\{item\.id\}/g) || []
-    expect(listed.length, '侧栏还是按自己的清单渲染，没用派生出来的导航').toBe(1)
+    const listed = workspaceNav.match(/nav-\$\{item\.id\}/g) || []
+    // 业务模块与管理员系统模块各一枚派生循环，两处都从 props.items 来。
+    expect(listed.length, '侧栏还是按自己的清单渲染，没用派生出来的导航').toBe(2)
   })
 })
 
@@ -319,7 +321,7 @@ describe('R104 判据 3 · 切屏不丢会话，也不改别人家的重挂载�
     // R315 加 ArtifactsPanel、R399 加 TracePanel —— 同样只往同一枚定长名单里加一项，没换成包含式：
     // 壳改名、多一枚、少一枚，这条都会红（顺序 = 路由表顺序）。
     // R505 再往这枚定长名单里加三项（顺序 = 路由表顺序），仍然逐字相等，没降成包含式。
-    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'InsightPanel', 'ApprovalPanel', 'ChatPanel', 'ArtifactsPanel', 'ProfilePanel', 'GraphPanel', 'AdminPanel', 'TracePanel', 'SloPanel', 'EvaluationsPanel', 'AuditEventsPanel'])
+    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'ChatPanel', 'InsightPanel', 'ApprovalPanel', 'ArtifactsPanel', 'ProfilePanel', 'GraphPanel', 'AdminPanel', 'TracePanel', 'SloPanel', 'EvaluationsPanel', 'AuditEventsPanel'])
     expect(names.filter(name => cachedScreens.includes(name))).toEqual(['ChatPanel'])
   })
 })

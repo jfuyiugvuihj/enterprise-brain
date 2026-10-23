@@ -332,18 +332,20 @@ export function sourcesFromEnvelope(data) {
  */
 function sourceRowFromWire(row) {
   const raw = row && typeof row === 'object' ? row : {}
-  const score = Number(raw.score)
-  const chunk = Number(raw.chunk_index)
-  const version = Number(raw.document_version_id)
-  const level = Number(raw.classification)
+  const numberOrNull = value => value === null || value === undefined || value === ''
+    ? null : (Number.isFinite(Number(value)) ? Number(value) : null)
+  const score = numberOrNull(raw.score)
+  const chunk = numberOrNull(raw.chunk_index)
+  const version = numberOrNull(raw.document_version_id)
+  const level = numberOrNull(raw.classification)
   return {
     filename: textOf(raw.source),
     sourceId: textOf(raw.source_id),
-    chunkIndex: Number.isFinite(chunk) ? Math.trunc(chunk) : null,
-    score: Number.isFinite(score) ? score : null,
+    chunkIndex: chunk === null ? null : Math.trunc(chunk),
+    score,
     scoreType: textOf(raw.score_type),
-    versionId: Number.isFinite(version) ? String(version) : textOf(raw.document_version_id),
-    classification: Number.isFinite(level) ? String(level) : textOf(raw.classification),
+    versionId: version === null ? textOf(raw.document_version_id) : String(version),
+    classification: level === null ? textOf(raw.classification) : String(level),
     department: textOf(raw.department),
     excerpt: textOf(raw.excerpt) || textOf(raw.content),
     // 生效日期：chat.py::_document_source_row 今天没抄这一格，但真值在库里就有 ——
@@ -1086,14 +1088,17 @@ export async function reconcileAuthoritativeBody(turn = null) {
   }
   const rows = (read.messages || []).filter(item => item && item.role === "assistant")
   if (!rows.length) return false
-  const body = String(rows[rows.length - 1].content || "")
+  const settled = rows[rows.length - 1]
+  const body = String(settled.content || "")
   if (!body) return false
+  const settledSteps = Array.isArray(settled.steps) ? settled.steps : []
   const list = messages.value
   for (let index = list.length - 1; index >= 0; index -= 1) {
     const row = list[index]
     if (!row || row.role !== "assistant") continue
-    if (String(row.content || "") === body) return false
-    list[index] = { ...row, content: body }
+    const stepsChanged = settledSteps.length && JSON.stringify(row.steps || []) !== JSON.stringify(settledSteps)
+    if (String(row.content || "") === body && !stepsChanged) return false
+    list[index] = { ...row, content: body, ...(settledSteps.length ? { steps: settledSteps } : {}) }
     messages.value = [...list]
     persist()
     console.info("[AuthoritativeBody] 屏上正文换成服务端落库那一份 chars=", body.length)

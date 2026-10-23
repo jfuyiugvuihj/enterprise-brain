@@ -21,7 +21,7 @@
  *  ① 数只从服务端来：三枚计数与那枚 truncation 布尔全是回包读数，本层不数行、不长度、不比大小。
  *     行模型的每一格都按 app/common/audit.py:537-562 那一串键名取，取不到就是「未记录」。
  *  ② 三张失败脸分开留名（判据 D）：403 / 503 / 500 各一张，另加 401 与「回包读不出形状」。
- *  ③ 词表封闭：outcome 那一格对照后端字面量（"allowed" / "denied" / "success" / "failure"），
+ *  ③ 词表封闭：outcome 那一格对照后端已知字面量，
  *     表外只说「未登记的处置结果」并把原名留在诊断那一行 —— 审计屏把猜出来的中文当处置结果，
  *     比不翻译更坏。action 与 resource 是自由文本，原样端出来，不翻译也不截断。
  */
@@ -91,6 +91,13 @@ export const AUDIT_OUTCOME_LABELS = {
   denied: '被拒了',
   success: '做成了',
   failure: '没做成',
+  confirmed: '已确认操作（尚未代表执行成功）',
+  rejected: '已拒绝操作',
+  awaiting: '等待操作确认',
+  completed: '执行完成',
+  failed: '执行失败',
+  cancelled: '已取消',
+  answered: '已回答',
 }
 export const AUDIT_OUTCOME_UNKNOWN = '未登记的处置结果'
 

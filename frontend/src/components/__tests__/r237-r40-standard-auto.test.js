@@ -284,7 +284,7 @@ describe('甲 · 硬编不许回来（探测器先自证会咬）', () => {
     const panel = panelSource()
     expect(panel).not.toMatch(/标准\s*500/)
     expect(panel).not.toMatch(/金额 680 \/ 标准/)
-    expect(panel).toContain('由服务端从知识库检索')
+    expect(panel).toContain('报销标准与依据由系统从知识库查询')
   })
 })
 
@@ -346,7 +346,7 @@ describe('丙 · 屏上那个标准只可能来自响应', () => {
     const line = byTestId(html, 'approval-standard-source')
     expect(line).toHaveLength(1)
     expect(line[0].attr('data-standard-source')).toBe(AUTO)
-    expect(line[0].text).toContain('服务端从知识库检索')
+    expect(line[0].text).toContain('标准来自知识库')
     const chips = byTestId(html, 'approval-standard-evidence')
     expect(chips).toHaveLength(1)
     expect(chips[0].text).toContain('差旅费报销制度.pdf chunk=3')
@@ -371,7 +371,7 @@ describe('丙 · 屏上那个标准只可能来自响应', () => {
     await mountPanel(precheckReply({ standard_source: 'explicit', standard_evidence: [] }))
     const html = await screenHtml()
     const line = byTestId(html, 'approval-standard-source')
-    expect(line[0].text).toContain('不替它编出处')
+    expect(line[0].text).toContain('未从知识库取得可用标准')
     expect(line[0].attr('data-standard-source')).toBe('explicit')
     // 口径没回就不冒充知识库结论：那一格的标准也一并说「没回口径」。
     expect(byTestId(html, 'approval-standard')[0].text).toBe('标准：服务端没回取用口径')
@@ -419,7 +419,7 @@ describe('丁 · 边界不许越：口径拼写对表后端，鉴权调用未动
     }
     const code = stripComments(panelSource())
     expect(code).toContain('isPermissionDenied(err)')
-    expect(code).toContain('onMounted(submitCheck)')
+    expect(code).toContain('if (showSelfcheck.value) submitCheck()')
   })
 
   it('丁3 演示这块仍挂牌：徽标与 data-demo 一处不少', async () => {
@@ -427,7 +427,7 @@ describe('丁 · 边界不许越：口径拼写对表后端，鉴权调用未动
     const html = await screenHtml()
     expect(html).toContain('data-demo="fixtures"')
     expect(html).toContain('演示数据')
-    expect(html).toContain('上方那一屏挂起待办读的是服务端真账本')
+    expect(html).toContain('待确认操作请到“待办事项”查看')
   })
 
   it('丁4 自查那一格仍然不办理审批：整屏一个按钮', async () => {

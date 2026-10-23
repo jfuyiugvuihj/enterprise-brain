@@ -86,7 +86,7 @@ export function versionMoment(row) {
  * rows 与 hit_count 是同一条 len() 的两侧（chat.py:1557），一旦不相等说明线上出了我们没见过的
  * 形状：这里以能画出来的行为准，并把差值如实写进 diagnostics，不静默取其一。
  */
-export function sourcesFace(sources) {
+export function sourcesFace(sources, { answerFailed = false } = {}) {
   if (!sources || typeof sources !== 'object') return null
   const rows = Array.isArray(sources.rows) ? sources.rows : []
   const visible = rows.length
@@ -135,9 +135,10 @@ export function sourcesFace(sources) {
   return {
     ...base,
     kind: 'visible',
-    tone: 'ok',
-    headline: `本轮回答引用了 ${visible} 处资料`,
-    reason: visible === 1 ? '只有这一处命中，点开可回原文核对。' : '按命中名次排列，点开任意一条回原文核对。',
+    tone: answerFailed ? 'warn' : 'ok',
+    headline: answerFailed ? `本轮检索命中 ${visible} 处资料` : `本轮回答引用了 ${visible} 处资料`,
+    reason: answerFailed ? '本轮处理失败，检索命中不能当作已完成回答的引用；可打开原文核对。'
+      : visible === 1 ? '只有这一处命中，点开可回原文核对。' : '按命中名次排列，点开任意一条回原文核对。',
     hiddenLine: hidden > 0 ? `另有 ${hidden} 处命中未展示` : '',
     searchable: true,
   }

@@ -311,7 +311,7 @@ LINEAGE_TEMPLATES: tuple = (
         "note": (
             "密级没有被服务端覆盖（与 department 不同命）：R313 起前端真的把它发出去"
             "（frontend/src/components/DocPanel.vue:{hop5v}）。但现库 1008 枚全 = 1，说明这 1008 枚"
-            "早于 R313，或出自不带这一格的通路（upload_all.py、scripts/seed_workspace.py）。"
+            "早于 R313，或出自不带这一格的通路（scripts/legacy/upload_all.py、scripts/seed_workspace.py）。"
             "**通路是通的，只是从没被真值喂过。**"
         ),
     },

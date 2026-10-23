@@ -186,13 +186,23 @@ def test_the_reason_code_distinguishes_the_two_grants():
 # ---------------------------- 要求 5：非管理员行为一字不变（含改动前的形状）
 
 
-def test_a_staff_filter_is_the_pre_e2_shape_byte_for_byte():
+def test_a_staff_filter_keeps_department_and_adds_level1_enterprise_scope():
     staff = _principal(department="finance", department_ids=["shared-services"], clearance=2)
 
     assert build_document_retrieval_filter(staff) == {
         "$and": [
             {"classification": {"$in": [1, 2]}},
-            {"department": {"$in": ["finance", "shared-services"]}},
+            {
+                "$or": [
+                    {"department": {"$in": ["finance", "shared-services"]}},
+                    {
+                        "$and": [
+                            {"classification": {"$in": [1]}},
+                            {"visibility": {"$in": ["enterprise_shared"]}},
+                        ]
+                    },
+                ]
+            },
         ]
     }
 

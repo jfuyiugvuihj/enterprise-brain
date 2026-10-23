@@ -292,7 +292,7 @@ describe('R277④ · 屏面上再无源码路径、路由名、英文装饰字�
     const html = await screenHtml()
     expect(html, '屏头那格若还挂着纯拉丁字母，就是员工读到半中半英（G18）').not.toMatch(/class="eyebrow"[^>]*>[A-Za-z .-]+<\//)
     expect(html).not.toMatch(/class="eyebrow"[^>]*>\s*Approval\s*</)
-    expect(html).toContain('审批与待办')
+    expect(html).toContain('待办事项')
   })
 
   it('④-3 🔴 反证钉：披露句里那两枚数是表单真值，不是写死的常量', async () => {

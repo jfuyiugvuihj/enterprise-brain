@@ -286,7 +286,7 @@ def test_the_filter_is_bound_as_a_parameter_not_pasted_into_the_sql(retriever_on
 
 @pytest.mark.parametrize("where", [
     {"filename": {"$in": ["a.txt"]}},
-    {"$or": [WHERE_ADMIN]},
+    {"$or": [{"classification": {"$eq": 1}}]},
     {"classification": {"$eq": 1}},
     {"classification": {"$in": ["1"]}},
     {"classification": {"$in": [1]}, "department": {"$in": ["研发中心"]}},

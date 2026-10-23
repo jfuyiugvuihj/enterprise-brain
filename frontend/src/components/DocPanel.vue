@@ -344,7 +344,7 @@ import { advanceDelete, deleteButtonLabel, isPendingDelete } from './ArtifactLis
 // 密级这一格不自造措辞：整数级怎么说成人话，全站只有 lib/provenance.js 那一份口径
 // （classificationLabel：整数级就说「密级 N 级」，不替客户发明档位名字）。
 import { classificationLabel } from '../lib/provenance'
-import { fileAccessLabel, filterFileClassification } from '../lib/file-access'
+import { fileAccessLabel, fileClassificationLevel, filterFileClassification } from '../lib/file-access'
 
 // 列表存的是【行】而不是裸文件名：GET /documents/catalog 每一行都带着
 // index_status / index_reason（app/documents/catalog.py 的 public_document_row），
@@ -377,6 +377,7 @@ function dismissNotice() {
 }
 const uploads = ref([])
 const dragOver = ref(false)
+const visibilityBusy = ref('')
 const props = defineProps({
   userRole: {
     type: String,
@@ -384,6 +385,16 @@ const props = defineProps({
   }
 })
 const isAdmin = computed(() => props.userRole === 'admin')
+// 上传档位跟着角色走：员工只能 1 级，负责人 1—2 级，管理员 1—3 级，审计员不投料。
+// 服务端仍会在 app/api/v1/chat.py::upload_document 再判一次，这里只是不展示做不到的选项。
+const UPLOAD_LEVELS_BY_ROLE = Object.freeze({
+  staff: Object.freeze([1]),
+  manager: Object.freeze([1, 2]),
+  admin: Object.freeze([1, 2, 3]),
+  auditor: Object.freeze([])
+})
+const allowedUploadLevels = computed(() => UPLOAD_LEVELS_BY_ROLE[props.userRole] || UPLOAD_LEVELS_BY_ROLE.staff)
+const canUpload = computed(() => allowedUploadLevels.value.length > 0)
 const searchQuery = ref('')
 // R313 格一 · 这一发上传按几级走。默认值与后端 chat.py 的 Form(1) 同值：不碰选择框 ⇒ 发出去的
 // 仍是 1 级，与今天（压根不发这一枚字段）等价。改它只影响改后拼出去的那几份表单：
@@ -400,15 +411,24 @@ function classificationWords(level) {
 }
 
 /** 下拉里的每一档：文案走上面那一枚出口，本屏只负责把档位排出来。 */
-const classificationChoices = computed(() => UPLOAD_CLASSIFICATION_LEVELS.map(level => ({
+const classificationChoices = computed(() => allowedUploadLevels.value.map(level => ({
   value: level,
   label: classificationWords(level),
   isDefault: level === DEFAULT_UPLOAD_CLASSIFICATION,
 })))
 
-/** 密级与部门权限各自生效，默认密级不能承诺跨部门公开。 */
-const classificationNote = computed(() =>
-  `仅设置下一次上传的密级，不修改已有文件或列表数量。这一发按 ${classificationWords(uploadClassification.value)} 上传，不选就是默认档 ${classificationWords(DEFAULT_UPLOAD_CLASSIFICATION)}；仍受部门和账号权限限制，部门由服务端按你的账号判定。`)
+watch(allowedUploadLevels, levels => {
+  if (!levels.includes(uploadClassification.value)) {
+    uploadClassification.value = levels[0] ?? DEFAULT_UPLOAD_CLASSIFICATION
+  }
+})
+
+/** 密级与共享范围分开说：默认密级不能承诺跨部门公开。 */
+const classificationNote = computed(() => {
+  if (!canUpload.value) return '当前角色不能上传资料。'
+  const levels = allowedUploadLevels.value.map(level => classificationWords(level)).join('、')
+  return `本次上传按 ${classificationWords(uploadClassification.value)} 上传，不选就是默认档 ${classificationWords(DEFAULT_UPLOAD_CLASSIFICATION)}：本部门成员可读，其他部门不可读，部门由服务端按你的账号判定。可选 ${levels}；2 级仅本部门负责人可读，3 级仅管理员与授权审计员可读；企业内共享需管理员对 1 级资料单独发布。`
+})
 
 /**
  * 后端在成功体里说「有 N 份文档存在，但不在当前账号的可见范围内」，界面此前一个字都不提。
@@ -571,7 +591,7 @@ async function loadDocs() {
     restricted.value = null
     console.error('文档列表加载失败', err)
     const detail = err?.response?.status === 503
-      ? '知识库服务暂时不可用，请稍后点击重新加载。'
+      ? '资料服务暂时不可用，请稍后点击重新加载。'
       : errorDetail(err, '文档列表加载失败')
     raiseNotice('文档列表没加载出来', detail, true)
     return false
@@ -635,6 +655,34 @@ async function downloadDocument(filename) {
     setTimeout(() => URL.revokeObjectURL(url), 60000)
   } catch (err) {
     raiseNotice('文件没能下载', errorDetail(err, '文件下载失败'), false)
+  }
+}
+
+function isEnterpriseShared(row) {
+  return typeof row?.visibility === 'string' && row.visibility.trim() === 'enterprise_shared'
+}
+
+function canEnterpriseShare(row) {
+  return isAdmin.value && fileClassificationLevel(row) === 1 && indexStatus(row) === 'indexed'
+}
+
+async function setDocumentVisibility(filename, visibility) {
+  if (!isAdmin.value) return
+  visibilityBusy.value = filename
+  dismissNotice()
+  try {
+    await http.put(`/documents/${encodeURIComponent(filename)}/visibility`, { visibility })
+    await loadDocs()
+  } catch (err) {
+    const code = err?.response?.data?.detail
+    const detail = code === 'enterprise_shared_requires_level_1'
+      ? '只有 1 级资料可以发布到企业内共享。'
+      : code === 'document_not_indexed'
+        ? '这份文件还没有可检索的索引，暂时不能发布。'
+        : errorDetail(err, '共享范围没有更新')
+    raiseNotice('共享范围没有更新', detail, false)
+  } finally {
+    visibilityBusy.value = ''
   }
 }
 
@@ -711,7 +759,10 @@ function onFileInput(e) {
  * 中间不存在第二条路 —— 也就不会出现界面写着 3 级、请求里其实另有一枚值。
  */
 function chooseClassification(value) {
-  uploadClassification.value = normalizeClassification(value)
+  const normalized = normalizeClassification(value)
+  uploadClassification.value = allowedUploadLevels.value.includes(normalized)
+    ? normalized
+    : allowedUploadLevels.value[0] ?? DEFAULT_UPLOAD_CLASSIFICATION
 }
 
 /** 同一枚判据的 data-* 通道：没有读数就留空串，不写 0、也不写 "null" 这种看着像值的字符串。 */
@@ -971,7 +1022,7 @@ onDeactivated(stopUploadPoll)
     <div class="panel-hd">
       <div class="panel-hd-left">
         <span>📁</span>
-        <strong>知识库</strong>
+        <strong>资料中心</strong>
         <span class="badge" data-testid="document-list-count">{{ listState === 'ready' ? filteredDocs.length : '—' }}</span>
       </div>
 
@@ -1013,7 +1064,7 @@ onDeactivated(stopUploadPoll)
     </div>
 
     <!-- 上传区（紧凑） -->
-    <div class="drop-zone" data-testid="document-drop-zone" :class="{ drag: dragOver }"
+    <div v-if="canUpload" class="drop-zone" data-testid="document-drop-zone" :class="{ drag: dragOver }"
          @dragover.prevent="dragOver = true"
          @dragleave.prevent="dragOver = false"
          @drop.prevent="onDrop">
@@ -1027,7 +1078,7 @@ onDeactivated(stopUploadPoll)
     <!-- R313 · 格一：上传时终于智能助手密级。用原生 <select>（与 ChatPanel 那两枚选择框同一条规矩：
          键盘 / 读屏 / 输入法行为不重新发明，也不新增色值）。默认档就是后端 Form(1) 的那一枚 1，
          不动它 = 今天的行为。🔴 这一屏只有密级、没有部门：部门由服务端按 principal 判（chat.py 写明理由）。 -->
-    <div class="classification-bar" data-testid="document-classification-picker">
+    <div v-if="canUpload" class="classification-bar" data-testid="document-classification-picker">
       <label class="classification-label" for="document-classification-select">上传文档密级</label>
       <select
         id="document-classification-select"
@@ -1259,6 +1310,24 @@ onDeactivated(stopUploadPoll)
               label="下载"
               data-testid="document-download"
               @click.stop="downloadDocument(row.filename)"
+            />
+            <UiButton
+              v-if="isAdmin && isEnterpriseShared(row)"
+              variant="secondary"
+              size="sm"
+              label="取消企业内共享"
+              data-testid="document-unpublish"
+              :loading="visibilityBusy === row.filename"
+              @click.stop="setDocumentVisibility(row.filename, 'private')"
+            />
+            <UiButton
+              v-else-if="canEnterpriseShare(row)"
+              variant="secondary"
+              size="sm"
+              label="发布到企业内共享"
+              data-testid="document-publish"
+              :loading="visibilityBusy === row.filename"
+              @click.stop="setDocumentVisibility(row.filename, 'enterprise_shared')"
             />
 
           <!-- 删除按钮（管理员）：第一次点击只把这一行改成确认文案，第二次才发请求 -->
@@ -1498,6 +1567,12 @@ onDeactivated(stopUploadPoll)
 }
 .doc-row:hover .del-btn { opacity: 1; }
 .del-btn:hover { color: var(--legacy-ep-danger); background: color-mix(in srgb, var(--legacy-ep-danger) 8%, transparent); }
+
+@media (max-width: 480px) {
+  .doc-row { flex-wrap: wrap; align-items: flex-start; }
+  .doc-main { flex: 1 1 calc(100% - 52px); }
+  .doc-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; padding-left: 28px; }
+}
 
 /* ===== 底栏 ===== */
 .panel-footer {

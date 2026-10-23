@@ -137,7 +137,7 @@ function stubRoutes() {
 const EXPECTED = [
   { own: 'kpi', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'reference-kpi tone-blue', testid: 'dashboard-kpi-documents', type: 'button', disabled: false, text: '文档总量3已解析篇数未记录', target: 'docs', goto: 'docs' },
   { own: 'kpi', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'reference-kpi tone-cyan', testid: 'dashboard-kpi-datasets', type: 'button', disabled: false, text: '数据表2可分析', target: 'data', goto: 'data' },
-  { own: 'kpi', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'reference-kpi tone-green', testid: 'dashboard-kpi-pendingApprovals', type: 'button', disabled: false, text: '待我审批1等你处理', target: 'approval', goto: 'approval' },
+  { own: 'kpi', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'reference-kpi tone-green', testid: 'dashboard-kpi-pendingApprovals', type: 'button', disabled: false, text: '待我确认1等你处理', target: 'approval', goto: 'approval' },
   { own: 'kpi', primitive: 'slot', variant: 'secondary', size: 'md', theme: 'reference-kpi tone-violet', testid: 'dashboard-kpi-alerts', type: 'button', disabled: false, text: '告警2未读 1 条', target: 'insights', goto: 'insights', alertState: 'counted' },
   { own: 'trend-upload', primitive: 'was', kls: 'ui-button ui-button--ghost ui-button--sm', testid: 'ui-button', type: 'button', disabled: false, text: '去上传数据 ›', goto: 'data' },
   { own: 'trend-month', primitive: 'was', kls: 'ui-button ui-button--ghost ui-button--sm', testid: 'ui-button', type: 'button', disabled: false, text: '按月', goto: null, ariaPressed: 'true' },
@@ -154,8 +154,8 @@ const EXPECTED = [
   { own: 'lookup', primitive: 'slot', variant: 'primary', size: 'sm', theme: '', testid: 'dashboard-metric-lookup', type: 'button', disabled: false, text: '查询', goto: null },
   { own: 'quick', primitive: 'slot', variant: 'secondary', size: 'md', theme: '', testid: 'dashboard-quick-action', type: 'button', disabled: false, text: '上传文档', goto: 'docs' },
   { own: 'quick', primitive: 'slot', variant: 'secondary', size: 'md', theme: '', testid: 'dashboard-quick-action', type: 'button', disabled: false, text: '数据分析', goto: 'data' },
-  { own: 'quick', primitive: 'slot', variant: 'secondary', size: 'md', theme: '', testid: 'dashboard-quick-action', type: 'button', disabled: false, text: '新建洞察', goto: 'insights' },
-  { own: 'quick', primitive: 'slot', variant: 'secondary', size: 'md', theme: '', testid: 'dashboard-quick-action', type: 'button', disabled: false, text: '发起审批', goto: 'approval' },
+  { own: 'quick', primitive: 'slot', variant: 'secondary', size: 'md', theme: '', testid: 'dashboard-quick-action', type: 'button', disabled: false, text: '查看异常提醒', goto: 'insights' },
+  { own: 'quick', primitive: 'slot', variant: 'secondary', size: 'md', theme: '', testid: 'dashboard-quick-action', type: 'button', disabled: false, text: '查看待办', goto: 'approval' },
 ]
 
 /** 八格槽位（r288 清单按源码开标签计，一格一枚），与 EXPECTED 里 primitive='slot' 的行同源。 */

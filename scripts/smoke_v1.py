@@ -13,6 +13,7 @@
 """
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -103,13 +104,15 @@ def _track_freshness(source, keys, listed_names, listed_rc, rebuild_hint):
     return bad
 
 
-def code_freshness():
+def code_freshness(compose_project="enterprise-brain"):
     """两族容器的启动时刻 vs 各自那一路源码的最新提交时刻。
 
     拿不到读数不沉默——照样交回门红。后端那一族与前端那一族各判各的，两行的红都交出去：
     以前前端没重建时走查跑在旧页面上照样能报绿，那一格根本不在门上（B22）。
     """
-    listed = subprocess.run(["docker", "ps", "--format", "{{.Names}}"],
+    listed = subprocess.run(["docker", "ps", "--filter",
+                             f"label=com.docker.compose.project={compose_project}",
+                             "--format", "{{.Names}}"],
                             capture_output=True, text=True, encoding="utf-8", errors="replace")
     listed_names = (listed.stdout or "").split()
     bad = []
@@ -188,6 +191,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--env-file", default=str(REPO / "deploy" / ".env.server"))
     ap.add_argument("--base-url", default="http://localhost/")
+    ap.add_argument("--compose-project", default=os.getenv("COMPOSE_PROJECT_NAME", "enterprise-brain"),
+                    help="只核对本次走查的 Compose 项目容器，避免其他隔离环境影响新鲜度判断")
     ap.add_argument("--suite", choices=("v1", "v2"), default="v1",
                     help="v1＝九条旅程（缺省）；v2＝环 10–21 那张 V2 演示面（十二环，全 13 屏都走到）。两张分母分开报，别拿一张盖另一张")
     ap.add_argument("--repeat", type=int, default=1,
@@ -216,7 +221,7 @@ def main():
                 print("[preflight] 环境不齐＝门红：先 docker compose up -d --force-recreate（起不来用 scripts/docker_up.ps1）再重跑本门。", flush=True)
             return 1
     if not args.allow_stale:
-        stale = code_freshness()
+        stale = code_freshness(args.compose_project)
         if stale:
             for line in stale:
                 print("[freshness] " + line, flush=True)

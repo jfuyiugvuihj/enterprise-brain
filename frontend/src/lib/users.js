@@ -272,11 +272,13 @@ export const USER_WRITE_CREATE = 'create'
 export const USER_WRITE_DELETE = 'delete'
 export const USER_WRITE_PASSWORD = 'password'
 export const USER_WRITE_DEPARTMENT = 'department'
+export const USER_WRITE_ROLE = 'role'
 
 /** 四条路径，与上面那四枚出口一一对号。读路径仍然只有 USERS_PATH 一枚，没有第二条。 */
 export const USER_CREATE_PATH = USERS_PATH
 export const USER_PASSWORD_PATH = '/users/password'
 export const USER_DEPARTMENT_PATH = '/users/department'
+export const USER_ROLE_PATH = '/users/role'
 /** DELETE 的路径带编号（app/api/v1/auth.py:131 声明的是 user_id: int），所以这里是一个构造函数而不是常量。 */
 export const USER_DELETE_PATH_PREFIX = `${USERS_PATH}/`
 
@@ -372,6 +374,14 @@ export function departmentBody(form = {}) {
   }
 }
 
+/** 角色写口只带两枚键：账号与目标角色。部门与密码不跟着这一发走。 */
+export function roleBody(form = {}) {
+  return {
+    [USER_BODY_KEYS.username]: String(form[USER_FORM_FIELDS.username] ?? ''),
+    [USER_BODY_KEYS.role]: String(form[USER_FORM_FIELDS.role] ?? ''),
+  }
+}
+
 /**
  * DELETE 按编号定位（app/api/v1/auth.py:131 的路径参数是 user_id）。名册这一行没给编号就构造不出路径：
  * 空串是唯一允许的「不行」，前端不替后端猜一个 id，也不发一枚注定 422 的请求。
@@ -401,6 +411,12 @@ export function userFormRuleViolations(kind, form = {}) {
   }
   if (kind === USER_WRITE_PASSWORD && newPassword.length < USER_FORM_RULES.newPasswordMinLength) {
     errors[USER_FORM_FIELDS.newPassword] = USER_RULE_HINTS.newPasswordTooShort
+  }
+  if (kind === USER_WRITE_ROLE) {
+    if (USER_FORM_RULES.usernameRequired && !username) errors[USER_FORM_FIELDS.username] = USER_RULE_HINTS.usernameRequired
+    if (!USER_FORM_RULES.creatableRoles.includes(role)) {
+      errors[USER_FORM_FIELDS.role] = USER_RULE_HINTS.roleUnknown
+    }
   }
   return errors
 }
@@ -550,6 +566,31 @@ export function userWriteReceiptView(kind, target, payload) {
       changed: true,
     }
   }
+  if (kind === USER_WRITE_ROLE) {
+    if (typeof envelope.changed !== 'boolean') return userWriteMalformedReceipt(kind, target)
+    if (!envelope.changed) {
+      return {
+        face: USERS_FACE_WRITE_OK,
+        kind,
+        target,
+        title: USERS_UNCHANGED_TITLE,
+        description: USERS_UNCHANGED_MESSAGE,
+        codeLabel: '',
+        retryable: false,
+        changed: false,
+      }
+    }
+    return {
+      face: USERS_FACE_WRITE_OK,
+      kind,
+      target,
+      title: '角色已经改写',
+      description: `后端这一发回的是 200：${target} 现在的角色是「${userRoleLabel(envelope.role)}」，可读密级上限 ${envelope.clearance} 级。`,
+      codeLabel: '',
+      retryable: false,
+      changed: true,
+    }
+  }
   const COPY = {
     [USER_WRITE_CREATE]: { title: '账号已开通', description: `后端这一发回的是 200：${target} 已按这一发的角色与归属写进名册。` },
     [USER_WRITE_DELETE]: { title: '账号已删除', description: `后端这一发回的是 200：${target} 那一行已删除。这一步不可逆。` },
@@ -587,7 +628,7 @@ export function userWriteReadback(kind, target, roster, sent = {}) {
   if (kind === USER_WRITE_DELETE && found) {
     return { consistent: false, note: `后端这一发回的是 200，但重新读回的名册里 ${target} 还在。` }
   }
-  if ((kind === USER_WRITE_PASSWORD || kind === USER_WRITE_DEPARTMENT) && !found) {
+  if ((kind === USER_WRITE_PASSWORD || kind === USER_WRITE_DEPARTMENT || kind === USER_WRITE_ROLE) && !found) {
     return { consistent: false, note: `后端这一发回的是 200，但重新读回的名册里已经找不到 ${target} 这一枚账号。` }
   }
   if (kind === USER_WRITE_DEPARTMENT && found) {
@@ -595,6 +636,13 @@ export function userWriteReadback(kind, target, roster, sent = {}) {
     const row = rows.find(item => textOf(item.username) === textOf(target))
     if (textOf(row.department) !== after) {
       return { consistent: false, note: '后端这一发回的是 200，但重新读回的名册里这一枚的归属与这一发提交的不是同一个值。' }
+    }
+  }
+  if (kind === USER_WRITE_ROLE && found) {
+    const after = textOf(sent[USER_FORM_FIELDS.role])
+    const row = rows.find(item => textOf(item.username) === textOf(target))
+    if (textOf(row.role) !== after) {
+      return { consistent: false, note: '后端这一发回的是 200，但重新读回的名册里这一枚的角色与这一发提交的不是同一个值。' }
     }
   }
   return { consistent: true, note: '名册已按后端回包重新读过，屏上那几行就是这一次读回来的结果。' }
@@ -629,6 +677,11 @@ export function submitPasswordChange(form, client = http) {
 export function submitDepartmentChange(form, client = http) {
   const body = departmentBody(form)
   return submitWrite(USER_WRITE_DEPARTMENT, body[USER_BODY_KEYS.username], () => client.put(USER_DEPARTMENT_PATH, body))
+}
+
+export function submitRoleChange(form, client = http) {
+  const body = roleBody(form)
+  return submitWrite(USER_WRITE_ROLE, body[USER_BODY_KEYS.username], () => client.put(USER_ROLE_PATH, body))
 }
 
 export function submitDeleteUser(row, client = http) {

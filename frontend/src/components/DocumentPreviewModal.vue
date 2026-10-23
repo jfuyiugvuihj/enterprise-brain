@@ -462,9 +462,10 @@ export function createDocumentNameStore({ ref, fetchNames }) {
 </script>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../lib/api'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
+const PdfPages = defineAsyncComponent(() => import('./PdfPages.vue'))
 
 const props = defineProps({
   open: Boolean,
@@ -693,12 +694,10 @@ onMounted(() => {
             </div>
             <!-- R343 · 对端登记的名字这会儿对不上库里的文档：另一张脸，绝不说「这篇没有内容」。 -->
             <div v-else-if="navUnregistered" class="preview-state preview-unregistered" data-testid="r343-face-nav-unregistered">{{ navUnregistered }}</div>
-            <iframe
+            <PdfPages
               v-else-if="kind === 'pdf' && blobUrl"
-              class="pdf-frame"
               :src="blobUrl"
-              :title="filename"
-            ></iframe>
+            />
             <pre v-else-if="kind === 'text'" class="text-preview">{{ text }}</pre>
             <div v-else-if="kind === 'table'" class="table-preview" data-preview>
               <div class="table-meta">
@@ -934,11 +933,10 @@ onMounted(() => {
   color: var(--legacy-ink-steel);
 }
 
-.pdf-frame {
+.preview-body :deep(.pdf-pages) {
   width: 100%;
   height: 100%;
-  border: 0;
-  background: var(--legacy-slate-dark);
+  overflow-y: auto;
 }
 
 .text-preview {
@@ -1124,5 +1122,13 @@ tr:hover td {
 
 .preview-modal-enter-from .preview-container {
   transform: translateY(10px) scale(0.98);
+}
+
+@media (max-width: 600px) {
+  .preview-overlay { padding: 8px; }
+  .preview-container { width: 100%; height: calc(100vh - 16px); height: calc(100dvh - 16px); }
+  .preview-header { padding: 10px; gap: 8px; }
+  .preview-heading span { display: none; }
+  .preview-actions { flex-shrink: 0; }
 }
 </style>

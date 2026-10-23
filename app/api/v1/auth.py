@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from app.common import audit as audit_log
 from app.common import auth
 from app.common.authorization import DEPARTMENT_SELF_REPORT_DENIED, authorize_request, principal_from_request
-from app.common.permissions import ACTION_MANAGE_USERS
+from app.common.permissions import ACTION_MANAGE_USERS, CREATABLE_ROLES
 from app.common.rbac import clearance_for
 from app.common.sso import extract_sso_identity, validate_sso_headers
 from app.memory.profile import (
@@ -40,6 +40,11 @@ class UpdateDepartmentRequest(BaseModel):
 
     username: str
     department: str | None = None
+
+
+class UpdateRoleRequest(BaseModel):
+    username: str
+    role: str
 
 
 class UpdateProfileRequest(BaseModel):
@@ -217,6 +222,58 @@ async def update_user_department(data: UpdateDepartmentRequest, request: Request
         "username": data.username,
         "department": after,
         "changed": after != before,
+        "message": msg,
+    }
+
+
+@router.put("/users/role")
+async def update_user_role(data: UpdateRoleRequest, request: Request):
+    """Adjust one account between the four existing roles.
+
+    The response states the resulting clearance so the administrator sees the
+    effective scope, not just the label. Permission is checked before the target
+    is read, matching the department route: an unauthorised caller cannot use this
+    endpoint as a username probe.
+    """
+    authorize_request(request, ACTION_MANAGE_USERS, resource_name="users")
+    principal = principal_from_request(request)
+    role = str(data.role or "").strip()
+    if role not in CREATABLE_ROLES:
+        raise HTTPException(status_code=400, detail="invalid_role")
+
+    target = auth.get_user(data.username)
+    if target is None:
+        audit_log.record_audit(
+            principal,
+            ACTION_MANAGE_USERS,
+            "failure",
+            f"users:{data.username}",
+            "user_not_found",
+        )
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    before = str(target.get("role") or "staff")
+    ok, msg = auth.update_role(data.username, role)
+    if not ok:
+        if msg == auth.USER_NOT_FOUND:
+            raise HTTPException(status_code=404, detail=msg)
+        raise HTTPException(status_code=400, detail=msg)
+
+    audit_log.record_audit(
+        principal,
+        ACTION_MANAGE_USERS,
+        "allowed",
+        f"users:{data.username}",
+        "role_updated",
+        before_summary={"role": before},
+        after_summary={"role": role},
+    )
+    return {
+        "status": "ok",
+        "username": data.username,
+        "role": role,
+        "clearance": clearance_for(role),
+        "changed": role != before,
         "message": msg,
     }
 

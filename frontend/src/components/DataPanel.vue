@@ -65,7 +65,14 @@ const previewDenied = ref(false)
 const uploading = ref(false)
 const uploadError = ref('')
 const dataFiles = ref([])
-const uploadClassification = ref('2')
+const props = defineProps({ userRole: { type: String, default: 'staff' } })
+const uploadLevelsByRole = { staff: [1], manager: [1, 2], admin: [1, 2, 3], auditor: [] }
+const allowedUploadLevels = computed(() => uploadLevelsByRole[props.userRole] || [])
+const canUpload = computed(() => allowedUploadLevels.value.length > 0)
+const uploadClassification = ref('1')
+watch(allowedUploadLevels, levels => {
+  if (!levels.includes(Number(uploadClassification.value))) uploadClassification.value = String(levels[0] || 1)
+})
 const listClassification = ref('')
 const filteredDataFiles = computed(() => filterFileClassification(dataFiles.value, listClassification.value))
 const filesLoading = ref(false)
@@ -395,7 +402,7 @@ onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route
   <div class="data-panel" data-testid="data-panel">
     <p v-if="requestedFileMissing" class="data-next-step" role="status">原分析关联的文件不存在或不在当前账号可见范围内，请从下方选择有权限访问的资料。</p>
     <!-- 上传区 -->
-    <div class="upload-section">
+    <div v-if="canUpload" class="upload-section">
       <label class="upload-btn" :class="{ loading: uploading }">
         {{ uploading ? '⏳ 解析中...' : '📊 上传数据' }}
         <input data-testid="data-upload-input" type="file" hidden accept=".xlsx,.csv"
@@ -404,9 +411,9 @@ onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route
       <p class="upload-hint">支持 Excel（.xlsx）和 CSV；旧版 .xls 请先另存为 .xlsx。</p>
       <label for="data-upload-classification">上传数据密级</label>
       <select id="data-upload-classification" v-model="uploadClassification" data-testid="data-upload-classification" :disabled="uploading">
-        <option v-for="level in FILE_CLASSIFICATION_LEVELS" :key="level" :value="String(level)">密级 {{ level }} 级{{ level === 2 ? '（默认）' : '' }}</option>
+        <option v-for="level in allowedUploadLevels" :key="level" :value="String(level)">密级 {{ level }} 级{{ level === 1 ? '（默认）' : '' }}</option>
       </select>
-      <p class="upload-hint">仅设置下一次上传，不修改已有文件。默认2级沿用原数据上传设置，访问仍受部门、角色和所有者规则控制。</p>
+      <p class="upload-hint">仅设置下一次上传，不修改已有文件。默认1级；访问仍受部门、角色和密级控制。</p>
       <UiErrorState
         v-if="uploadError"
         title="数据上传失败"
@@ -415,6 +422,7 @@ onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route
         dense
       />
     </div>
+    <p v-else class="upload-hint">当前角色不能上传数据文件。</p>
 
     <section class="data-files-section">
       <div class="section-heading">

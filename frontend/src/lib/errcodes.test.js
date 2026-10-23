@@ -223,6 +223,12 @@ describe('散文码：鉴权中间件的中文 detail', () => {
 })
 
 describe('形状 1：detail 是字符串稳定码', () => {
+  it('所选资料更新后提示新建任务，不让用户反复刷新旧会话', () => {
+    const result = normalizeError(axiosError(409, 'document_version_changed'))
+    expect(result.code).toBe('conflict')
+    expect(result.retryable).toBe(false)
+    expect(result.message).toContain('新建任务')
+  })
   it('命中字典时出字典句', () => {
     const result = normalizeError(axiosError(415, 'unsupported_file'))
     expect(result.code).toBe('unsupported_file')
@@ -427,6 +433,9 @@ describe('脏输入的不变量', () => {
     expect(normalizeError({ response: { status: 404, data: {} } }).code).toBe('resource_not_found')
     expect(normalizeError({ response: { status: 429, data: {} } }).message).toBe(ERROR_CODES.rate_limited.message)
     expect(normalizeError({ response: { status: 504, data: {} } }).code).toBe('task_timeout')
+    expect(normalizeError({ response: { status: 502, data: '<html>Bad Gateway</html>' } }).code).toBe('internal_error')
+    expect(normalizeError({ response: { status: 503, data: {} } }).code).toBe('internal_error')
+    expect(normalizeError({ response: { status: 502, data: { detail: 'model_unavailable' } } }).code).toBe('model_unavailable')
   })
 
   it('断网与超时区分开，且都提示可重试', () => {
@@ -586,9 +595,9 @@ describe('blob 错误体解析（B-5 ③，下载与预览的 403 不再被说�
   it('非 JSON 一律不采信正文：HTML 网关页与纯文本都不许当人话', () => {
     const html = blobErrorText('<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>', 502)
     inEnum(html, '502 HTML')
-    expect(html.code).toBe('model_unavailable')
-    expect(html.message).toBe(ERROR_CODES.model_unavailable.message)
-    expect(html.retryable).toBe(true)
+    expect(html.code).toBe('internal_error')
+    expect(html.message).toBe(ERROR_CODES.internal_error.message)
+    expect(html.retryable).toBe(false)
     for (const leak of ['Bad Gateway', 'nginx', '<', 'html']) expect(html.message).not.toContain(leak)
 
     const plain = blobErrorText('Forbidden', 0)
@@ -614,7 +623,7 @@ describe('blob 错误体解析（B-5 ③，下载与预览的 403 不再被说�
 
   it('野外两种码字段形状都吃：顶层 error_code 与 detail.error_code（含 policy.py 别名）', () => {
     expect(blobErrorText('{"error_code":"unsupported_file"}', 415).code).toBe('unsupported_file')
-    expect(blobErrorText('{"message":"model_unavailable"}', 503).code).toBe('model_unavailable')
+    expect(blobErrorText('{"message":"model_unavailable"}', 503).code).toBe('internal_error')
     const nested = blobErrorText('{"detail":{"error_code":"principal_inactive"}}', 403)
     expect(nested.code).toBe('account_unavailable')
     expect(nested.rawCode).toBe('principal_inactive')

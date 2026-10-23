@@ -367,11 +367,13 @@ def test_the_catalog_gains_exactly_one_version_and_the_loader_accepts_it():
         "0016",
         "0017",
         "0018",
+        "0019",
+        "0020",
         CATALOG_TAIL_VERSION,
     ], (
-        "0012 之后只许站着被指名的那七枚前滚迁移（R190 的 0013、R251 的 0014、"
+        "0012 之后只许站着被指名的前滚迁移（R190 的 0013、R251 的 0014、"
         "R256 的 0015、R299 的 0016、R509 的 0017、R523 的 0018 与账本尾号那一枚＝R46c 的 0019），"
-        "多一枚就得回到这里指名：" + str(versions)
+        "再加上 0020 告警观测证据与 0021 文档共享范围；多一枚就得回到这里指名：" + str(versions)
     )
     assert NEW_FILENAME in on_disk
     assert discover_migrations() == MIGRATIONS, "清单校验不过的目录不该被 loader 认下来"

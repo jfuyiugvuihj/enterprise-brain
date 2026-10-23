@@ -12,6 +12,30 @@ def test_table_brief_never_invents_currency_or_completed_artifacts():
     assert "已生成" not in text and "已导出" not in text
 
 
+def test_monthly_report_uses_month_range_and_verified_chart():
+    import pandas as pd
+    from pypdf import PdfReader
+    from app.agents.tools import _report_data_facts, _report_sections, _report_chart_from_facts
+    from app.tools.export import generate_pdf_report
+
+    frame = pd.DataFrame({"月份": ["2026-01", "2026-01", "2026-02", "2026-02"],
+                          "部门": ["财务", "销售", "财务", "销售"],
+                          "报销金额": [120, 80, 150, 100]})
+    facts = _report_data_facts("报销明细.csv", frame, "请生成上半年经营分析报告")
+    assert facts["period"] == "2026-01 至 2026-02（月份）"
+    assert facts["metrics"][0]["groups"] == [("2026-01", 200.0), ("2026-02", 250.0)]
+    sections = _report_sections([facts], "数据分析结果:\n月份(str)\n--- 数据样本(前15行) ---", "")
+    assert "数据样本" not in str(sections) and "没有可汇总的分组字段" not in str(sections)
+    assert "2026-02指标值最高" in str(sections)
+    assert "2026-01指标值最高" not in str(sections)
+    chart = _report_chart_from_facts([facts])
+    assert chart
+    slot = next(i for i, section in enumerate(sections) if section["type"] == "chart_slot")
+    sections[slot] = {"type": "chart", "path": chart, "caption": "按月份汇总报销金额；单位未标注"}
+    reader = PdfReader(generate_pdf_report("经营分析报告", sections))
+    assert any(page.images for page in reader.pages)
+
+
 def test_verified_report_has_analysis_body_instead_of_only_statistics():
     from app.agents import tools
     analysis = "合计: 金额=1310\n按部门分组汇总:\n销售: 金额=480"

@@ -48,7 +48,9 @@ def test_administrator_scope_carries_no_department_predicate() -> None:
     assert scope.departments is None
     assert scope.reason_code == "administrator_scope"
     assert "department" not in scope.filters
-    assert scope.allows({"classification": 3, "department": ""}) is True
+    # Administrator scope crosses departments, but an unlabelled source still has
+    # no trustworthy owner department and cannot be published by the retrieval gate.
+    assert scope.allows({"classification": 3, "department": ""}) is False
 
 
 def test_staff_is_fail_closed_on_documents_without_department() -> None:

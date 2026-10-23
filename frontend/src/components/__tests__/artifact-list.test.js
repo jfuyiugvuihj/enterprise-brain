@@ -228,6 +228,9 @@ describe('ArtifactList · 后端行 -> 视图模型（snake_case 只在这一处
       expiryText: '有效期至 2026-09-30',
       sessionId: '',
       requestId: '',
+      sourceVersionLabel: '',
+      sourceArtifactIds: [],
+      sourceAlertId: null,
       lineage: { face: 'unrecorded', text: LINEAGE_UNRECORDED_TEXT, title: LINEAGE_UNRECORDED_TEXT },
     })
   })
@@ -437,7 +440,7 @@ describe('ArtifactList · 打开只从带 Bearer 的通道取字节（不许直�
     expect(vm.previewUrl.value).toBe('blob:two')
   })
 
-  it('非图片产物走另存：落盘地址仍是 blob:，content_url 缺失才用 download_url', async () => {
+  it('PDF 先在当前页预览：仍通过鉴权通道取字节，下载由预览页单独触发', async () => {
     const saved = []
     globalThis.document = {
       createElement() {
@@ -453,8 +456,10 @@ describe('ArtifactList · 打开只从带 Bearer 的通道取字节（不许直�
       const vm = await vmWithRow({ artifact_type: 'report', filename: '月度经营报告.pdf', content_url: '' })
       await vm.openArtifact(vm.rows.value[0])
       expect(fetchArtifactBlob).toHaveBeenCalledWith('/api/v1/artifacts/a1/download')
-      expect(saved).toEqual([{ href: 'blob:preview-2', download: '月度经营报告.pdf' }])
-      expect(vm.previewId.value).toBe('')
+      expect(saved).toEqual([])
+      expect(vm.previewId.value).toBe('a1')
+      expect(vm.previewPdf.value).toBe(true)
+      expect(vm.previewUrl.value).toBe('blob:preview-2')
     } finally {
       delete globalThis.document
     }

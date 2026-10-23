@@ -113,6 +113,40 @@ def test_artifact_content_and_download_are_limited_to_the_registered_scope(monke
     ).status_code == 403
 
 
+def test_short_lived_attachment_rechecks_current_permissions(monkeypatch, tmp_path):
+    from app.agents.contracts import Principal
+    from app.api.v1 import artifacts as artifact_api
+    from app.common import auth
+    from app.common.cache import _MemoryRedis
+    from app.main import app
+
+    registry = _registry(monkeypatch, tmp_path)
+    path = tmp_path / "report.pdf"
+    path.write_bytes(b"%PDF-1.4\nreview")
+    artifact = registry.register(path, artifact_type="report", principal=Principal.from_user(_user("owner")))
+    users = {"owner": _user("owner"), "viewer": _user("viewer")}
+    monkeypatch.setattr(auth, "get_user", lambda username: users.get(username))
+    store = _MemoryRedis()
+    monkeypatch.setattr(artifact_api, "_ticket_store", lambda: store)
+    client = TestClient(app)
+
+    issued = client.post(f"/api/v1/artifacts/{artifact.artifact_id}/download-link", headers=_headers("viewer"))
+    assert issued.status_code == 200
+    ticket = issued.json()["url"].rsplit("/", 1)[1]
+    headers = {"X-Download-Ticket": ticket}
+    downloaded = client.get("/api/v1/artifacts/attachment", headers=headers)
+    assert downloaded.status_code == 200
+    assert downloaded.content == path.read_bytes()
+    assert downloaded.headers["content-disposition"].startswith("attachment;")
+    assert downloaded.headers["cache-control"] == "no-store"
+
+    users["viewer"]["department"] = "hr"
+    assert client.get("/api/v1/artifacts/attachment", headers=headers).status_code == 403
+    store.delete(artifact_api._ticket_key(ticket))
+    assert client.get("/api/v1/artifacts/attachment", headers=headers).status_code == 404
+    assert client.get("/api/v1/artifacts/attachment").status_code == 404
+
+
 def test_artifact_rejects_expired_or_deleted_records(monkeypatch, tmp_path):
     from app.agents.contracts import Principal
     from app.common import auth

@@ -51,11 +51,13 @@ def test_streamed_orchestration_persists_ordered_lifecycle_trace(tmp_path, monke
         "request.started",
         "step.progress",
         "step.progress",
-        "tool.completed",
         "request.completed",
     ]
-    assert [event["sequence"] for event in replay] == [1, 2, 3, 4, 5]
-    assert replay[3]["payload"]["worker"] == "doc"
+    assert [event["sequence"] for event in replay] == [1, 2, 3, 4]
+    # A worker's finished answer is not a second tool execution: the live tool span
+    # records that verdict itself, and the request summary carries the worker count.
+    assert replay[-1]["payload"]["worker_count"] == 1
+    assert replay[-1]["payload"]["has_final_answer"] is True
     assert replay[-1]["status"] == "completed"
     assert all(
         event["payload"].get("owner_id") == "alice"

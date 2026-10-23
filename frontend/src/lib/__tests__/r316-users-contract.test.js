@@ -136,13 +136,13 @@ describe('R316① · 列只认后端真发的那五枚键', () => {
     const text = libSource()
     // R316 当年这一格钉的是「这一屏没有写出口」，禁的是字面量。R360 把后端早就长在树上的
     // 那四枚写出口接上了，所以这一格不能退回成「有 post 就红」——那会把正确的接线判成违规。
-    // 改按形状判：读只许一枚 GET，写只许恰好 post / put×2 / delete 这四枚，多一枚少一枚都红。
+    // 改按形状判：读只许一枚 GET，写只许 post / put×3 / delete 这五枚。
     expect([...text.matchAll(/client\.get\(/g)].length, '取数路径只许一枚 client.get').toBe(1)
     expect([...text.matchAll(/client\.post\(/g)].length).toBe(1)
-    expect([...text.matchAll(/client\.put\(/g)].length).toBe(2)
+    expect([...text.matchAll(/client\.put\(/g)].length).toBe(3)
     expect([...text.matchAll(/client\.delete\(/g)].length).toBe(1)
-    // 四枚写腿不许各长一套记账：共用同一枚 submitWrite（不乐观 + 写完回读），定义一枚、调用四枚
-    expect([...text.matchAll(/return submitWrite\(/g)].length).toBe(4)
+    // 五枚写腿共用同一枚 submitWrite（不乐观 + 写完回读）。
+    expect([...text.matchAll(/return submitWrite\(/g)].length).toBe(5)
     expect([...text.matchAll(/async function submitWrite\(/g)].length).toBe(1)
     // 屏壳自己发请求 = 把判脸逻辑复制成第二套，这一格管的是「只有一个出口」而不只是「有出口」
     expect(panelSource()).not.toMatch(/client\.(get|post|put|delete)\(/)

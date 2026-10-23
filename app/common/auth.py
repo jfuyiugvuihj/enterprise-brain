@@ -784,3 +784,34 @@ def update_department(username: str, department: str | None) -> tuple[bool, str]
         if cur.rowcount == 0:
             return False, USER_NOT_FOUND
     return True, "部门已更新"
+
+
+def update_role(username: str, role: str) -> tuple[bool, str]:
+    """Change one account's role inside the existing four-role roster.
+
+    There is no fifth role and no free-form permission editor. The next protected
+    request reads ``users`` again (``app/main.py`` rebuilds the principal from the
+    account row on every call), so a role change takes effect immediately instead of
+    waiting for a token to expire.
+    """
+    if not username:
+        return False, "用户名不能为空"
+    if role not in CREATABLE_ROLES:
+        return False, "invalid_role"
+    if _memory_store_denied("role change"):
+        return False, "production_user_store_unavailable"
+    if _using_memory_store():
+        row = _MEM_USERS.get(username)
+        if row is None:
+            return False, USER_NOT_FOUND
+        row["role"] = role
+        return True, "角色已更新"
+    with _get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE users SET role = %s WHERE username = %s",
+            (role, username),
+        )
+        conn.commit()
+        if cur.rowcount == 0:
+            return False, USER_NOT_FOUND
+    return True, "角色已更新"

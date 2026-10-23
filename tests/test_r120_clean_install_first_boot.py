@@ -301,6 +301,8 @@ def test_task0_left_the_migrations_directory_alone():
     # R509 的 0017（artifacts 的两枚可空生成血缘列 session_id / request_id，存量行全 NULL）与
     # R523 的 0018（model_calls 的一枚可空 cached 计数列 cached_tokens，存量行全 NULL，不回填）。
     # R46 差格 a 的 0019（document_engagement_events：出处点击/浏览的事件表，七列全是标识·名次·枚举·时刻，无一列装得下正文）。
+    # 0020（alert_observation_evidence：告警观测的证据与观察序列，落在 alerts 行上供恢复与再触发读取）。
+    # 0021（document_visibility：文档、版本与向量片段的 private/enterprise_shared 共享范围）。
     # 本单没加前滚迁移；别人加了就必须回到这里指名——枚数与名字一起点，静默多一枚就不是"别人加了"而是"没人看过"。
     forward = [item for item in mig.MIGRATIONS if item.version > "0010"]
     assert [item.version for item in forward] == [
@@ -313,6 +315,8 @@ def test_task0_left_the_migrations_directory_alone():
         "0017",
         "0018",
         "0019",
+        "0020",
+        "0021",
     ], (
         "the only forward migrations past 0010 are R46's, R183/R184's, "
         "R190's, R251's, R256's, R299's, R509's, R523's and R46c's: "

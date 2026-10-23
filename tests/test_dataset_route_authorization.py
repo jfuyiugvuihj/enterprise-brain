@@ -142,6 +142,114 @@ def test_upload_excel_refuses_a_departmentless_owner_with_a_stable_code(
     assert not (tmp_path / "solo.csv").exists()
 
 
+def test_reupload_keeps_the_original_dataset_bytes_and_lists_the_new_version(monkeypatch, tmp_path):
+    import hashlib
+    from app.api.v1 import data
+    from app.common import auth
+    from app.main import app
+
+    registry = _registry(monkeypatch, tmp_path)
+    monkeypatch.setattr(auth, "get_user", lambda username: _user(username, "finance"))
+
+    async def skip_index(**kwargs):
+        return {"status": "skipped"}
+
+    monkeypatch.setattr(data, "index_dataset_copy", skip_index)
+    client = TestClient(app)
+    headers = _headers("finance-manager")
+    first_bytes = b"department,revenue\nfinance,100\n"
+    second_bytes = b"department,revenue\nfinance,2000\n"
+    first = client.post(
+        "/api/v1/upload-excel",
+        headers=headers,
+        data={"classification": "2"},
+        files={"file": ("finance.csv", first_bytes, "text/csv")},
+    )
+    assert first.status_code == 200, first.text
+    second = client.post(
+        "/api/v1/upload-excel",
+        headers=headers,
+        data={"new_version": "true"},
+        files={"file": ("finance.csv", second_bytes, "text/csv")},
+    )
+    assert second.status_code == 200, second.text
+    assert first.json()["classification"] == second.json()["classification"]
+    downgrade = client.post(
+        "/api/v1/upload-excel", headers=headers,
+        data={"new_version": "true", "classification": "1"},
+        files={"file": ("finance.csv", b"department,revenue\nfinance,50\n", "text/csv")},
+    )
+    assert downgrade.status_code == 400
+
+    dataset_id = first.json()["dataset_id"]
+    versions = registry.versions(dataset_id)
+    assert [version.dataset_version_id for version in versions] == [
+        first.json()["version_id"], second.json()["version_id"]
+    ]
+    assert len({version.storage_key for version in versions}) == 2
+    for version, expected in zip(versions, (first_bytes, second_bytes)):
+        from pathlib import Path
+
+        assert Path(version.storage_key).read_bytes() == expected
+        assert version.content_sha256 == hashlib.sha256(expected).hexdigest()
+
+    listed = client.get("/api/v1/data-files", headers=headers)
+    assert listed.status_code == 200
+    assert [(item["filename"], item["size"], item["version_id"]) for item in listed.json()["files"]] == [
+        ("finance.csv", len(second_bytes), second.json()["version_id"])
+    ]
+    current = client.get("/api/v1/data-files/finance.csv/file", headers=headers)
+    assert current.status_code == 200
+    assert current.content == second_bytes
+
+
+def test_first_upload_refuses_classification_above_clearance_without_storing_bytes(monkeypatch, tmp_path):
+    from app.api.v1 import data
+    from app.common import auth
+    from app.main import app
+
+    registry = _registry(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        auth,
+        "get_user",
+        lambda username: {**_user(username, "finance"), "role": "staff"},
+    )
+
+    async def skip_index(**kwargs):
+        return {"status": "skipped"}
+
+    monkeypatch.setattr(data, "index_dataset_copy", skip_index)
+    response = TestClient(app).post(
+        "/api/v1/upload-excel",
+        headers=_headers("finance-staff"),
+        data={"classification": "internal"},
+        files={"file": ("finance.csv", b"department,revenue\nfinance,100\n", "text/csv")},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_classification"
+    assert registry.get_active_by_filename("finance.csv") is None
+    assert list(tmp_path.rglob("*.csv")) == []
+
+
+def test_staff_upload_without_classification_uses_the_accessible_default(monkeypatch, tmp_path):
+    from app.api.v1 import data
+    from app.common import auth
+    from app.main import app
+
+    registry = _registry(monkeypatch, tmp_path)
+    monkeypatch.setattr(auth, "get_user", lambda username: {**_user(username, "finance"), "role": "staff"})
+    async def skip_index(**kwargs):
+        return {"status": "skipped"}
+    monkeypatch.setattr(data, "index_dataset_copy", skip_index)
+    response = TestClient(app).post(
+        "/api/v1/upload-excel", headers=_headers("finance-staff"),
+        files={"file": ("staff.csv", b"department,revenue\nfinance,100\n", "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["classification"] == registry.get_active_by_filename("staff.csv").classification
+    assert response.json()["classification"] == "1"
+
+
 def test_data_agent_tools_only_read_authorized_registered_datasets(monkeypatch, tmp_path):
     from app.agents.contracts import Principal
     from app.agents.tools import analyze_data, query_data

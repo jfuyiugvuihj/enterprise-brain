@@ -61,6 +61,12 @@ def test_zero_value_axis_starts_at_zero(rendered, horizontal):
     assert ax.texts[0].get_text() == "0"
 
 
+@pytest.mark.parametrize("horizontal", [False, True])
+def test_negative_zero_is_displayed_as_zero(rendered, horizontal):
+    chart.bar_chart(["未发生费用"], [-0.0], horizontal=horizontal)
+    assert rendered["axes"].texts[0].get_text() == "0"
+
+
 def test_many_long_chinese_labels_remain_visible_without_overlap(rendered):
     labels = [f"跨区域企业费用试用部门第{index:02d}组及其业务支持中心" for index in range(21)]
     chart.bar_chart(labels, list(range(21)), title="完整部门费用", ylabel="元")

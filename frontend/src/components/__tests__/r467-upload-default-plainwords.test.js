@@ -90,7 +90,7 @@ const { createApp } = createRenderer(nodeOps)
 const SSR_CONTEXT_KEY = Symbol.for('v-scx')
 let live = null
 
-function mountPanel() {
+function mountPanel(props = {}) {
   http.get.mockImplementation(async url => (
     String(url).endsWith('/documents/catalog')
       ? { data: { documents: [{ filename: '制度汇编.pdf', owner_id: 'u-1', size_bytes: 2048, parse_status: 'ready', index_status: 'indexed' }] } }
@@ -105,7 +105,7 @@ function mountPanel() {
       instance = getCurrentInstance()
       return h('div')
     },
-  }, {})
+  }, props)
   app.config.warnHandler = () => {}
   app.provide(SSR_CONTEXT_KEY, {})
   app.mount(vnode('#root'))
@@ -127,8 +127,8 @@ const settle = async () => { await nextTick(); await nextTick() }
 // ==================== 判据用的那两枚谓词（丁组反证用的就是它们本身）====================
 
 /** 「不选会怎样」必须一起说清：落到哪一档 + 那一档意味着什么。 */
-const DEFAULT_CLAUSE = /不选就是默认档 密级 (\d+) 级：不设密级门槛，全公司的人都读得到/
-const CHOSEN_CLAUSE = /这一发按 密级 (\d+) 级 上传/
+const DEFAULT_CLAUSE = /不选就是默认档 密级 (\d+) 级：本部门成员可读，其他部门不可读/
+const CHOSEN_CLAUSE = /本次上传按 密级 (\d+) 级 上传/
 const DEPARTMENT_CAVEAT = '部门由服务端按你的账号判定'
 const plainWordsSaidClearly = text => DEFAULT_CLAUSE.test(text) && CHOSEN_CLAUSE.test(text)
 
@@ -175,7 +175,7 @@ describe('R467 判据②甲 · 默认档旁边那句话把人话说全了', () =
   })
 
   it('选了非默认档：「这一发带的档」与「不选会落的档」同时在场且各说各的，不许混成一枚', async () => {
-    const state = mountPanel()
+    const state = mountPanel({ userRole: 'admin' })
     await settle()
     state.chooseClassification('3')
     await settle()
@@ -186,13 +186,13 @@ describe('R467 判据②甲 · 默认档旁边那句话把人话说全了', () =
     state.stopUploadPoll()
   })
 
-  it('🔴 「全员可检索」这句不许单独站着：同一句必须带着部门那道闸', async () => {
+  it('🔴 「本部门可读」这句不许单独站着：同一句必须带着部门那道闸', async () => {
     mountPanel()
     await settle()
     const text = await screen()
     expect(text).toContain(DEPARTMENT_CAVEAT)
-    const sentence = text.split(/[：]/).find(part => part.includes('不设密级门槛'))
-    expect(sentence, '「不设密级门槛」那一段不见了').toBeTruthy()
+    const sentence = text.split(/[：]/).find(part => part.includes('本部门成员可读'))
+    expect(sentence, '「本部门成员可读」那一段不见了').toBeTruthy()
     expect(sentence).toContain(DEPARTMENT_CAVEAT)
   })
 })
@@ -220,8 +220,7 @@ describe('R467 判据②乙 · 员工读到的那一段里没有一枚技术串'
 
 describe('R467 判据②丙 · 没有把 r313 的断言改宽，也没有与它打架', () => {
   const REQUIRED = [
-    '这一发的密级',
-    '这一发按 密级 1 级 上传',
+    '可选 密级 1 级',
     DEPARTMENT_CAVEAT,
     '密级 1 级（默认）',
   ]
@@ -246,15 +245,15 @@ describe('R467 判据②丙 · 没有把 r313 的断言改宽，也没有与它�
 // ==================== 丁 · 反证：同一枚谓词必须咬住「摘掉交付」那两种形状 ====================
 
 describe('R467 判据②丁 · 谓词有牙（摘掉交付就当场红，用的不是另一把尺）', () => {
-  it('刀1：把说明句换回 R467 之前那句原话 ⇒ 甲组谓词判 false', () => {
-    const beforeR467 = '这一发按 密级 1 级 上传 · ' + DEPARTMENT_CAVEAT
+  it('刀1：把说明句换回只报当前档、不报默认档的原话 ⇒ 甲组谓词判 false', () => {
+    const beforeR467 = '本次上传按 密级 1 级 上传 · ' + DEPARTMENT_CAVEAT
     expect(plainWordsSaidClearly(beforeR467), '屏上只写「默认」而不写「不选会怎样」时本钉必须红').toBe(false)
-    const chosenOnly = '这一发按 密级 3 级 上传 · ' + DEPARTMENT_CAVEAT
+    const chosenOnly = '本次上传按 密级 3 级 上传 · ' + DEPARTMENT_CAVEAT
     expect(plainWordsSaidClearly(chosenOnly)).toBe(false)
   })
 
   it('刀2：把默认档写成 classification=1 这种技术串 ⇒ 乙组谓词必须报出来', () => {
-    const leaky = '这一发按 密级 1 级 上传 · 不选就是默认档 classification=1：不设密级门槛，全公司的人都读得到（部门由服务端按你的账号判定）'
+    const leaky = '本次上传按 密级 1 级 上传 · 不选就是默认档 classification=1：本部门成员可读，其他部门不可读（部门由服务端按你的账号判定）'
     expect(techViolations(leaky), '技术串没被这枚尺抓到').toEqual(
       expect.arrayContaining(['/classification/i', String(/[A-Za-z_][A-Za-z0-9_]*\s*=\s*\d/)]))
     // 同一枚变异也得被甲组抓到：档位一旦写成键值对，「密级 N 级」那个人话形状就没了。

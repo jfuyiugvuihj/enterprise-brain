@@ -154,7 +154,7 @@ beforeEach(() => {
 })
 /** 只挂一次、只读模板：判下拉每一档的文案出处，不走上传那条路。 */
 async function screenHtmlOfChoices() {
-  mountPanel()
+  mountPanel({ userRole: 'admin' })
   await settle()
   return screenHtml()
 }
@@ -222,24 +222,40 @@ describe('R313 格一 甲 · 默认值与档位都钉在后端那一处，不是
 // ==================== 乙 · 选择框真的在屏上，且默认就是不动它 ====================
 
 describe('R313 格一 乙 · 上传前问那一句：选择框在屏上，默认档不改变今天的行为', () => {
-  it('首屏就有一枚密级选择框，每一档都在，默认档标着「（默认）」', async () => {
+  it('员工首屏只有 1 级可选，默认档标着「（默认）」', async () => {
     mountPanel()
     await settle()
     const html = await screenHtml()
     expect(html).toContain('data-testid="document-classification-select"')
     const uploadSelect = html.match(/<select[^>]*data-testid="document-classification-select"[^>]*>([\s\S]*?)<\/select>/)?.[1]
     expect(uploadSelect).toBeTruthy()
-    expect(uploadSelect.match(/<option value="[1-4]"/g)).toHaveLength(UPLOAD_CLASSIFICATION_LEVELS.length)
+    expect(uploadSelect.match(/<option value="[1-4]"/g)).toHaveLength(1)
     const text = stripTags(html)
-    expect(text).toContain('仅设置下一次上传的密级')
+    expect(text).toContain('可选 密级 1 级')
     expect(text).toMatch(/密级 1 级（默认）/)
+  })
+
+  it('负责人拿到 1—2 级，管理员拿到 1—3 级，审计员没有上传入口', async () => {
+    for (const [role, expected] of [['manager', 2], ['admin', 3], ['auditor', 0]]) {
+      const state = mountPanel({ userRole: role })
+      await settle()
+      if (expected === 0) {
+        expect(await screenHtml()).not.toContain('data-testid="document-classification-select"')
+        state.stopUploadPoll?.()
+        continue
+      }
+      const html = await screenHtml()
+      const uploadSelect = html.match(/<select[^>]*data-testid="document-classification-select"[^>]*>([\s\S]*?)<\/select>/)?.[1]
+      expect(uploadSelect, `${role} 的上传档位不见了`).toBeTruthy()
+      expect(uploadSelect.match(/<option value="[1-4]"/g)).toHaveLength(expected)
+    }
   })
 
   it('不碰它 ⇒ 界面自己说的是 1 级，state 里也是 1', async () => {
     const state = mountPanel()
     await settle()
     expect(state.uploadClassification).toBe(DEFAULT_UPLOAD_CLASSIFICATION)
-    expect(await screen()).toContain('这一发按 密级 1 级 上传')
+    expect(await screen()).toContain('可选 密级 1 级')
   })
 
   it('🔴 这一屏不发部门：屏上没有部门控件，说明句只把部门归给服务端', async () => {
@@ -265,7 +281,7 @@ describe('R313 格一 丙 · 抓 http.post 收到的那一份 FormData 本身', 
   })
 
   it('表单里只有 file 与 classification 两枚键：🔴 department 一枚都不发', async () => {
-    const state = mountPanel()
+    const state = mountPanel({ userRole: 'admin' })
     await settle()
     for (const level of UPLOAD_CLASSIFICATION_LEVELS) {
       http.post.mockClear()
@@ -280,7 +296,7 @@ describe('R313 格一 丙 · 抓 http.post 收到的那一份 FormData 本身', 
   })
 
   it('选择框改到 3 级 ⇒ 下一发真带 3；回执那一行显示的也是发出去的这一档', async () => {
-    const state = mountPanel()
+    const state = mountPanel({ userRole: 'admin' })
     await settle()
     state.chooseClassification('3')
     await state.uploadFilesParallel([fileFixture()])
@@ -291,7 +307,7 @@ describe('R313 格一 丙 · 抓 http.post 收到的那一份 FormData 本身', 
   })
 
   it('中途把下拉改回去，也不许改已在途那一发：出发时取的是一档快照', async () => {
-    mountPanel()
+    mountPanel({ userRole: 'admin' })
     await settle()
     const state = live.state
     let release = null

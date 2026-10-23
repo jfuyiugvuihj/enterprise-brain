@@ -50,7 +50,7 @@ describe('R103 · 图谱的一级入口已撤下', () => {
     // R315 判据④ 换号的理由：「交成果」是一枚真屏（ArtifactList.vue 早在树里，只是没有自己的位置），
     // 它进的是【一级入口】，所以这份定长名单加一项、标题里的枚数跟着改；断言强度未降——
     // 名单仍然逐字相等、仍然多一条少一条都红，没有改成 toContain / >=，也没删任何一条。
-    expect(navigationIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
+    expect(navigationIds).toEqual(['overview', 'feed', 'chat', 'insights', 'approval', 'artifacts'])
     expect(navigationIds).not.toContain('graph')
   })
 
@@ -78,7 +78,7 @@ describe('R316 判据④⑤ · 「账号与角色」是一屏，但今天对任�
     // R316 当年这条钉的是「仍是那五枚」；R315 把「交成果」挂成一级入口之后，名单换成六枚 ——
     // 换号只换在这一格里，逐字相等与「多一枚少一枚都红」一分未降，not.toContain('admin') 原样留着。
     // admin 那一屏依旧只走深链与按角色派生的入口（navigationForRole），这条判据没被 R315 松动。
-    expect(navigationIds).toEqual(['overview', 'feed', 'insights', 'approval', 'chat', 'artifacts'])
+    expect(navigationIds).toEqual(['overview', 'feed', 'chat', 'insights', 'approval', 'artifacts'])
     expect(navigationIds).not.toContain('admin')
   })
 

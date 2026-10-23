@@ -105,6 +105,11 @@ BARE_CODES_OUTSIDE_THE_ENUM = {
         "folds_into": "index_publish_failed",
         "why": "同上：对位码已在枚举里，但这条响应形状早于它，改名是契约变更而不是卫生作业。",
     },
+    "document_version_changed": {
+        "emitter": "app/api/v1/chat.py::ask",
+        "folds_into": "conflict",
+        "why": "旧会话选中的文件版本已经更新，需新建任务；沿用冲突码，单独给出下一步提示。",
+    },
     "document_preview_failed": {
         "emitter": "app/api/v1/chat.py::get_document_preview",
         "folds_into": "internal_error",

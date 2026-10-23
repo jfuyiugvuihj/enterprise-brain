@@ -201,15 +201,7 @@ class PDFReport(FPDF):
     def chart_image(self, path: str, caption: str = "", w: int = 160):
         """插入图表"""
         if os.path.exists(path):
-            self._font()
-            self.set_font_size(10)
-            caption_height = self._text_height(caption, 6) if caption else 0
-            with Image.open(path) as image:
-                aspect = image.height / image.width
-            width = min(float(w), self.epw)
-            maximum_height = self.page_break_trigger - max(self.t_margin, 26) - caption_height - 8
-            width = min(width, max(10, maximum_height) / aspect)
-            height = width * aspect
+            width, height, caption_height = self._chart_geometry(path, caption, w)
             if self.get_y() + height + caption_height + 6 > self.page_break_trigger:
                 self.add_page()
             self._font()
@@ -222,6 +214,17 @@ class PDFReport(FPDF):
                 self.multi_cell(0, 6, caption, align="C", new_x="LMARGIN", new_y="NEXT")
         else:
             raise FileNotFoundError("报告图表文件缺失，无法生成完整报告。")
+
+    def _chart_geometry(self, path: str, caption: str, w: int = 160):
+        self._font()
+        self.set_font_size(10)
+        caption_height = self._text_height(caption, 6) if caption else 0
+        with Image.open(path) as image:
+            aspect = image.height / image.width
+        width = min(float(w), self.epw)
+        maximum_height = self.page_break_trigger - max(self.t_margin, 26) - caption_height - 8
+        width = min(width, max(10, maximum_height) / aspect)
+        return width, width * aspect, caption_height
 
     def footer(self):
         """页脚"""
@@ -260,10 +263,20 @@ def generate_pdf_report(title: str, sections: list[dict], chart_paths: list[str]
         embedded.add(key)
 
     last_section_type = None
-    for sec in sections:
+    for index, sec in enumerate(sections):
         t = sec.get("type", "text")
 
         if t == "heading":
+            following = sections[index + 1] if index + 1 < len(sections) else {}
+            if following.get("type") == "chart" and os.path.exists(following.get("path", "")):
+                pdf._font(bold=True)
+                level = sec.get("level", 2)
+                pdf.set_font_size({1: 18, 2: 14, 3: 12}.get(level, 12))
+                line_height = 7 if level == 3 else 10
+                heading_height = 3 + pdf._text_height(sec["content"], line_height) + 2
+                _, chart_height, caption_height = pdf._chart_geometry(following["path"], following.get("caption", ""))
+                if pdf.get_y() + heading_height + chart_height + caption_height + 6 > pdf.page_break_trigger:
+                    pdf.add_page()
             pdf.heading(sec["content"], sec.get("level", 2))
         elif t == "text":
             pdf.paragraph(sec["content"], sec.get("font_size", 11), sec.get("line_height", 7))

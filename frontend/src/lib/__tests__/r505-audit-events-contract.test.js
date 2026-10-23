@@ -164,8 +164,14 @@ describe('R505 甲 · 对账（读 git show ' + REPO_REF + ':app/**）', () => {
     expect('department' in auditEventRow(EVENT)).toBe(false)
   })
 
-  it('处置词表逐字对齐 record_audit 真写出去的那四枚，表外只认不下', () => {
-    expect(Object.keys(AUDIT_OUTCOME_LABELS).sort()).toEqual(backendOutcomeWords())
+  it('处置词表覆盖服务端结果，并区分用户确认与实际执行', () => {
+    for (const word of backendOutcomeWords()) {
+      expect(AUDIT_OUTCOME_LABELS[word], word).toBeTruthy()
+    }
+    expect(auditOutcomeLabel('confirmed')).toContain('尚未代表执行成功')
+    expect(auditOutcomeLabel('rejected')).toBe('已拒绝操作')
+    expect(auditOutcomeLabel('completed')).toBe('执行完成')
+    expect(auditOutcomeLabel('failed')).toBe('执行失败')
     expect(auditOutcomeLabel('maybe_allowed_but_we_hope_not')).toBe(AUDIT_OUTCOME_UNKNOWN)
     expect(auditOutcomeLabel('')).toBe(AUDIT_OUTCOME_UNKNOWN)
     expect(auditOutcomeLabel(null)).toBe(AUDIT_OUTCOME_UNKNOWN)

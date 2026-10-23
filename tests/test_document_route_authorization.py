@@ -125,7 +125,7 @@ def test_document_download_and_preview_allow_matching_resource_scope(monkeypatch
     assert client.get("/api/v1/documents/finance.txt/preview", headers=headers).status_code == 200
 
 
-def test_owner_may_open_their_own_document_outside_the_resource_department(monkeypatch, tmp_path):
+def test_owner_may_not_open_their_own_document_outside_the_resource_department(monkeypatch, tmp_path):
     from app.api.v1 import chat
     from app.main import app
 
@@ -150,8 +150,8 @@ def test_owner_may_open_their_own_document_outside_the_resource_department(monke
         headers=_token_headers("alice"),
     )
 
-    assert response.status_code == 200
-    assert response.text == "protected"
+    assert response.status_code == 403
+    assert response.json()["detail"] == "department_scope_denied"
 
 
 def test_administrator_without_a_department_opens_any_in_scope_document(monkeypatch, tmp_path):

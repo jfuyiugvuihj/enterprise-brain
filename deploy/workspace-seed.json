@@ -127,7 +127,8 @@
   "datasets": [
     {
       "path": "data/报销明细表.csv",
-      "owner": "dataowner"
+      "owner": "dataowner",
+      "classification": 1
     }
   ]
 }

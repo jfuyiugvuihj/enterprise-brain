@@ -51,6 +51,13 @@ describe('A · 出处那张脸：四态各说各的', () => {
     expect(face.headline).not.toContain('未展示')
   })
 
+  it('失败轮次把资料称为检索命中，不冒充完成回答的引用', () => {
+    const face = sourcesFace({ rows: [row()], hitCount: 1, hiddenCount: 0 }, { answerFailed: true })
+    expect(face.headline).toBe('本轮检索命中 1 处资料')
+    expect(face.reason).toContain('本轮处理失败')
+    expect(face.headline).not.toContain('回答引用')
+  })
+
   it('一条没检到：说的是「没有检索到可用文档」，且不出现「未展示」那句', () => {
     const face = sourcesFace({ rows: [], hitCount: 0, hiddenCount: 0, scopeReasonCode: '' })
     expect(face.kind).toBe('none')

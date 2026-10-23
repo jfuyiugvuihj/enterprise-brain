@@ -235,7 +235,8 @@ def test_the_owner_reads_its_own_ticket_and_the_cancel_door_agrees(client, queue
     assert own.json()["result"] == ANSWER_BODY, "本人读自己的单子，那一格正文照旧交得回来"
     cancelled = client.post("/api/v1/queue/" + target + "/cancel")
     assert cancelled.status_code == 200, cancelled.text
-    assert queue.is_cancelled(target), "本人这一扇门要真的把取消落下，只回一张脸不算"
+    assert not queue.is_cancelled(target), "已完成的一轮不因随后取消而伪装被撤回"
+    assert queue.status(target) == "done"
 
 
 def test_the_cancel_door_shares_that_one_owner_reading(client, queue):

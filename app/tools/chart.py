@@ -111,6 +111,11 @@ def _label_overlap_suggestion(n: int, chart_type: str) -> str | None:
         return f"当前 {n} 个柱状标签已自动旋转并间隔显示。建议改用横向柱状图(`barh`)或折线图(`line`)以获得更好效果。"
     return None
 
+
+def _bar_value_label(value: float) -> str:
+    display = 0 if value == 0 else value
+    return f"{display:,.1f}" if display % 1 else f"{display:,.0f}"
+
 # ==================== 图表函数 ====================
 
 def bar_chart(labels: list[str], values: list[float],
@@ -155,7 +160,7 @@ def bar_chart(labels: list[str], values: list[float],
         ax.set_xlim(*value_limits)
         # 数值标注
         for bar, v in zip(bars, values):
-            ax.annotate(f"{v:,.1f}" if v % 1 else f"{v:,.0f}",
+            ax.annotate(_bar_value_label(v),
                         (v, bar.get_y() + bar.get_height() / 2),
                         xytext=(-5 if v < 0 else 5, 0), textcoords="offset points",
                         ha="right" if v < 0 else "left", va="center",
@@ -167,7 +172,7 @@ def bar_chart(labels: list[str], values: list[float],
         ax.set_ylim(*value_limits)
         # 数值标注（柱顶）
         for bar, v in zip(bars, values):
-            ax.annotate(f"{v:,.1f}" if v % 1 else f"{v:,.0f}",
+            ax.annotate(_bar_value_label(v),
                         (bar.get_x() + bar.get_width() / 2, v),
                         xytext=(0, -5 if v < 0 else 5), textcoords="offset points",
                         ha="center", va="top" if v < 0 else "bottom",

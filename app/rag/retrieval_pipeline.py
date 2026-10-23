@@ -425,6 +425,11 @@ class BM25Searcher:
         self.bm25: Optional[BM25Okapi] = None
         self._lock = threading.RLock()
 
+    def invalidate(self):
+        """Drop cached chunks when an access change could not be refreshed."""
+        with self._lock:
+            self.corpus, self.documents, self.bm25 = [], [], None
+
     def build_index(self):
         """Build lexical retrieval from the same PostgreSQL corpus as semantic retrieval."""
         with self._lock:
@@ -460,6 +465,7 @@ class BM25Searcher:
                     # 写入具体密级，所以本缺陷只影响遗留/外部直写的行，属纵深防御，不是现行漏权。
                     "classification": meta.get("classification"),
                     "department": meta.get("department", ""),
+                    "visibility": meta.get("visibility", "private"),
                 })
 
             self.corpus = corpus

@@ -25,8 +25,8 @@ export const FEED_TAB_PARAM = 'tab'
  * 把它写成表里的一列，面板换需求时改这张表就够，不用去组件里加 if。
  */
 export const FEED_TABS = [
-  { id: 'docs', label: '知识库', component: DocPanel, needsUserRole: true },
-  { id: 'data', label: '经营数据', component: DataPanel },
+  { id: 'docs', label: '知识文档', component: DocPanel, needsUserRole: true },
+  { id: 'data', label: '经营数据', component: DataPanel, needsUserRole: true },
 ]
 
 /** 没有 tab 参数时进哪一枚标签：取表的顺序，不另写一个「默认值」常数。 */

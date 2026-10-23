@@ -116,17 +116,17 @@ def test_the_image_installs_a_version_pinned_postgresql_client() -> None:
         "装了不带版本的 metapackage：它解析成发行版此刻顺手带的那一枚，那个数字不写在 Dockerfile 里")
 
 
-def test_the_client_major_is_not_older_than_the_postgres_the_stack_runs() -> None:
-    """pg_dump 只肯打不大于自己的服务端：客户端大版本必须**不低于** pgvector/pgvector:pgNN。
-
-    R608（10-03）把这格从「相等」放宽成「不低于」。按相等钉等于把镜像永远钉在一枚装不出来的包上：
-    16 的客户端只有 PGDG 出，而 PGDG 在这台机与任何客户内网都取不到（见 Dockerfile 那段）。
-    放宽的凭据不是推理，是同一小时的现取——pg_dump 17.11 打 16.15 的服务端交回 79,899,932 B
-    custom 归档，pg_dumpall --globals-only rc=0。收紧的那一半仍然有牙：客户端比服务端老就是
-    R596 抓到的那枚病，本钉当场红。
-    """
-    assert int(_client_major_in_image()) >= int(_server_major_in_the_stack()), (
-        "compose 抬了服务端而镜像里还是旧客户端：备份腿会在版本检查上当场死")
+def test_backup_restore_tools_match_postgres_the_stack_runs() -> None:
+    """A newer dump client can write an archive that the older server cannot restore."""
+    major = _server_major_in_the_stack()
+    instructions = _instructions()
+    assert int(_client_major_in_image()) >= int(major)
+    assert f"FROM pgvector/pgvector:pg{major} AS pg16_client" in instructions
+    for tool in EXPECTED_TOOLS:
+        assert (
+            f"COPY --from=pg16_client /usr/lib/postgresql/{major}/bin/{tool} "
+            f"/usr/local/bin/{tool}"
+        ) in instructions, tool
 
 
 def test_no_second_postgresql_client_major_is_pulled_in() -> None:

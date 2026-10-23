@@ -85,6 +85,14 @@ const renderCard = props => renderToString(h({ render: () => h(AnswerHeadlineCar
 const cardProp = (rows, extra = {}) => headlineFromEnvelope(cardData(rows, extra))
 
 describe('判据 ④ · 三态各一张脸', () => {
+  it('失败轮次虽有错误正文，首屏卡也不称回答已到', async () => {
+    const html = await renderCard({ headline: cardProp([row('travel-policy.pdf')]),
+      hasAnswer: true, answerFailed: true, streaming: false })
+    const screen = text(html)
+    expect(screen).toContain('本轮处理失败')
+    expect(screen).not.toContain('回答正文已到')
+  })
+
   it('态一｜拿到卡且正文已到：filled，且明写「不是结论」', async () => {
     const html = await renderCard({ headline: cardProp([row('travel-policy.pdf')]), hasAnswer: true, streaming: false })
     const screen = text(html)

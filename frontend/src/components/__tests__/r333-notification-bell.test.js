@@ -383,6 +383,45 @@ describe('R333 判据④ · 重复点同一枚不报错，changed=false 时未�
     expect(writes.map(call => call.length)).toEqual([2, 2, 2])
   })
 
+  it('批量划掉先展示完整数量，确认后把已读和未读跨页划掉', async () => {
+    const ids = Array.from({ length: 120 }, (_item, index) => 'alert:' + (index + 1))
+    const pages = [
+      inboxPage({ notifications: ids.slice(0, 100).map((id, index) => row(id, index % 2 ? 'read' : 'unread')), total: 120, has_more: true }),
+      inboxPage({ notifications: ids.slice(100).map(id => row(id, 'read')), total: 120, has_more: false, offset: 100 }),
+    ]
+    const bindings = await mountBindings()
+    await openPanelWithRows(bindings, pages[0])
+    http.get.mockReset()
+    http.get.mockResolvedValueOnce({ data: pages[0] })
+      .mockResolvedValueOnce({ data: pages[1] })
+      .mockResolvedValueOnce({ data: inboxPage({ notifications: [], total: 0, unread_total: 0 }) })
+
+    await bindings.prepareDismissAll()
+    expect(bindings.dismissCandidateCount.value).toBe(120)
+    expect(http.post).not.toHaveBeenCalled()
+    expect(await renderState(bindings)).toContain('确认划掉 120 条')
+
+    const result = await bindings.confirmDismissAll()
+    expect(result.requested).toBe(120)
+    expect(http.post.mock.calls.map(call => call[0])).toEqual(Array(3).fill('/notifications/dismiss'))
+    expect(http.post.mock.calls.map(call => call[1].ids.length)).toEqual([50, 50, 20])
+    expect(bindings.rows.value).toHaveLength(0)
+    expect(await renderState(bindings)).toContain('已处理 120 条')
+  })
+
+  it('通知来源只返回部分条目时不把这一页称为全部，也不发送划掉请求', async () => {
+    const bindings = await mountBindings()
+    await openPanelWithRows(bindings, inboxPage({ notifications: [row('alert:1')] }))
+    http.get.mockReset()
+    http.get.mockResolvedValue({ data: inboxPage({ notifications: [row('alert:1')], is_exact: false }) })
+
+    expect(await bindings.prepareDismissAll()).toBeNull()
+    expect(bindings.dismissCandidateCount.value).toBe(0)
+    expect(bindings.writeFailure.value.title).toBe('无法准备批量划掉')
+    expect(bindings.writeFailure.value.description).toContain('只返回了部分条目')
+    expect(http.post).not.toHaveBeenCalled()
+  })
+
   it('写失败的句子说的是「这次动作没能改成」，条数仍以重新读取为准，不许把半截成功画成完成', async () => {
     const bindings = await mountBindings()
     await openPanelWithRows(bindings, inboxPage({ notifications: [row('alert:12')] }))
@@ -527,16 +566,16 @@ describe('R333 判据⑤ · 通知是那三本账的投影，这里不开第二�
     expect(bellCode).not.toMatch(/unread[^\n]*[-+]/)
    expect(bellCode).not.toMatch(/unread\.value\s*[-+*/]/)
     expect(bellCode).not.toMatch(/unread\s*=\s*unread/)
-    expect(bellCode).not.toMatch(/receipt\.changed/)
+    expect(bellCode).not.toMatch(/unread\.value\s*=\s*receipt\.changed/)
     expect(bellCode).not.toMatch(/length.*\|\|.*unread|unread.*\|\|.*length/)
   })
 
   it('壳层只多了一枚挂载点：App.vue 仍然自己不发通知请求、不读台账、不出现第二处通知字样', () => {
-    expect(appCode).toMatch(/<NotificationBell \/>/)
+    expect(appCode).toMatch(/<NotificationBell\s+ref="notificationBell"\s*\/>/)
     expect(appCode).toMatch(/from '\.\/components\/NotificationBell\.vue'/)
     expect(appCode).not.toMatch(/notifications|\/notifications/)
     expect(appCode).not.toMatch(/http\.get\(|authedFetch\(|localStorage\.(get|set)Item\('notif/)
-    expect(appCode.match(/<UiButton/g) || []).toHaveLength(8)
+    expect(appCode.match(/<NotificationBell\b/g) || []).toHaveLength(1)
   })
 })
 
@@ -634,17 +673,19 @@ function topbarButtons(html) {
   return items
 }
 
-describe('R333 庚 · 真壳层（App 自己那份 ssrRender）：顶栏那一段恰好退出 + 铃铛两枚', () => {
-  it('两枚都是真 <button>，都出自 UiButton，一枚不多一枚不少', async () => {
+describe('R333 庚 · 真壳层（App 自己那份 ssrRender）：顶栏有铃铛、退出和手机个人菜单', () => {
+  it('铃铛和退出保持原有语义，手机菜单有独立按钮', async () => {
     const topbar = await renderTopbar(STAFF_SEED)
     const buttons = topbarButtons(topbar)
-    expect(buttons, '顶栏那一段的枚数不是「退出 + 铃铛」两枚了：要加第三枚，先给它一句诚实出处，再来改本组这一枚钉').toHaveLength(2)
-    buttons.forEach(item => {
+    expect(buttons).toHaveLength(3)
+    buttons.slice(0, 2).forEach(item => {
       expect(item.attrs, '这一枚不是 UiButton 画的：' + item.attrs).toContain('ui-button')
       expect(/ui-button--(primary|secondary|ghost|danger)/.test(item.attrs), '档位类没算出来：' + item.attrs).toBe(true)
     })
     expect(/class="[^"]*notif__bell[^"]*"/.test(buttons[0].attrs), '第一枚不是铃铛：' + buttons[0].attrs).toBe(true)
     expect(/class="[^"]*logout-link[^"]*"/.test(buttons[1].attrs), '第二枚不是退出：' + buttons[1].attrs).toBe(true)
+    expect(buttons[2].attrs).toContain('mobile-profile-trigger')
+    expect(buttons[2].attrs).toContain('aria-controls="mobile-profile-menu"')
   })
 
   it('铃铛在顶栏里画的是「还没读出来」那一张脸：SSR 阶段一个数字都不许凭空摆（0 与未知不是 3）', async () => {

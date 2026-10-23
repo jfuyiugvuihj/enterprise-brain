@@ -213,8 +213,9 @@ export function openButtonLabel(state) {
 </script>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+const PdfPages = defineAsyncComponent(() => import('./PdfPages.vue'))
 import { errorDetail, http, isPermissionDenied } from '../lib/http'
 import { fetchArtifactBlob } from '../lib/artifacts'
 import { UiButton, UiEmptyState, UiErrorState, UiLoadingState } from './ui'
@@ -238,6 +239,9 @@ const deletingId = ref('')
 const openingId = ref('')
 const previewId = ref('')
 const previewUrl = ref('')
+const previewPdf = ref(false)
+const downloadingId = ref('')
+const downloadError = ref('')
 const actionError = ref(null)
 // R291：同上，与 actionError 同生同灭。发不发 GET 失败、还是压根没有错误对象（无地址那一发），
 // 这一格就留 null —— 没有原文就不长详情区，前端不替后端编一句话。
@@ -264,6 +268,8 @@ function releasePreview() {
   activeHandle = null
   previewId.value = ''
   previewUrl.value = ''
+  previewPdf.value = false
+  downloadError.value = ''
 }
 
 function dropList() {
@@ -341,6 +347,24 @@ function saveBlob(handle, item) {
   link.click()
 }
 
+async function downloadArtifact(item) {
+  if (!item || downloadingId.value) return
+  downloadingId.value = item.artifactId
+  downloadError.value = ''
+  try {
+    const response = await http.post(`/artifacts/${encodeURIComponent(item.artifactId)}/download-link`)
+    const url = response?.data?.url
+    if (typeof url !== 'string' || !/^\/api\/v1\/artifacts\/attachment\/[A-Za-z0-9_-]{43}$/.test(url)) {
+      throw new Error('下载地址无效')
+    }
+    window.location.assign(url)
+  } catch (err) {
+    downloadError.value = errorDetail(err, '文件没能下载，请重试。')
+  } finally {
+    downloadingId.value = ''
+  }
+}
+
 async function openArtifact(item) {
   if (!item) return
   if (previewId.value === item.artifactId) { releasePreview(); return }
@@ -362,6 +386,10 @@ async function openArtifact(item) {
     if (isOpenableImage(handle.mediaType)) {
       previewId.value = item.artifactId
       previewUrl.value = handle.objectUrl
+    } else if (handle.mediaType === 'application/pdf' || item.filename?.toLowerCase().endsWith('.pdf')) {
+      previewId.value = item.artifactId
+      previewUrl.value = handle.objectUrl
+      previewPdf.value = true
     } else {
       saveBlob(handle, item)
     }
@@ -475,22 +503,31 @@ defineExpose({ loadArtifacts, reload })
           data-testid="artifact-item"
         >
           <span class="artifact-type">{{ item.typeLabel }}</span>
-          <span class="artifact-main">
+          <div class="artifact-main">
             <span class="artifact-name">{{ item.filename }}</span>
             <span class="artifact-meta">
               {{ item.createdAt }}
               <template v-if="item.expiryText">· {{ item.expiryText }}</template>
             </span>
-            <span
-              class="artifact-source"
-              :class="'artifact-source--' + item.lineage.face"
-              :title="item.lineage.title"
-              data-testid="artifact-lineage"
-            >{{ item.lineage.text }}</span>
-            <span v-if="item.sourceVersionLabel" class="artifact-source">{{ item.sourceVersionLabel }}</span>
-            <span v-if="item.sourceArtifactIds.length" class="artifact-source" data-testid="artifact-predecessors">关联 {{ item.sourceArtifactIds.length }} 份先前成果或图表；编号 {{ item.sourceArtifactIds.join('、') }}</span>
-            <RouterLink v-if="item.sourceAlertId" :to="{ path: '/insights', query: { alert: item.sourceAlertId } }" class="artifact-source">返回异常提醒 #{{ item.sourceAlertId }}</RouterLink>
-          </span>
+            <div class="artifact-desktop-provenance">
+              <span
+                class="artifact-source"
+                :class="'artifact-source--' + item.lineage.face"
+                :title="item.lineage.title"
+                data-testid="artifact-lineage"
+              >{{ item.lineage.text }}</span>
+              <span v-if="item.sourceVersionLabel" class="artifact-source">{{ item.sourceVersionLabel }}</span>
+              <span v-if="item.sourceArtifactIds.length" class="artifact-source" data-testid="artifact-predecessors">关联 {{ item.sourceArtifactIds.length }} 份先前成果或图表；编号 {{ item.sourceArtifactIds.join('、') }}</span>
+              <RouterLink v-if="item.sourceAlertId" :to="{ path: '/insights', query: { alert: item.sourceAlertId } }" class="artifact-source">返回异常提醒 #{{ item.sourceAlertId }}</RouterLink>
+            </div>
+            <details class="artifact-mobile-provenance" data-testid="artifact-mobile-provenance">
+              <summary>来源与版本</summary>
+              <p :title="item.lineage.title">{{ item.lineage.text }}</p>
+              <p v-if="item.sourceVersionLabel">{{ item.sourceVersionLabel }}</p>
+              <p v-if="item.sourceArtifactIds.length">关联 {{ item.sourceArtifactIds.length }} 份先前成果或图表；编号 {{ item.sourceArtifactIds.join('、') }}</p>
+              <RouterLink v-if="item.sourceAlertId" :to="{ path: '/insights', query: { alert: item.sourceAlertId } }">返回异常提醒 #{{ item.sourceAlertId }}</RouterLink>
+            </details>
+          </div>
           <span class="artifact-actions">
             <UiButton v-if="item.sessionId" variant="secondary" size="sm" data-testid="artifact-return-analysis"
               @click="router?.push({ name: 'chat', query: { session: item.sessionId } })"
@@ -523,7 +560,20 @@ defineExpose({ loadArtifacts, reload })
         </div>
       </div>
 
-      <figure v-if="previewId" class="artifact-preview" data-testid="artifact-preview">
+      <Teleport to="body">
+        <div v-if="previewId && previewPdf" class="artifact-pdf-overlay" data-testid="artifact-pdf-preview" @click.self="releasePreview">
+          <section class="artifact-pdf-dialog" role="dialog" aria-modal="true" :aria-label="findRow(previewId)?.filename || 'PDF 预览'">
+            <header>
+              <strong>{{ findRow(previewId)?.filename }}</strong>
+              <UiButton variant="secondary" size="sm" :loading="downloadingId === previewId" @click="downloadArtifact(findRow(previewId))">下载</UiButton>
+              <UiButton variant="ghost" size="sm" @click="releasePreview">关闭</UiButton>
+            </header>
+            <p v-if="downloadError" class="artifact-download-error" role="alert">{{ downloadError }}</p>
+            <PdfPages :src="previewUrl" />
+          </section>
+        </div>
+      </Teleport>
+      <figure v-if="previewId && !previewPdf" class="artifact-preview" data-testid="artifact-preview">
         <img :src="previewUrl" :alt="findRow(previewId) ? findRow(previewId).filename : '产物内容'" />
         <figcaption>{{ findRow(previewId) ? findRow(previewId).filename : '' }}</figcaption>
       </figure>
@@ -641,6 +691,9 @@ defineExpose({ loadArtifacts, reload })
   font-style: italic;
 }
 
+.artifact-desktop-provenance { display: flex; flex-direction: column; gap: var(--s-1); }
+.artifact-mobile-provenance { display: none; }
+
 .artifact-actions {
   display: flex;
   flex: 0 0 auto;
@@ -677,5 +730,24 @@ defineExpose({ loadArtifacts, reload })
   margin: var(--s-2) 0 0;
   color: var(--danger);
   font-size: var(--t-xs);
+}
+
+.artifact-pdf-overlay { position: fixed; z-index: 110; inset: 0; display: grid; place-items: center; padding: 12px; background: var(--overlay-scrim); }
+.artifact-pdf-dialog { display: flex; flex-direction: column; width: min(900px, 100%); height: calc(100vh - 24px); height: calc(100dvh - 24px); min-height: 0; overflow: hidden; border-radius: 10px; background: var(--surface-1); }
+.artifact-pdf-dialog header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-1); }
+.artifact-pdf-dialog header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-pdf-dialog header .ui-button { min-height: 44px; }
+.artifact-download-error { margin: 0; padding: 8px 12px; color: var(--danger); }
+.artifact-pdf-dialog .pdf-pages { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+
+@media (max-width: 900px) {
+  .artifact-item { flex-wrap: wrap; align-items: flex-start; }
+  .artifact-main { flex-basis: calc(100% - 64px); overflow-wrap: anywhere; }
+  .artifact-desktop-provenance { display: none; }
+  .artifact-mobile-provenance { display: block; color: var(--text-2); font-size: var(--t-xs); }
+  .artifact-mobile-provenance summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--accent); }
+  .artifact-mobile-provenance p { margin: 0 0 var(--s-1); overflow-wrap: anywhere; }
+  .artifact-actions { flex-basis: 100%; flex-wrap: wrap; }
+  .artifact-actions .ui-button { min-height: 44px; }
 }
 </style>

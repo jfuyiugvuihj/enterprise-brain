@@ -4,8 +4,41 @@ from __future__ import annotations
 import re
 
 
+def independent_period_questions(question: str) -> list[tuple[str, str]]:
+    """Split numbered, independently scoped statistics before any calculation."""
+    markers = list(re.finditer(r"[①②③④⑤⑥⑦⑧⑨⑩]|(?<!\d)(?:10|[1-9])[.、)）](?=\s|[\u4e00-\u9fff])", question))
+    if len(markers) < 2:
+        return []
+    date = r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
+    range_pattern = rf"{date}\s*(?:至|到|~|～)\s*{date}"
+    prefix = question[:markers[0].start()]
+    if re.search(date + r"|(?<!\d)\d{4}[-/]\d{1,2}(?![\d/-])", prefix):
+        return []
+    scopes: list[str] = []
+    items: list[tuple[str, str]] = []
+    for index, marker in enumerate(markers):
+        end = markers[index + 1].start() if index + 1 < len(markers) else len(question)
+        item = question[marker.end():end].strip(" ：:；;。\n")
+        ranges = re.findall(range_pattern, item)
+        without_ranges = re.sub(range_pattern, "", item)
+        months = re.findall(r"(?<!\d)\d{4}[-/]\d{1,2}(?![\d/-])", without_ranges)
+        if len(ranges) + len(months) != 1 or not re.search(r"合计|总额|总计|记录数|平均|均值|多少", item):
+            return []
+        scopes.append((ranges or months)[0])
+        items.append((marker.group(), item))
+    return items if len(set(scopes)) > 1 else []
+
+
 def is_review_question(question: str) -> bool:
-    return bool(re.search(r"核查|核验|核对", question) and re.search(r'制度|合规|审批要求|规章', question))
+    return bool(re.search(r"核查|核验|核对|是否符合|是否满足|合规", question)
+                and re.search(r'制度|合规|审批要求|规章|规则|规定|标准', question))
+
+
+def is_expense_precheck_request(question: str) -> bool:
+    """Only an explicit expense self-check may use the amount precheck worker."""
+    return bool(re.search(r"预审|自查", question)
+                and re.search(r"报销|费用|住宿费|差旅", question)
+                and re.search(r"\d+(?:\.\d+)?\s*(?:元|块)|金额\s*\d+|超标|超额|额度|限额", question))
 
 
 def requested_documents_valid(task: dict, principal) -> bool:
@@ -20,6 +53,31 @@ def requested_documents_valid(task: dict, principal) -> bool:
                 or str(current.get('version') or '') != reference['version_id']):
             return False
     return True
+
+
+def document_selection_context(names: list[str], previous: dict) -> dict:
+    """Pin a document-only task to its first selected versions."""
+    if not names:
+        return {}
+    selected = sorted(dict.fromkeys(names))
+    earlier = previous.get('requested_documents') or []
+    if sorted(item.get('filename') for item in earlier) == selected:
+        return {'requested_documents': [dict(item) for item in earlier]}
+    from app.documents.catalog import latest_document_version
+
+    return {'requested_documents': [
+        {'filename': name, 'version_id': str((latest_document_version(name) or {}).get('version') or '')}
+        for name in selected
+    ]}
+
+
+def legacy_document_selection_unpinned(previous: dict) -> bool:
+    """Old document-only sessions lack a trustworthy selected-version snapshot."""
+    if previous.get('document_selection') or previous.get('task_context'):
+        return False
+    return any(str(getattr(message, 'content', '')).startswith('仅依据以下文件')
+               for message in previous.get('messages') or []
+               if type(message).__name__ == 'HumanMessage')
 
 
 def _with_document_selection(context: dict, documents: list[dict] | None) -> dict:

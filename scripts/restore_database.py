@@ -38,6 +38,8 @@ from urllib.parse import unquote, urlparse
 
 from dotenv import load_dotenv
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 
 def _pg_environment(database_url: str) -> tuple[dict[str, str], str]:
     parsed = urlparse(database_url)

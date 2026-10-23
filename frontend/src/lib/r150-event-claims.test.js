@@ -227,6 +227,15 @@ describe('B · 出处帧读成事实（lib/sessions.js 只做搬运）', () => {
     expect(bare.scopeReasonCode).toBe('')
   })
 
+  it('后端明确返回 null 分数时，来源卡不误写成相关度 0', () => {
+    const source = sourcesFromEnvelope({ sources: [{ source: '制度.pdf', chunk_index: 0,
+      score: null, score_type: null, document_version_id: null, classification: null }] })
+    expect(source.rows[0].score).toBe(null)
+    expect(source.rows[0].versionId).toBe('')
+    expect(source.rows[0].classification).toBe('')
+    expect(source.rows[0].chunkIndex).toBe(0)
+  })
+
   it('没有 source 文件名的行不进可画集合（画一条空的引用条比不画更坏）', () => {
     const bare = sourcesFromEnvelope({ sources: [{ source: '   ' }, { source: '真文件.pdf', source_id: 'x' }] })
     expect(bare.rows.map(row => row.filename)).toEqual(['真文件.pdf'])

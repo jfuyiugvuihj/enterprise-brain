@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from app.common.departments import canonical_department
+
 from app.agents.contracts import AuthorizationDecision, ResourceScope
 from app.common.identity import Principal
 from app.common.permissions import (
@@ -28,12 +30,15 @@ _CLASSIFICATION_LEVELS = {
 # An unowned document row is a legacy row, never a public document.
 _DOCUMENT_RESOURCE_TYPE = "document"
 
-# Actions a subject always holds over a resource that belongs to them: they can open
-# it, take it back down and remove it. Functional capabilities are not ownership
-# rights -- analyzing, exporting or approving content is granted by a role, and
-# owning one document must never confer an administrative capability, so the
-# manage/audit actions are absent from this set as well.
-_OWNER_CONTROLLED_ACTIONS = frozenset({ACTION_VIEW, ACTION_DOWNLOAD, ACTION_DELETE})
+# Ownership identifies a caller's private output, but it never bypasses the
+# caller's role, current department, or the resource's classification.
+_OWNER_CONTROLLED_ACTIONS = frozenset({ACTION_VIEW, ACTION_DOWNLOAD})
+
+# Enterprise-wide sharing is an explicit publication of level-1 material. It never
+# applies to level 2 or 3 and never substitutes for a department scope on those.
+_ENTERPRISE_VISIBILITIES = frozenset(
+    {"enterprise", "enterprise_shared", "enterprise-shared", "tenant", "company"}
+)
 
 # Actions that change a resource or move it out of the platform. A department
 # mismatch on one of these is not a scope question: the caller has no authority
@@ -124,6 +129,11 @@ def _is_unowned(value: Any) -> bool:
     return value is None or str(value).strip() == ""
 
 
+def _is_enterprise_shared(resource: dict[str, Any]) -> bool:
+    visibility = str(resource.get("visibility") or "").strip().lower()
+    return visibility in _ENTERPRISE_VISIBILITIES
+
+
 def authorization_decision(
     principal: Principal | None,
     resource: dict[str, Any] | ResourceScope | None,
@@ -141,18 +151,6 @@ def authorization_decision(
     resource_attributes = None if resource is None else _resource_attributes(resource)
     owner_id = _owner_id_of(resource_attributes)
     administrator = _is_administrator(principal, permissions)
-
-    # Ownership is a property of the resource, not of a single action. The subject a
-    # document belongs to may view, download, analyze, export and delete it, so this
-    # rule is no longer limited to ACTION_VIEW and is evaluated before the role
-    # gate: otherwise an owner without a delete grant could never clean up their own
-    # content, which is what blocked the whole document lifecycle.
-    if (
-        not _is_unowned(owner_id)
-        and str(owner_id) == str(principal.user_id)
-        and action in _OWNER_CONTROLLED_ACTIONS
-    ):
-        return _decision(True, "owner_match", ("owner_match",))
 
     if action not in permissions:
         return _decision(False, "permission_denied")
@@ -185,6 +183,8 @@ def authorization_decision(
     classification = _classification_level(resource["classification"])
     if classification is None:
         return _decision(False, "resource_scope_invalid")
+    if classification < 1:
+        return _decision(False, "resource_scope_invalid")
     if classification > principal.clearance:
         return _decision(False, "clearance_insufficient")
 
@@ -192,7 +192,12 @@ def authorization_decision(
     if resource_departments is None:
         department = str(resource.get("department") or "")
         resource_departments = [department] if department else []
-    resource_departments = {str(value) for value in resource_departments if str(value)}
+    resource_departments = {
+        canonical_department(value) for value in resource_departments
+        if value is not None and str(value).strip()
+    }
+    if not resource_departments:
+        return _decision(False, "resource_scope_missing")
 
     if administrator:
         # Explicit super-user semantics. Clearance still applies, but an
@@ -201,15 +206,37 @@ def authorization_decision(
         # an ordinary department match in the audit trail.
         return _decision(True, "administrator_scope", ("clearance", "administrator_scope"))
 
-    principal_departments = {str(principal.department), *(str(value) for value in principal.department_ids)}
+    principal_departments = {
+        canonical_department(value) for value in (principal.department, *principal.department_ids)
+        if value is not None and str(value).strip()
+    }
     principal_departments.discard("")
-    if not resource_departments:
-        return _decision(False, "resource_scope_missing")
+
+    if _is_enterprise_shared(resource) and classification == 1:
+        if principal_departments:
+            return _decision(
+                True,
+                "enterprise_shared",
+                ("classification", "enterprise_shared"),
+            )
+        return _decision(
+            False,
+            "authorization_unavailable",
+            ("enterprise_shared",),
+        )
+
     if not resource_departments.intersection(principal_departments):
         if action in _CONTROLLING_ACTIONS:
             return _decision(False, "permission_denied", ("department_scope_mismatch",))
         return _decision(False, "department_scope_denied", ("department_scope",))
 
+    if (
+        not _is_unowned(owner_id)
+        and str(owner_id) == str(principal.user_id)
+        and action in _OWNER_CONTROLLED_ACTIONS
+        and str(resource.get("resource_type") or "") != _DOCUMENT_RESOURCE_TYPE
+    ):
+        return _decision(True, "owner_match", ("department_scope", "clearance", "owner_match"))
     return _decision(True, "department_scope_match", ("department_scope", "clearance"))
 
 

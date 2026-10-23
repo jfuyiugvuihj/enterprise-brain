@@ -228,6 +228,18 @@ describe('甲 · 看得见：选择框、那句回话、每一轮画回的那张
 })
 
 describe('乙 · 改得动：就地改完，下一轮真发出去的就是它（跑真 send()）', () => {
+  it('从文档问答改选数据表时，同一轮按数据分析发送，避免后端跳过计算', async () => {
+    await mountPanel(dataBackend())
+    authedFetch.mockResolvedValue(ANSWER)
+    mounted.state.chooseLane('qa')
+    mounted.state.chooseDataTable('sales.xlsx')
+    mounted.state.input = '统计销售额并核对制度依据'
+    await mounted.state.send()
+    await settled()
+    expect(bodyOf(0).data_filename).toBe('sales.xlsx')
+    expect(bodyOf(0).lane).toBe('analysis')
+  })
+
   it('选择框改一张表 → 下一轮 /ask 的 body 带的就是这一张', async () => {
     const get = dataBackend()
     await mountPanel(get)

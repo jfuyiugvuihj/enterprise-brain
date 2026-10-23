@@ -89,9 +89,17 @@ export const routes = [
     path: '/approval',
     name: 'approval',
     component: ApprovalPanel,
+    props: { mode: 'pending' },
     // R174 判据③ · 定名「审批与待办」：这一屏今天挂着真待办（GET /hitl/pending）与真审批
     // （POST /approve），而「报销」是一枚业务专属词 —— 客户一装机就以为产品只管报销。
     meta: { screen: true, title: '待办事项', icon: 'M6 4h12v16H6zM9 9h6M9 13h6M9 17h3M5 12l3 3 6-7' },
+  },
+  {
+    path: '/tools/expense-selfcheck',
+    name: 'expense-selfcheck',
+    component: ApprovalPanel,
+    props: { mode: 'selfcheck' },
+    meta: { title: '费用制度自查' },
   },
 
   // R315 判据①④ · 「交成果」是一屏，也是第六枚一级入口：员工嘴里说的是「我上次做的那份东西」，

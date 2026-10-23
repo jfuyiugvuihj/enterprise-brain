@@ -1,11 +1,16 @@
 """Authenticated Artifact content and download routes."""
 import os
+import hashlib
+import json
+import re
+import secrets
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from app.common.audit import record_audit
+from app.common.cache import get_redis
 from app.common.authorization import principal_from_request
 from app.common.logger import logger
 from app.common.permissions import ACTION_DELETE, ACTION_DOWNLOAD, ACTION_VIEW
@@ -25,7 +30,7 @@ _NO_STORE_HEADERS = {
 }
 
 
-def _authorized_artifact(request: Request, artifact_id: str, action: str):
+def _authorized_artifact(request: Request, artifact_id: str, action: str, *, record_allowed: bool = True):
     principal = principal_from_request(request)
     if principal is None:
         raise HTTPException(status_code=401, detail="authentication_required")
@@ -40,16 +45,92 @@ def _authorized_artifact(request: Request, artifact_id: str, action: str):
         require_resource_scope=True,
     )
     source_allowed = decision.allowed and artifact_storage.artifact_sources_allowed(artifact, principal)
-    record_audit(
-        principal,
-        action,
-        "allowed" if source_allowed else "denied",
-        artifact.artifact_id,
-        decision.reason_code if source_allowed else "source_scope_denied",
-    )
+    if not source_allowed or record_allowed:
+        record_audit(
+            principal,
+            action,
+            "allowed" if source_allowed else "denied",
+            artifact.artifact_id,
+            decision.reason_code if source_allowed else "source_scope_denied",
+        )
     if not source_allowed:
         raise HTTPException(status_code=403, detail=decision.reason_code if not decision.allowed else "source_scope_denied")
     return artifact
+
+
+_DOWNLOAD_TICKET_TTL_SECONDS = 120
+_DOWNLOAD_TICKET_PATTERN = re.compile(r"^[A-Za-z0-9_-]{43}$")
+
+
+def _ticket_store():
+    # A process-local fallback would make a ticket fail on another backend worker.
+    if not os.getenv("REDIS_URL", "").strip():
+        raise HTTPException(status_code=503, detail="download_unavailable")
+    return get_redis()
+
+
+def _ticket_key(ticket: str) -> str:
+    return f"artifact-download:{hashlib.sha256(ticket.encode()).hexdigest()}"
+
+
+@router.post("/{artifact_id}/download-link")
+async def create_artifact_download_link(artifact_id: str, request: Request):
+    artifact = _authorized_artifact(request, artifact_id, ACTION_DOWNLOAD, record_allowed=False)
+    principal = principal_from_request(request)
+    ticket = secrets.token_urlsafe(32)
+    payload = json.dumps({"artifact_id": artifact.artifact_id, "username": principal.username})
+    try:
+        _ticket_store().setex(_ticket_key(ticket), _DOWNLOAD_TICKET_TTL_SECONDS, payload)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Artifact download ticket store unavailable: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="download_unavailable") from exc
+    return {"url": f"/api/v1/artifacts/attachment/{ticket}", "expires_in": _DOWNLOAD_TICKET_TTL_SECONDS}
+
+
+@router.get("/attachment")
+async def download_artifact_with_ticket(request: Request):
+    # Nginx rewrites /attachment/<ticket> to this fixed path, keeping the
+    # capability out of backend access logs. It never contains a login JWT.
+    ticket = request.headers.get("X-Download-Ticket", "")
+    if not _DOWNLOAD_TICKET_PATTERN.fullmatch(ticket):
+        raise HTTPException(status_code=404, detail="resource_not_found")
+    try:
+        raw = _ticket_store().get(_ticket_key(ticket))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Artifact download ticket read unavailable: %s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="download_unavailable") from exc
+    if not raw:
+        raise HTTPException(status_code=404, detail="resource_not_found")
+    try:
+        payload = json.loads(raw)
+        artifact_id, username = payload["artifact_id"], payload["username"]
+        from app.common.auth import UserStoreUnavailable, get_user
+        from app.agents.contracts import Principal
+        from psycopg import Error as DatabaseError
+        try:
+            user = get_user(username)
+        except (UserStoreUnavailable, DatabaseError) as exc:
+            raise HTTPException(status_code=503, detail="storage_unavailable") from exc
+        if not user:
+            raise ValueError("user missing")
+        principal = Principal.from_user(user)
+        if principal.status != "active":
+            raise ValueError("account inactive")
+    except (ValueError, TypeError, KeyError) as exc:
+        raise HTTPException(status_code=403, detail="permission_denied") from exc
+    request.state.principal = principal
+    artifact = _authorized_artifact(request, artifact_id, ACTION_DOWNLOAD)
+    return FileResponse(
+        artifact.storage_path,
+        filename=artifact.filename,
+        media_type=artifact.media_type,
+        content_disposition_type="attachment",
+        headers={**_NO_STORE_HEADERS, "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @router.get("/{artifact_id}/content")

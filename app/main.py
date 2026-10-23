@@ -266,6 +266,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         ) or request.url.path in open_platform_paths:
             return await call_next(request)
 
+        # This route validates a short-lived, file-bound capability itself.
+        # It receives no login JWT because Android may hand the download to
+        # another browser process. The edge proxy removes the ticket from
+        # the path before forwarding, so access logs see this fixed path.
+        if request.method == "GET" and request.url.path == "/api/v1/artifacts/attachment":
+            return await call_next(request)
+
         from app.agents.contracts import Principal
         from app.common.auth import get_token_from_request, get_user, verify_token, UserStoreUnavailable
         from psycopg import Error as DatabaseError

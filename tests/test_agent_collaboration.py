@@ -93,7 +93,8 @@ def test_planner_creates_parallel_tasks_for_combined_business_question():
     )
 
     workers = {task["worker"] for task in tasks}
-    assert {"data", "doc", "chart", "approval"} <= workers
+    assert {"data", "doc", "chart"} <= workers
+    assert "approval" not in workers  # Asking for advice is not an amount precheck.
     assert len({task["task_id"] for task in tasks}) == len(tasks)
     assert all(task["status"] == "pending" for task in tasks)
 
@@ -172,7 +173,8 @@ def test_route_main_uses_planner_workers_for_combined_question():
 
     assert rounds[0] == {"data", "doc"}
     assert "chart" not in rounds[0]
-    assert set().union(*rounds) >= {"data", "doc", "chart", "approval"}
+    assert set().union(*rounds) >= {"data", "doc", "chart"}
+    assert "approval" not in set().union(*rounds)
     chart_round = next(index for index, nodes in enumerate(rounds) if "chart" in nodes)
     assert chart_round > 0
     assert rounds[chart_round] == {"chart"}
@@ -182,7 +184,7 @@ def test_route_main_includes_approval_worker_for_approval_question():
     """审批预审要等证据检索完成的那一轮之后才派发，不能在同一 superstep 里空跑。"""
     from app.agents.orchestrator import route_main
 
-    question = "单笔报销金额达到5000元和20000元时，分别需要谁审批，并说明制度依据？"
+    question = "请预审单笔报销金额5000元是否超标，并说明制度依据？"
     tasks = [
         {"worker": "doc", "task_id": "doc-1", "status": "pending", "depends_on": []},
         {"worker": "approval", "task_id": "approval-1", "status": "pending", "depends_on": []},

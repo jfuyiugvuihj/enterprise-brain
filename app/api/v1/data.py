@@ -263,8 +263,6 @@ def _row_scope_status(scope_info: dict) -> dict:
 
 @router.get("/data-files")
 async def list_data_files(request: Request = None):
-    directory = Path(DATA_DIR)
-    directory.mkdir(parents=True, exist_ok=True)
     files = []
     # A registered file the caller is refused at the file level is neither appended to
     # `files` nor dropped in silence: it is counted and its reason kept, so the catalogue
@@ -277,16 +275,11 @@ async def list_data_files(request: Request = None):
     # tests/test_r200_restricted_single_source.py keeps every exit honest to it.
     restricted_withheld: list[tuple[str, str]] = []
     principal = principal_from_request(request) if request is not None else None
-    for path in directory.iterdir():
-        if not path.is_file() or path.suffix.lower() not in DATA_FILE_EXTENSIONS:
+    for record in dataset_registry.active_records():
+        path = Path(record.storage_path)
+        if path.suffix.lower() not in DATA_FILE_EXTENSIONS:
             continue
-        record = dataset_registry.get_active_by_filename(path.name)
         if request is not None:
-            if record is None:
-                # Not a lie and not a refusal: an unregistered file is not part of the
-                # managed catalogue at all (its preview is a 404 too), so the policy was
-                # never consulted and there is no owner to reason about. Kept hidden.
-                continue
             decision = authorization_decision(
                 principal,
                 record.resource_scope,
@@ -309,24 +302,23 @@ async def list_data_files(request: Request = None):
                 continue
         stat = path.stat()
         item = {
-            "filename": path.name,
+            "filename": record.filename,
             "owner_id": _dataset_row_owner_id(record),
             "size": stat.st_size,
             "size_label": _format_data_file_size(stat.st_size),
             "modified_at": datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(timespec="seconds"),
-            "extension": path.suffix.lower(),
+            "extension": Path(record.filename).suffix.lower(),
             "_modified_timestamp": stat.st_mtime,
         }
-        if record is not None:
-            item.update(
-                {
-                    "dataset_id": record.dataset_id,
-                    "version_id": record.version_id,
-                    "classification": record.classification,
-                    "classification_level": _classification_level(record.classification),
-                    "department_ids": list(record.department_ids),
-                }
-            )
+        item.update(
+            {
+                "dataset_id": record.dataset_id,
+                "version_id": record.version_id,
+                "classification": record.classification,
+                "classification_level": _classification_level(record.classification),
+                "department_ids": list(record.department_ids),
+            }
+        )
         files.append(item)
     restricted_count = len(restricted_withheld)
     files.sort(key=lambda item: item["_modified_timestamp"], reverse=True)
@@ -339,25 +331,48 @@ async def list_data_files(request: Request = None):
 
 
 @router.post("/upload-excel")
-async def upload_excel(request: Request, file: UploadFile = File(...), classification: Annotated[str, Form()] = 'internal'):
+async def upload_excel(
+    request: Request,
+    file: UploadFile = File(...),
+    classification: Annotated[str | None, Form()] = None,
+    new_version: Annotated[bool, Form()] = False,
+):
     """上传 Excel/CSV → 解析 → 返回数据画像，并把同一份表格并进知识库（R700）。"""
     filename = _safe_data_filename(file.filename)
     principal = _authorized_principal(request, ACTION_UPLOAD)
-    if not isinstance(classification, str) or _classification_level(classification) not in (1, 2, 3):
-        raise HTTPException(status_code=400, detail='invalid_classification')
+    if new_version:
+        # A new version is an update of an existing dataset, never a way to create one
+        # under an already-used name. The registry keeps the dataset id and appends a
+        # version row, so alert finding keys stay stable across a data refresh.
+        existing = dataset_registry.get_active_by_filename(filename)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="resource_not_found")
+        record = _authorized_dataset(request, filename, ACTION_UPLOAD)
+        if principal.role == "staff" and str(record.owner_id) != str(principal.user_id):
+            raise HTTPException(status_code=403, detail="owner_mismatch")
+        if classification is not None and _classification_level(classification) != _classification_level(record.classification):
+            raise HTTPException(status_code=400, detail="classification_change_requires_management")
+        classification = record.classification
     # 冲突那一格今天起由 `app/documents/file_security.py` 定夺（R700 判据②）：登记表还是本路由
     # 自己查（只有它认得自己的账），但「同名即拒、不是新版本」这条规则写在两路共读的那本字典
     # 旁边，数据集不会悄悄长出知识库的版本语义，反过来也不会。
-    try:
-        guard_dataset_name_conflict(filename, dataset_registry.get_active_by_filename(filename))
-        from app.documents.catalog import latest_document_version
-        guard_dataset_name_conflict(filename, latest_document_version(filename))
-    except DatasetFilenameConflictError as exc:
-        raise HTTPException(status_code=409, detail="dataset_filename_conflict") from exc
+    else:
+        try:
+            guard_dataset_name_conflict(filename, dataset_registry.get_active_by_filename(filename))
+            from app.documents.catalog import latest_document_version
+            guard_dataset_name_conflict(filename, latest_document_version(filename))
+        except DatasetFilenameConflictError as exc:
+            raise HTTPException(status_code=409, detail="dataset_filename_conflict") from exc
+        if classification is None:
+            classification = "1"
+    if not isinstance(classification, str) or _classification_level(classification) not in (1, 2, 3):
+        raise HTTPException(status_code=400, detail="invalid_classification")
+    if _classification_level(classification) > principal.clearance:
+        raise HTTPException(status_code=400, detail="invalid_classification")
     # 拒绝发生在落盘之前：读不动的格式既不该留在 DATA_DIR 里，也不该走到 load_excel 那一步
     # 才炸出一条 import 失败（那正是旧版 .xls 的下场）。
     _refuse_unreadable_data_file(filename)
-    file_path = Path(DATA_DIR) / filename
+    file_path = dataset_registry.new_version_path(filename)
     content = await file.read()
     # 类型与表头两格同样并进那本字典：后缀必须在 `_ALLOWED_TYPES` 里，表头字节必须对得上那一格
     # 声明的签名。于是同一份文件在两条上传路上答同一个码——伪造的 .xlsx 在写第一个字节之前就被
@@ -380,7 +395,7 @@ async def upload_excel(request: Request, file: UploadFile = File(...), classific
         df = await asyncio.to_thread(load_excel, str(file_path))
         dataset = dataset_registry.register(file_path, principal=principal, filename=filename, classification=classification)
     except Exception as exc:
-        if file_path.exists() and dataset_registry.get_active_by_filename(filename) is None:
+        if file_path.exists():
             file_path.unlink()
         if isinstance(exc, DatasetOwnerScopeMissing):
             raise HTTPException(status_code=403, detail=OWNER_SCOPE_REQUIRED) from exc
@@ -405,7 +420,7 @@ async def upload_excel(request: Request, file: UploadFile = File(...), classific
     # 无论成功、被策略排除、还是模型没在，都不许把一次已注册成功的上传回报成故障。
     await index_dataset_copy(
         display_filename=filename,
-        storage_path=str(file_path),
+        storage_path=dataset.storage_path,
         department=str(getattr(principal, "department", "") or ""),
         classification=dataset.classification,
         retriever=_knowledge_base_retriever(),

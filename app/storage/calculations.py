@@ -124,10 +124,18 @@ class CalculationStorage:
                         "authorization_department_ids": sorted(principal.department_ids)}
             if any(key in parameters and parameters[key] != value for key, value in snapshot.items()):
                 return False
-        scope = record["parameters"].get("scope", {})
+        scope = parameters.get("scope", {})
+        department_ids = scope.get("department_ids", [])
+        # Older runs saved an empty scope when the owner had only a primary
+        # department. Recover only that recorded department for that same owner;
+        # current membership alone must not grant access to an old result.
+        if (not department_ids and record["owner_id"] == principal.user_id
+                and parameters.get("department")
+                and parameters["department"] == principal.department):
+            department_ids = [parameters["department"]]
         resource = ResourceScope(
             resource_type="calculation", resource_id=record["calculation_run_id"],
-            owner_id=record["owner_id"], department_ids=scope.get("department_ids", []),
+            owner_id=record["owner_id"], department_ids=department_ids,
             classification=scope.get("classification", ""), visibility="private",
             version_id=record["dataset_version_id"], status=record["status"],
         )

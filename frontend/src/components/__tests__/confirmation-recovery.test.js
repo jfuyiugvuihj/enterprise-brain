@@ -3,7 +3,7 @@ import { h } from 'vue'
 import { renderToString } from '@vue/server-renderer'
 vi.mock('../../lib/http', async (original) => ({ ...await original(), authedFetch: vi.fn(), http: { get: vi.fn() } }))
 import { authedFetch, http } from '../../lib/http'
-import { activeId, hitl, loading, messages, sessions } from '../../lib/sessions'
+import { activeId, hitl, loading, messages, reconcileAuthoritativeBody, sessions } from '../../lib/sessions'
 import ChatPanel from '../ChatPanel.vue'
 import HitlPendingPanel, { decisionView } from '../hitl/HitlPendingPanel.vue'
 async function bindings(component = ChatPanel) {
@@ -21,6 +21,13 @@ beforeEach(() => {
   http.get.mockResolvedValue({ data: { ledger_status: 'awaiting' } })
 })
 describe('确认决定不提前冒充后端结果', () => {
+  it('从待办返回对话时按服务端终态更新步骤，不保留旧待确认牌', async () => {
+    http.get.mockResolvedValue({ data: { messages: [{ role: 'assistant', content: '报告已生成',
+      steps: [{ tool: 'export', status: 'completed' }] }] } })
+    expect(await reconcileAuthoritativeBody()).toBe(true)
+    expect(messages.value[0].content).toBe('报告已生成')
+    expect(messages.value[0].steps[0].status).toBe('completed')
+  })
   it('收到取消终态替换旧等待确认正文，未完成步骤显示取消', async () => {
     messages.value[0].content = '等待你确认，尚未产出回答内容。'
     const body = 'event: request.cancelled\ndata: {"type":"request.cancelled","event_type":"request.cancelled","status":"cancelled"}\n\n'

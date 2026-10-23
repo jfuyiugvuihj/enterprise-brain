@@ -26,6 +26,8 @@
 
 import os
 
+from app.common.departments import canonical_department, department_aliases
+
 from app.common.logger import logger
 
 ROLE_CLEARANCE = {"staff": 1, "manager": 2, "admin": 3, "auditor": 3}
@@ -145,7 +147,7 @@ def filter_dataframe_rows(df, role: str, department: str):
     scoped = df
     rows_in = len(df)
     levels = set(allowed_levels(role))
-    dept = department or ""
+    dept = canonical_department(department)
 
     class_col = next((col for col in ROW_CLASSIFICATION_COLUMNS if col in scoped.columns), None)
     if class_col:
@@ -159,7 +161,10 @@ def filter_dataframe_rows(df, role: str, department: str):
     hidden_account = 0
 
     if dept_col:
-        values = scoped[dept_col].fillna("").astype(str).str.strip()
+        aliases = department_aliases()
+        values = scoped[dept_col].fillna("").astype(str).str.strip().map(
+            lambda value: aliases.get(value, value)
+        )
         blank_rows = int((values == "").sum())
         if scope == ROW_DEPARTMENT_SCOPE_LEGACY:
             # 灰度回退：这一行就是改动前的 :51，逐字保留，给现场留一条退路。

@@ -26,6 +26,7 @@
   --green: #65d49a;
   --shadow-sm: 0 12px 34px rgba(0, 0, 0, .24);
   --shadow-md: 0 30px 110px rgba(0, 0, 0, .44);
+  --overlay-scrim: #0009;
   --radius-xl: 28px;
   --radius-lg: 18px;
   --radius-md: 13px;
@@ -2359,23 +2360,21 @@ textarea:focus-visible {
   }
 
   .reference-workbench .nav-list {
-    display: flex;
+    /* 390px 下六枚入口必须一屏可见：横向滚动的条会把异常、待办与成果藏在屏外，
+       员工看不到入口就等于没有。两行三列，触控目标仍按 44px 走。 */
+    display: block;
     width: 100%;
-    overflow-x: auto;
+    overflow-x: visible;
     gap: 5px;
     scrollbar-width: none;
   }
 
-  .reference-workbench .nav-list::-webkit-scrollbar {
-    display: none;
-  }
-
   .reference-workbench .nav-item {
-    width: auto;
-    min-width: 67px;
-    min-height: 38px;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
     justify-content: center;
-    padding: 0 9px;
+    padding: 0 6px;
   }
 
   .reference-workbench .nav-icon {

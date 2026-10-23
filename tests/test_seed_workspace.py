@@ -98,3 +98,18 @@ def test_every_manifest_dataset_sits_on_disk():
         path = ROOT / str(spec["path"])
         assert path.is_file(), f"dataset {spec['path']!r} is named by the manifest but absent"
         assert spec.get("owner"), f"dataset {spec['path']!r} names no owner"
+
+
+def test_staff_owned_seed_dataset_uploads_at_staff_clearance(monkeypatch, tmp_path):
+    class Response:
+        status_code = 200
+        text = ""
+    class Session:
+        def post(self, _url, **kwargs):
+            assert kwargs["data"]["classification"] == "1"
+            return Response()
+    monkeypatch.setattr(seed, "_login", lambda *_: "token")
+    monkeypatch.setattr(seed, "_session", lambda *_: Session())
+    (tmp_path / "finance.csv").write_text("value\n1\n", encoding="utf-8")
+    manifest = {"datasets": [{"path": "finance.csv", "owner": "dataowner", "classification": 1}]}
+    assert seed.seed_datasets("http://localhost", manifest, set(), {"dataowner": "secret"}, tmp_path, False) == []

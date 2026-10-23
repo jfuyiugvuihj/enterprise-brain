@@ -9,13 +9,17 @@ const precheckMemo = new WeakMap()
 </script>
 
 <script setup>
-import { computed, getCurrentInstance, onMounted, ref } from 'vue'
+import { computed, getCurrentInstance, onMounted, ref, watch } from 'vue'
 import { api } from '../lib/api'
 import { DEPARTMENT_KEY, errorDetail, isPermissionDenied } from '../lib/http'
 import { errorCodeOf, isRetryable, normalizeError } from '../lib/errcodes'
 import { demoForm } from '../devFixtures/approval-demo'
 import { UiButton, UiEmptyState, UiErrorState } from './ui'
 import HitlPendingPanel from './hitl/HitlPendingPanel.vue'
+
+const props = defineProps({ mode: { type: String, default: 'all' } })
+const showPending = computed(() => props.mode !== 'selfcheck')
+const showSelfcheck = computed(() => props.mode !== 'pending')
 
 // R40 判据③：比较用的标准不由这一屏持有。这枚值是发给后端的【口径】，不是一个数 ——
 // 它要求服务端去知识库里把标准检索出来（app/approval/assistant.py 的
@@ -77,7 +81,7 @@ const reusedReading = ref(false)
 const standardFromServer = computed(
   () => result.value !== null && result.value.standard_source === STANDARD_SOURCE_AUTO,
 )
-const standardGiven = computed(() => standardFromServer.value && Boolean(result.value.standard))
+const standardGiven = computed(() => standardFromServer.value && result.value.standard != null)
 const standardEvidence = computed(() => (standardFromServer.value && result.value.standard_evidence) || [])
 const standardLabel = computed(() => {
   if (!standardFromServer.value) return '服务端没回取用口径'
@@ -186,27 +190,30 @@ async function submitCheck(force = false) {
   }
 }
 
-onMounted(submitCheck)
+onMounted(() => { if (showSelfcheck.value) submitCheck() })
+watch(() => props.mode, mode => { if (mode === 'selfcheck') submitCheck() })
 </script>
 
 <template>
-  <div class="panel-shell" data-testid="approval-panel" data-demo="fixtures">
+  <div class="panel-shell" data-testid="approval-panel" :data-demo="showSelfcheck ? 'fixtures' : undefined">
     <header class="panel-head">
       <div>
-        <h3>待办事项</h3>
-        <p>查看待确认操作，或按知识库中的报销标准检查费用是否超标。费用自查提供建议，不办理正式审批。</p>
-        <p>待确认操作可在下方批准或驳回，也可返回对应对话。已确认但执行失败的操作会单独提示，无需重复确认。</p>
+        <h3>{{ showPending ? '待办事项' : '费用制度自查' }}</h3>
+        <p v-if="showPending">查看真实待确认操作。可以批准、驳回，或返回对应对话核对详情；执行失败会单独提示。</p>
+        <p v-if="showSelfcheck">按知识库中的费用标准自查参数。自查仅给出建议，不办理正式业务审批。</p>
       </div>
     </header>
 
     <!-- 这句话已经过时：R13 那半条端点早就落了地，R168 把「等你拍板」那一问从对话流里抽出来，
          接的就是 GET /hitl/pending + POST /approve 两条真端点 —— 也就是下面这一整块。 -->
-    <HitlPendingPanel />
+    <HitlPendingPanel v-if="showPending" />
+
+    <template v-if="showSelfcheck">
 
     <!-- 这一行以下才是一台拿演示初始值预演的计算器：上方那一块待办不是它的一部分。 -->
     <aside class="demo-flag-row" data-testid="approval-demo-flag">
       <span class="demo-flag">演示数据</span>
-      <span class="demo-note">下方金额 {{ form.amount }}、费用类型 {{ form.expense_type }} 为演示初始值，请按实际情况填写。部门取自你这个账号在系统里登记的部门；报销标准由知识库提供，未查到时会明确提示。自查不会生成审批记录，上方待确认操作显示实际任务。</span>
+      <span class="demo-note">下方金额 {{ form.amount }}、费用类型 {{ form.expense_type }} 为演示初始值，请按实际情况填写。部门取自你这个账号在系统里登记的部门；报销标准由知识库提供，未查到时会明确提示。自查不会生成审批记录；待确认操作请到“待办事项”查看。</span>
     </aside>
 
     <!-- F4（checklist L111）当年裁定：这一屏只做「自查」，工单模型 C-1 没建，所以这里既没有
@@ -218,8 +225,7 @@ onMounted(submitCheck)
     <aside class="scope-note" data-testid="approval-scope-note">
       <strong>自查工具，不是审批</strong>
       <p>它回答的只有一个问题：这组费用参数按标准算超没超标。查完不会生成工单，不会记在任何人名下，也不会改变任何单据的状态。</p>
-      <p>待确认操作也可在对话中处理，两处会同步更新。</p>
-      <p>没有待确认操作时显示空列表。执行失败会单独显示原因，不会记为驳回或完成。</p>
+      <p>真实待确认操作在“待办事项”或对应对话中处理，本工具不参与处置。</p>
     </aside>
 
     <div class="panel-grid">
@@ -267,7 +273,7 @@ onMounted(submitCheck)
             <span data-testid="approval-ratio">超比：{{ result.excess_ratio == null ? '算不出' : (Number(result.excess_ratio) * 100).toFixed(1) + '%' }}</span>
           </div>
           <p class="source-line" data-testid="approval-standard-source" :data-standard-source="result.standard_source || ''">
-            {{ standardFromServer ? '标准来自知识库。' : '暂未获得标准来源，请核实后再使用结论。' }}
+            {{ standardGiven ? '标准来自知识库。' : '未从知识库取得可用标准，不能判断是否超标。' }}
           </p>
           <div v-if="standardEvidence.length" class="chips" data-testid="approval-standard-evidence">
             <span v-for="item in standardEvidence" :key="item" class="chip">{{ item }}</span>
@@ -276,6 +282,7 @@ onMounted(submitCheck)
         </div>
       </section>
     </div>
+    </template>
   </div>
 </template>
 

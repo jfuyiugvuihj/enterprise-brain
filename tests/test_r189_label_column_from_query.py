@@ -78,6 +78,12 @@ def _patch_data_leg(monkeypatch, frame) -> None:
 
     monkeypatch.setattr(tools, "_authorized_dataset_files", lambda config: ([("部门销售.xlsx", "p")], None))
     monkeypatch.setattr(dataset_storage.DatasetRegistry, "get_active_by_filename", lambda self, filename: None)
+    # This test checks the answer text; the versioned calculation lifecycle is
+    # covered elsewhere. Keep its persistence boundary from short-circuiting
+    # the answer path before the named-dimension assertion runs.
+    monkeypatch.setattr(tools, "_start_calculation", lambda *args, **kwargs: "test-calculation")
+    monkeypatch.setattr(tools, "_finish_calculation", lambda *args, **kwargs: None)
+    monkeypatch.setattr(tools, "_fail_calculation", lambda *args, **kwargs: None)
     monkeypatch.setattr(tools, "_record_dataset_evidence", lambda config, filename, df: None)
     monkeypatch.setattr(excel, "load_excel", lambda path: frame)
     monkeypatch.setattr(

@@ -740,6 +740,13 @@ class DatasetRegistry:
             raise ValueError("dataset storage path escapes registry root") from exc
         return path
 
+    def new_version_path(self, filename: str) -> Path:
+        """Allocate a fresh file path so a new upload cannot replace prior version bytes."""
+        extension = Path(filename).suffix.lower()
+        directory = self.root / ".dataset-versions"
+        directory.mkdir(parents=True, exist_ok=True)
+        return directory / f"{uuid.uuid4().hex}{extension}"
+
     # --------------------------------------------------------------- legacy JSON ledger
 
     def _legacy_rows(self) -> list[tuple[dict[str, Any], dict[str, Any]]]:

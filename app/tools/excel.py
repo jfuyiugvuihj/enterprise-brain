@@ -215,10 +215,18 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
     # A requested period is a filter, not the min/max date of the eventual result.
     date_token = r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
     periods = re.findall(rf"({date_token})\s*(?:至|到|~|～)\s*({date_token})", query)
-    if periods:
+    months = re.findall(r"(?<!\d)(\d{4}[-/]\d{1,2})(?![\d/-])", query)
+    if (periods and months) or len(set(months)) > 1:
+        raise ValueError("包含多段统计期间，请逐项明确口径。")
+    if periods or months:
         if len(set(periods)) != 1:
-            raise ValueError("日期范围不唯一，请明确一个统计期间。")
-        start, end = (pd.to_datetime(v, errors="coerce") for v in periods[0])
+            if periods:
+                raise ValueError("日期范围不唯一，请明确一个统计期间。")
+        if periods:
+            start, end = (pd.to_datetime(v, errors="coerce") for v in periods[0])
+        else:
+            start = pd.to_datetime(months[0] + "-01", errors="coerce")
+            end = start + pd.offsets.MonthEnd(1) if pd.notna(start) else pd.NaT
         date_columns = [c for c in df.columns if "日期" in str(c) or pd.api.types.is_datetime64_any_dtype(df[c])]
         named_dates = [c for c in date_columns if str(c) in query]
         chosen_dates = named_dates or date_columns
@@ -229,11 +237,21 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
         if values.isna().any():
             raise ValueError(f"日期字段「{column}」有缺失或无法识别的日期，未静默忽略。")
         selected = df.loc[values.between(start, end + pd.Timedelta(days=1), inclusive="left")].copy()
-        selected.attrs["requested_period"] = f"{start:%Y-%m-%d} 至 {end:%Y-%m-%d}（{column}）"
+        selected.attrs["requested_period"] = (f"{start:%Y-%m}（{column}）" if months
+                                             else f"{start:%Y-%m-%d} 至 {end:%Y-%m-%d}（{column}）")
         notes.append(selected.attrs["requested_period"])
     # Resolve common 已经X wording only against values that really exist in the table.
     columns = select_text_columns(df)
     known_values = {str(v) for c in columns for v in domain[c].dropna().unique()}
+    department = next((c for c in columns if str(c) == "部门"), None)
+    if department is not None:
+        mentioned = [str(value) for value in domain[department].dropna().unique()
+            if len(str(value)) > 1 and (
+                re.search(rf"(?:仅|只)\s*{re.escape(str(value))}(?=\s|的|发|记|报|，|。|；|;|$)", query)
+                or re.search(rf"{re.escape(str(value))}\s*(?:{date_token}|\d{{4}}[-/]\d{{1,2}}\b|发生日期|的报销|的记录)", query))]
+        if len(mentioned) == 1:
+            selected = selected.loc[selected[department].astype(str).eq(mentioned[0])].copy()
+            notes.append(f"部门仅包含{mentioned[0]}")
     for value in sorted(known_values, key=len, reverse=True):
         if value.startswith("已") and len(value) > 1:
             query = query.replace("已经" + value[1:], value)
@@ -249,6 +267,16 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
             # Prefer the longest explicit column name (复核状态 must not also name 状态).
             named = [c for c in columns if str(c) in clause]
             named = [c for c in named if not any(str(c) in str(other) for other in named if other != c)]
+            if not values and periods and re.search(date_token, clause):
+                # A combined request can name a date column and one real category
+                # value in the same clause. The date range was already applied above;
+                # it must not become a candidate value for the category column.
+                mentioned = {(c, str(v)) for c in columns if c not in date_columns
+                    for v in domain[c].dropna().unique()
+                    if len(str(v)) > 1 and str(v) in clause}
+                if len(mentioned) == 1:
+                    column, value = next(iter(mentioned))
+                    named, values = [column], [value]
             if not values:
                 raw = clause.strip()
                 for column in named:

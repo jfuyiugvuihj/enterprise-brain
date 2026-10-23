@@ -389,6 +389,7 @@ describe('R168 · 这一屏真的挂上了那一块（真产物 + 源码形状�
     expect(s).not.toMatch(/端点尚未实现/)
     expect(s).not.toMatch(/要等后端的工单模型建起来/)
     // 而「演示数据」那块牌只圈自查计算器：上方那一屏读的是真账本，不许被一并标成演示。
-    expect(s).toMatch(/上方那一屏挂起待办读的是服务端真账本/)
+    expect(s).toMatch(/<HitlPendingPanel v-if="showPending"\s*\/>/)
+    expect(s).toMatch(/<template v-if="showSelfcheck">/)
   })
 })

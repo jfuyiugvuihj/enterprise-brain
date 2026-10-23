@@ -68,11 +68,19 @@ from app.rag.indexing import (
 from app.common.model_handler import ModelHandler, ModelSource
 from app.common.logger import logger
 from app.common.performance import PerformanceStats, RequestBudget
-from app.common.permissions import ACTION_APPROVE, ACTION_DELETE, ACTION_DOWNLOAD, ACTION_UPLOAD, ACTION_VIEW
-from app.common.policy import authorization_decision
+from app.common.permissions import (
+    ACTION_APPROVE,
+    ACTION_DELETE,
+    ACTION_DOWNLOAD,
+    ACTION_MANAGE_USERS,
+    ACTION_UPLOAD,
+    ACTION_VIEW,
+)
+from app.common.policy import authorization_decision, is_administrator
 from app.documents.catalog import (
     build_storage_name,
     current_documents,
+    DocumentVisibilityError,
     public_document_row,
     _database_available as catalog_database_available,
     delete_document_versions,
@@ -81,6 +89,7 @@ from app.documents.catalog import (
     peek_next_document_version,
     record_document_version,
     record_local_document_version,
+    set_document_visibility,
 )
 from app.documents.file_security import (
     UploadSecurityError,
@@ -428,6 +437,7 @@ def _document_source_row(worker: str, evidence: dict) -> dict | None:
         # 这两项就是 ``scope.allows`` 的判据，留在事件里是为了"这条为什么能看"可复核。
         "classification": metadata.get("classification"),
         "department": metadata.get("department"),
+        "visibility": metadata.get("visibility") or "private",
         "permission_checked": bool(evidence.get("permission_checked")),
         "provenance_status": evidence.get("provenance_status"),
     }
@@ -1265,6 +1275,7 @@ def _ensure_documents_table():
                 filename TEXT UNIQUE NOT NULL,
                 classification INT NOT NULL DEFAULT 1,
                 department TEXT,
+                visibility TEXT NOT NULL DEFAULT 'private',
                 owner_id TEXT,
                 size_bytes BIGINT,
                 parse_status TEXT NOT NULL DEFAULT 'pending'
@@ -1288,6 +1299,7 @@ def _upsert_document(
     *,
     size_bytes: int | None = None,
     parse_status: str = "pending",
+    visibility: str = "private",
 ):
     """Keep the logical document row aligned with the version just stored.
 
@@ -1298,11 +1310,12 @@ def _upsert_document(
     _ensure_documents_table()
     with _sess_conn() as conn:
         conn.execute(
-            "INSERT INTO documents (filename, classification, department, owner_id, size_bytes, parse_status) "
-            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "INSERT INTO documents (filename, classification, department, visibility, owner_id, size_bytes, parse_status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (filename) DO UPDATE SET "
             "classification = EXCLUDED.classification, "
             "department = EXCLUDED.department, "
+            "visibility = EXCLUDED.visibility, "
             "owner_id = COALESCE(documents.owner_id, EXCLUDED.owner_id), "
             "size_bytes = COALESCE(EXCLUDED.size_bytes, documents.size_bytes), "
             "parse_status = EXCLUDED.parse_status",
@@ -1310,6 +1323,7 @@ def _upsert_document(
                 filename,
                 int(classification),
                 department or None,
+                str(visibility or "private"),
                 owner_id or None,
                 size_bytes,
                 parse_status,
@@ -2311,10 +2325,14 @@ def _select_final_answer(
     ]
     if worker_answers:
         paragraphs = []
+        earlier_workers = set()
         for answer in worker_answers:
+            current_worker = []
             for paragraph in answer.split("\n\n"):
-                if paragraph.strip() and paragraph not in paragraphs:
+                if paragraph.strip() and paragraph not in earlier_workers:
                     paragraphs.append(paragraph)
+                current_worker.append(paragraph)
+            earlier_workers.update(current_worker)
         return "\n\n".join(paragraphs)
     body = _answer_body(final_answer)
     if body:
@@ -2796,6 +2814,7 @@ def done_frame_for_turn(
     dataset_files: list[str] | None = None,
     agent_results: dict | None = None,
     claims_error: str = "",
+    terminal_status: str = "",
 ) -> str:
     """跑完一轮的三条出口（/ask 正文、/approve 续跑、答案缓存命中）共用的 done 帧。
 
@@ -2815,7 +2834,12 @@ def done_frame_for_turn(
         state = TERMINAL_STATE_AWAITING_APPROVAL
         approval = hitl_approval_handle(session_id=session_id, parked=intr)
     else:
-        state = TERMINAL_STATE_ANSWERED if full_text else TERMINAL_STATE_NO_ANSWER
+        if terminal_status == "rejected":
+            state = "rejected"
+        elif terminal_status and terminal_status != "completed":
+            state = "failed"
+        else:
+            state = TERMINAL_STATE_ANSWERED if full_text else TERMINAL_STATE_NO_ANSWER
         approval = None
     if intr:
         carried, reason = [], ""
@@ -3001,6 +3025,17 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         names = list(dict.fromkeys(name.strip() for name in request.document_filenames if name.strip()))
         for name in names:
             _authorize_document_request(http_request, name, ACTION_VIEW)
+        if not request.data_filename:
+            from app.agents.orchestrator import multi_agent_graph
+            from app.agents.task_review import legacy_document_selection_unpinned, requested_documents_valid
+
+            previous = multi_agent_graph.get_state({'configurable': {'thread_id': thread_id}}).values or {}
+            pinned = previous.get('document_selection') or {}
+            earlier = pinned.get('requested_documents') or []
+            if (legacy_document_selection_unpinned(previous)
+                    or (sorted(item.get('filename') for item in earlier) == sorted(names)
+                        and not requested_documents_valid(pinned, request_principal))):
+                raise HTTPException(status_code=409, detail='document_version_changed')
         original_msg = re.sub(r'^仅依据以下文件(?:《[^》\r\n]+》)+回答：\n', '', original_msg)
         original_msg = '仅依据以下文件' + ''.join('《' + name + '》' for name in names) + '回答：\n' + original_msg
         request.document_filenames = names
@@ -3611,6 +3646,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                     visible_rows=visible_rows,
                     dataset_files=dataset_files,
                     agent_results=latest_agent_results,
+                    terminal_status=terminal_status,
                 )
                 await asyncio.sleep(0)
                 break
@@ -3695,7 +3731,8 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 # that the graph uses, rather than guessing from words such as “不画图”.
                 from app.agents.orchestrator import route_main
                 routed = route_main(data, {"configurable": {"declared_lane": declared,
-                    "data_filename": request.data_filename}})
+                    "data_filename": request.data_filename,
+                    "document_filenames": request.document_filenames}})
                 dispatched = [item.node for item in routed if hasattr(item, "node")] if isinstance(routed, list) else []
 
             if dispatched and dispatched != last_workers:
@@ -3756,6 +3793,10 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
 class ApproveRequest(BaseModel):
     session_id: str
     approved: bool = True
+
+
+class DocumentVisibilityRequest(BaseModel):
+    visibility: str
 
 
 def _record_pending_approval(
@@ -4442,6 +4483,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                     visible_rows=visible_rows,
                     dataset_files=dataset_files,
                     agent_results=latest_agent_results,
+                    terminal_status=terminal_status,
                 )
                 await asyncio.sleep(0)
                 break
@@ -4686,15 +4728,18 @@ async def get_session(session_id: str, request: FastAPIRequest):
         if msgs and not withheld:
             from app.agents.orchestrator import multi_agent_graph, _owner_id_from
             saved = multi_agent_graph.get_state({'configurable': {'thread_id': session_id}}).values or {}
-            task = saved.get('task_context') or saved.get('data_context') or {}
+            task = saved.get('task_context') or saved.get('document_selection') or saved.get('data_context') or {}
             if task and _owner_id_from({'principal': saved.get('principal')}) == principal.user_id:
                 scope = resolve_document_retrieval_scope(principal)
                 references = task.get('requested_documents') or []
                 if all(scope.allows(latest_document_version(item['filename']) or {}) for item in references):
                     msgs[-1] = {**msgs[-1], 'task_selection': {
-                        'dataFilename': task['filename'],
+                        # A report-only task_context carries report_body and may have no
+                        # filename; reading it as a required key turned the session
+                        # detail into a 500 after an export attempt.
+                        'dataFilename': task.get('filename') or '',
                         'documentFilenames': [item['filename'] for item in references],
-                        **({'origin': {'kind': 'alert', 'id': task['alert_id'], 'versionId': task['version_id']}}
+                        **({'origin': {'kind': 'alert', 'id': task.get('alert_id'), 'versionId': task.get('version_id') or ''}}
                            if task.get('alert_id') else {})}}
         if not _session_database_available():
             return {
@@ -4744,6 +4789,7 @@ def _record_uploaded_version(
     version: int,
     size_bytes: int | None,
     parse_status: str,
+    visibility: str = "private",
     index_status: str = INDEX_STATUS_UNKNOWN,
     index_reason: str = "",
 ) -> dict:
@@ -4765,6 +4811,7 @@ def _record_uploaded_version(
         "version": version,
         "size_bytes": size_bytes,
         "parse_status": parse_status,
+        "visibility": str(visibility or "private"),
         "index_status": index_status,
         "index_reason": index_reason,
     }
@@ -4777,6 +4824,7 @@ def _record_uploaded_version(
                 owner_id,
                 size_bytes=size_bytes,
                 parse_status=parse_status,
+                visibility=visibility,
             )
         except Exception as exc:
             logger.warning(f"[Docs] metadata sync failed: {exc}")
@@ -4791,6 +4839,7 @@ def _record_uploaded_version(
                 owner_id=owner_id,
                 size_bytes=size_bytes,
                 parse_status=parse_status,
+                visibility=visibility,
                 index_status=index_status,
                 index_reason=index_reason,
             )
@@ -4812,6 +4861,7 @@ def _record_uploaded_version(
             owner_id=owner_id,
             size_bytes=size_bytes,
             parse_status=parse_status,
+            visibility=visibility,
             index_status=index_status,
             index_reason=index_reason,
         )
@@ -5178,6 +5228,20 @@ async def upload_document(file: UploadFile = File(...),
     principal = principal_from_request(request) if request is not None else None
     if request is not None:
         authorize_request(request, ACTION_UPLOAD, resource_name=file.filename or "document")
+        accepted_departments = {
+            str(principal.department or ""),
+            *(str(value) for value in principal.department_ids),
+        }
+        accepted_departments.discard("")
+        claimed_department = str(department or "").strip()
+        if claimed_department and claimed_department not in accepted_departments:
+            raise HTTPException(status_code=403, detail="department_override_denied")
+        if not accepted_departments:
+            raise HTTPException(status_code=403, detail="authorization_unavailable")
+        # The upload dropdown is a convenience, never the enforcement point: a
+        # caller may choose any level its role can read, and nothing above it.
+        if classification < 1 or classification > principal.clearance:
+            raise HTTPException(status_code=400, detail="invalid_classification")
     owner_id = str(getattr(principal, "user_id", "") or "") or None
     department = str(getattr(principal, "department", "") or "")
     header = await file.read(8192)
@@ -5197,6 +5261,13 @@ async def upload_document(file: UploadFile = File(...),
                 resource=_document_resource_scope(inspection.display_filename, existing),
                 resource_name=inspection.display_filename,
             )
+            if (
+                principal.role == "staff"
+                and str(existing.get("owner_id") or "") != str(principal.user_id)
+            ):
+                raise HTTPException(status_code=403, detail="owner_mismatch")
+            if int(existing.get("classification")) != classification and not is_administrator(principal):
+                raise HTTPException(status_code=403, detail="classification_change_requires_admin")
     next_version = peek_next_document_version(inspection.display_filename)
     resource_id = uuid.uuid4().hex
     storage_path = build_storage_path(DOCUMENTS_DIR, resource_id, inspection.extension)
@@ -5566,6 +5637,52 @@ async def get_document_preview(
         raise HTTPException(status_code=500, detail="document_preview_failed") from exc
     response.headers.update(NO_STORE_HEADERS)
     return payload
+
+
+@router.put("/documents/{filename}/visibility")
+async def update_document_visibility(
+    filename: str,
+    data: DocumentVisibilityRequest,
+    request: FastAPIRequest,
+):
+    """Publish or unpublish one level-1 document for the whole enterprise.
+
+    Only an administrator may change the sharing range. The change is one transaction
+    across the catalog, the vector rows and the version ledger, so a document cannot be
+    listable while the retriever still refuses it.
+    """
+    principal = _document_principal_or_error(request)
+    if not is_administrator(principal):
+        record_audit(principal, ACTION_MANAGE_USERS, "denied", filename, "permission_denied")
+        raise HTTPException(status_code=403, detail="permission_denied")
+    latest = latest_document_version(filename)
+    if latest is None:
+        raise HTTPException(status_code=404, detail="resource_not_found")
+    before = str(latest.get("visibility") or "private")
+    try:
+        result = await asyncio.to_thread(set_document_visibility, filename, data.visibility)
+    except DocumentVisibilityError as exc:
+        status_code = 404 if exc.code == "resource_not_found" else 409 if exc.code == "document_not_indexed" else 400
+        record_audit(principal, ACTION_MANAGE_USERS, "denied", filename, exc.code)
+        raise HTTPException(status_code=status_code, detail=exc.code) from exc
+    # The keyword index keeps a copy of each chunk's visibility in memory. Refresh it
+    # before acknowledging a change, especially when enterprise access is revoked.
+    from app.agents.tools import rebuild_bm25
+    try:
+        await asyncio.to_thread(rebuild_bm25)
+    except Exception as exc:
+        logger.exception("[Docs] visibility changed but BM25 refresh failed: %s", filename)
+        raise HTTPException(status_code=503, detail="visibility_applied_search_refresh_failed") from exc
+    record_audit(
+        principal,
+        ACTION_MANAGE_USERS,
+        "allowed",
+        filename,
+        "document_visibility_updated",
+        before_summary={"visibility": before},
+        after_summary={"visibility": result["visibility"]},
+    )
+    return {"status": "ok", **result}
 
 
 def _document_delete_before(stored_versions: list[dict]) -> dict:

@@ -27,6 +27,7 @@ const props = defineProps({
   headline: { type: Object, required: true },
   // 屏上此刻有没有正文：卡片不许替正文说话，所以只读它有没有。
   hasAnswer: { type: Boolean, default: false },
+  answerFailed: { type: Boolean, default: false },
   // 这一轮还在流吗（面板的 loading 落在最后一条回答上）。
   streaming: { type: Boolean, default: false },
 })
@@ -50,6 +51,14 @@ const cardAge = computed(() => {
 
 const face = computed(() => {
   const named = `${rows.value.length ? rows.value.length : hitCount.value} 处资料`
+  if (props.answerFailed) {
+    return {
+      kind: 'failed',
+      tone: 'warn',
+      headline: `本轮检索命中的资料 · ${named}（不是结论）`,
+      detail: '本轮处理失败；这张卡只说明翻到过哪些文件，没有产出可引用的完成回答。',
+    }
+  }
   if (props.hasAnswer) {
     return {
       kind: 'filled',

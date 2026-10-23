@@ -63,6 +63,22 @@ def test_chart_section_and_legacy_path_embed_once_with_business_caption(report_o
     assert Path(chart).name not in text
 
 
+def test_chart_heading_stays_with_chart_when_first_page_is_nearly_full(report_output):
+    chart = chart_file(report_output, (1200, 825))
+    path = export.generate_pdf_report("经营分析简报", [
+        {"type": "summary", "period": "2026-01 至 2026-06", "cards": [
+            {"label": "纳入金额合计", "value": "17,400", "hint": "单位未标注"}]},
+        {"type": "heading", "content": "01 管理摘要"},
+        {"type": "text", "content": "本轮仅统计授权范围，期间与单位以来源资料为准。" * 22},
+        {"type": "heading", "content": "02 分组构成 · 图表解读"},
+        {"type": "chart", "path": chart, "caption": "图1：按月分组；单位未标注。"},
+    ])
+    reader = PdfReader(path)
+    containing = [page for page in reader.pages if "02 分组构成" in page.extract_text()]
+    assert len(containing) == 1
+    assert b" Do" in containing[0].get_contents().get_data()
+
+
 def test_expense_brief_keeps_chart_with_summary_and_details_in_two_pages(report_output):
     import pandas as pd
     from app.agents.tools import _report_data_facts, _verified_report_sections
@@ -93,7 +109,7 @@ def test_expense_brief_without_chart_uses_first_page_for_details(report_output):
     facts = _report_data_facts("合成验收-费用明细.csv", frame, "按部门汇总金额",
         version_id="v1", sha256="8" * 64)
     reader = PdfReader(export.generate_pdf_report("费用分析简报", _verified_report_sections([facts], "")))
-    assert "03 费用汇总明细" in reader.pages[0].extract_text()
+    assert "03 指标汇总明细" in reader.pages[0].extract_text()
     assert "本图" not in ''.join(page.extract_text() for page in reader.pages)
 
 

@@ -211,6 +211,11 @@ export const LEGACY_ALIASES = {
   upload_too_large: { code: 'unsupported_file', message: '文件太大，上传没有成功，请压缩或拆分后再传。' },
   document_parse_failed: { code: 'parse_failed' },
   document_index_failed: { code: 'index_publish_failed', retryable: true },
+  document_version_changed: {
+    code: 'conflict',
+    message: '所选资料已有新版本，旧任务没有继续读取。请新建任务并重新选择资料。',
+    retryable: false,
+  },
   document_preview_failed: { code: 'internal_error', message: '文件预览没能生成，请稍后重试。', retryable: true },
   unsupported_preview: { code: 'unsupported_file', message: '这种文件类型不支持在线预览，可下载后在本地打开。' },
   idempotency_key_required: { code: 'validation_error', message: '这次请求缺少重复提交标识，请重新提交。' },
@@ -300,8 +305,10 @@ export const STATUS_CODES = {
   422: 'validation_error',
   429: 'rate_limited',
   500: 'internal_error',
-  502: 'model_unavailable',
-  503: 'model_unavailable',
+  // A gateway's bare status does not identify which dependency failed.
+  // Explicit model_unavailable envelopes still take precedence in normalizeError.
+  502: 'internal_error',
+  503: 'internal_error',
   504: 'task_timeout',
 }
 

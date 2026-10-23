@@ -49,15 +49,18 @@ import {
   USER_WRITE_DELETE,
   USER_WRITE_DEPARTMENT,
   USER_WRITE_PASSWORD,
+  USER_WRITE_ROLE,
   createBody,
   departmentBody,
   departmentText,
   loadUsers,
   passwordBody,
+  roleBody,
   submitCreateUser,
   submitDeleteUser,
   submitDepartmentChange,
   submitPasswordChange,
+  submitRoleChange,
   userDeletePath,
   userFormRuleViolations,
   userRoleLabel,
@@ -104,6 +107,7 @@ onUnmounted(invalidateRoster)
 const dlgCreate = ref(false)
 const dlgPassword = ref(false)
 const dlgDepartment = ref(false)
+const dlgRole = ref(false)
 const dlgDelete = ref(false)
 const targetName = ref('')
 const busyKind = ref('')
@@ -136,6 +140,7 @@ function closeDialogs() {
   dlgCreate.value = false
   dlgPassword.value = false
   dlgDepartment.value = false
+  dlgRole.value = false
   dlgDelete.value = false
   fieldErrors.value = {}
 }
@@ -161,8 +166,10 @@ function openDialog(kind) {
   }
   form[USER_FORM_FIELDS.username] = row ? row.username : ''
   form[USER_FORM_FIELDS.department] = row && kind === USER_WRITE_DEPARTMENT ? row.department : ''
+  form[USER_FORM_FIELDS.role] = row && kind === USER_WRITE_ROLE ? row.role : USER_CREATE_DEFAULTS.role
   if (kind === USER_WRITE_PASSWORD) dlgPassword.value = true
   else if (kind === USER_WRITE_DEPARTMENT) dlgDepartment.value = true
+  else if (kind === USER_WRITE_ROLE) dlgRole.value = true
   else dlgDelete.value = true
 }
 
@@ -207,6 +214,10 @@ function submitDepartment() {
   return runWrite(USER_WRITE_DEPARTMENT, departmentBody(form), () => submitDepartmentChange(form))
 }
 
+function submitRole() {
+  return runWrite(USER_WRITE_ROLE, roleBody(form), () => submitRoleChange(form))
+}
+
 /** 删除这一枚只有确认后才会被调用：确认步就是那枚对话框本身（判据丁）。 */
 function confirmDelete() {
   return runWrite(USER_WRITE_DELETE, {}, () => submitDeleteUser(chosenRow.value))
@@ -244,7 +255,7 @@ function confirmDelete() {
     <section v-if="canAct" class="panel-card" data-testid="admin-user-actions">
       <div class="section-head">
         <span class="eyebrow">账号操作</span>
-        <span class="demo-note">目前支持开通、修改密码、调整部门和删除账号。暂不支持停用、改名或修改角色。</span>
+        <span class="demo-note">目前支持开通、修改密码、调整部门、调整角色和删除账号。暂不支持停用或改名。角色调整后的访问范围从下一次受保护请求起生效。</span>
       </div>
 
       <div class="section-head">
@@ -279,6 +290,13 @@ function confirmDelete() {
           label="调整部门"
           data-testid="open-department"
           @click="openDialog(USER_WRITE_DEPARTMENT)"
+        />
+        <UiButton
+          size="sm"
+          :loading="busyKind === USER_WRITE_ROLE"
+          label="调整角色"
+          data-testid="open-role"
+          @click="openDialog(USER_WRITE_ROLE)"
         />
         <UiButton
           size="sm"
@@ -465,6 +483,40 @@ function confirmDelete() {
           label="保存部门"
           data-testid="submit-department"
           @click="submitDepartment"
+        />
+      </template>
+    </UiDialog>
+
+    <UiDialog
+      v-model="dlgRole"
+      title="调整角色"
+      description="角色决定可读密级上限：员工 1 级、负责人 2 级、管理员与审计员 3 级。保存后下一次受保护请求立即按新角色判断。"
+      :busy="busyKind === USER_WRITE_ROLE"
+    >
+      <div class="panel-shell">
+        <UiField
+          :model-value="form[USER_FORM_FIELDS.username]"
+          label="账号名"
+          readonly
+          hint="当前选择的账号，无法在此修改。"
+          data-testid="role-username"
+        />
+        <UiSelect
+          v-model="form[USER_FORM_FIELDS.role]"
+          label="角色"
+          :options="roleOptions"
+          :error="fieldErrors[USER_FORM_FIELDS.role]"
+          data-testid="role-value"
+        />
+      </div>
+      <template #footer="{ close }">
+        <UiButton variant="ghost" label="取消" data-testid="cancel-role" @click="close" />
+        <UiButton
+          variant="primary"
+          :loading="busyKind === USER_WRITE_ROLE"
+          label="保存角色"
+          data-testid="submit-role"
+          @click="submitRole"
         />
       </template>
     </UiDialog>

@@ -23,6 +23,8 @@ from urllib.parse import unquote, urlparse
 
 from dotenv import load_dotenv
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 #: A custom-format archive lists one entry per object. These two patterns read the relation
 #: definition ("TABLE") and the rows ("TABLE DATA") out of that listing, because an archive
 #: can name a table and still carry none of its contents.
@@ -110,9 +112,8 @@ def backup_database(
     if not destination.is_file() or destination.stat().st_size == 0:
         raise RuntimeError("pg_dump completed without creating a backup file")
     if required_tables:
-        # Imported at call time so a backup run never needs the restore path to import.
-        from scripts.restore_database import list_backup
-
+        # Keep direct CLI execution working when only scripts/ is on sys.path.
+        list_backup = _globals_book().list_backup
         absent = missing_landing_tables(
             list_backup(destination, pg_restore_path=pg_restore_path), required_tables
         )

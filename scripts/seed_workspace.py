@@ -309,6 +309,7 @@ def seed_datasets(base_url, manifest, remote, credentials, root, check) -> list[
         response = owner_session.post(
             f"{base_url}{API_PREFIX}/upload-excel",
             files={"file": (filename, path.read_bytes(), _content_type(filename))},
+            data={"classification": str(spec.get("classification", 1))},
             timeout=UPLOAD_TIMEOUT_SECONDS,
         )
         if response.status_code == 409:

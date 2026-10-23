@@ -1239,6 +1239,7 @@ class DocumentRetriever:
             "chunk_index": row.get("chunk_index"),
             "classification": row.get("classification"),
             "department": row.get("department") or "",
+            "visibility": row.get("visibility") or "private",
             "index_version_id": row.get("index_version_id"),
             "content_sha256": row.get("content_sha256"),
         } for row in rows]
@@ -1349,7 +1350,7 @@ class DocumentRetriever:
             mirror.rollback()
 
     def add_document(self, filename: str, content: str, classification: int = 1,
-                     department: str = "") -> tuple[bool, str]:
+                     department: str = "", visibility: str = "private") -> tuple[bool, str]:
         from app.rag import pg_store
         new_hash = self._file_hash(content)
         old_rows = pg_store.document_vector_rows(filename=filename)
@@ -1362,7 +1363,8 @@ class DocumentRetriever:
         assert_writable_embeddings(embeddings, len(chunks), cause=self._embedding_failure_reason())
         ids = [f"{filename}_{i}" for i in range(len(chunks))]
         metadatas = [{"filename": filename, "chunk_index": i, "hash": new_hash,
-                      "classification": int(classification), "department": department or ""}
+                      "classification": int(classification), "department": department or "",
+                      "visibility": str(visibility or "private")}
                      for i in range(len(chunks))]
         old_ids = [r["vector_id"] for r in old_rows]
         transaction = self._open_vector_mirror()
@@ -1407,6 +1409,7 @@ class DocumentRetriever:
                 # allows 走 except TypeError 返回 False；本模块不写密级规则。
                 "classification": meta.get("classification"),
                 "department": meta.get("department", ""),
+                "visibility": meta.get("visibility", "private"),
                 # R21：每条命中都带它实际走的检索腿。keyword_fallback 即降级标注，
                 # 答案侧与评测靠它把"语义命中"和"embedding 挂了、这是词法兜底"分开。
                 "retrieval_mode": mode,

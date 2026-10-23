@@ -7,6 +7,8 @@
 
 # The lockfile and pyproject require CPython >=3.11,<3.14, so the interpreter here is
 # part of the contract: 3.14 would make `uv sync --frozen` refuse to resolve.
+FROM pgvector/pgvector:pg16 AS pg16_client
+
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -71,13 +73,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # settings (pg_db_role_setting: app.embedding_dimension / app.embedding_model), so those have
 # to be captured from the source and re-applied through psql on the way back in.
 #
-# The invariant is one-directional: pg_dump aborts when the *server* is newer than the client,
-# so the client only has to be at least as new as PostgreSQL 16 -- docker-compose.yml runs the
-# server from pgvector/pgvector:pg16. The client major is a named build arg, and
-# tests/test_r596_image_carries_the_pg16_tools.py keeps arg >= the server the stack runs, so
-# bumping one without the other goes red. Never substitute the unversioned postgresql-client
-# metapackage: it resolves to whatever the base distribution happens to ship, and that number
-# would not be written in this file.
+# pg_dump refuses a newer server, while a newer pg_dump can create an archive an older server
+# cannot restore. The distribution package below supplies shared libraries; the executables
+# used by the CLIs come from the PG 16 server image copied below. Never substitute the
+# unversioned postgresql-client metapackage: its version would no longer be explicit.
 #
 # R608 (10-03): this layer used to add the PGDG repository. It cannot build here -- the signing
 # key is served by www.postgresql.org and the suites by apt.postgresql.org, both unreachable
@@ -94,6 +93,15 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends $opts ca-certificates postgresql-client-${PG_CLIENT_MAJOR} \
         libxcb1 libgl1 libglib2.0-0t64; \
     rm -rf /var/lib/apt/lists/*
+# The distribution client can dump an older server but may emit settings that server
+# cannot restore (PG 17 emits transaction_timeout for our PG 16 database). Keep the
+# distribution package for its shared libraries, and run matching PG 16 client binaries
+# from the same image already used by the postgres service.
+COPY --from=pg16_client /usr/lib/postgresql/16/bin/pg_dump /usr/local/bin/pg_dump
+COPY --from=pg16_client /usr/lib/postgresql/16/bin/pg_restore /usr/local/bin/pg_restore
+COPY --from=pg16_client /usr/lib/postgresql/16/bin/pg_dumpall /usr/local/bin/pg_dumpall
+COPY --from=pg16_client /usr/lib/postgresql/16/bin/psql /usr/local/bin/psql
+RUN pg_dump --version && pg_restore --version && psql --version
 # The service account exists before the sources are copied so the COPYs below can carry
 # ownership directly (see the note at the top). Recursing over /app afterwards would
 # duplicate the venv into a fresh layer.

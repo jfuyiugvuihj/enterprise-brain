@@ -650,6 +650,9 @@ async function loadDataFiles({ force = false } = {}) {
 /** 就地改表：改的就是下一轮 send() 默认要发出去的那一枚，并随会话落盘（切回来还是这一张）。 */
 function chooseDataTable(value) {
   activeDataFilename.value = typeof value === 'string' ? value : ''
+  // Selecting a table after opening a document question makes this a joint
+  // calculation task. QA mode excludes the data worker on the server.
+  if (activeDataFilename.value && selectedLane.value === 'qa') chooseLane('analysis')
   syncActive()
 }
 
@@ -997,6 +1000,7 @@ async function recheckRuntimeHealth() {
 // 回到「问一句」这一屏：屏上的正文以服务端落库那一份为准（批准可能是在另一屏点的）。
 onActivated(async () => {
   await reconcileAuthoritativeBody()
+  if (hitl.value) await refreshPendingDecision()
   restoreQueuedTurns({ refresh: true })
 })
 
@@ -1004,6 +1008,8 @@ onMounted(() => {
   refreshRuntimeHealth()
   restoreQueuedTurns()
   window.addEventListener('chat-ask', onChatAsk)
+  window.addEventListener('resize', keepMobileInputVisible)
+  window.visualViewport?.addEventListener('resize', keepMobileInputVisible)
   document.addEventListener('visibilitychange', onVisibilityChange)
   // 地址带着深链时，「恢复上次看的那一条」这条路要关掉：那正是判据①明令不许的静默落到最新一轮。
   // loadSessions() 照旧要跑 —— 本机有没有这一条会话，靠的就是它。
@@ -1027,6 +1033,8 @@ onUnmounted(() => {
   // R458 · 判据②：伸手那一格留下的 timer 必须跟着面板一起收掉，不许在卸载后自己醒过来。
   clearRecheckFaceTimer()
   window.removeEventListener('chat-ask', onChatAsk)
+  window.removeEventListener('resize', keepMobileInputVisible)
+  window.visualViewport?.removeEventListener('resize', keepMobileInputVisible)
   document.removeEventListener('visibilitychange', onVisibilityChange)
   flushScroll()
 })
@@ -1132,6 +1140,8 @@ async function send(dataFilename = activeDataFilename.value) {
         aiMsg.unseenEvents = [...(Array.isArray(aiMsg.unseenEvents) ? aiMsg.unseenEvents : []), event]
       },
     })
+
+    aiMsg.terminalState = !result.ok || result.state?.terminal === 'failed' ? 'failed' : result.state?.terminal || ''
 
     if (!result.ok) {
       aiMsg.content = `[请求错误] ${result.error}`
@@ -1547,6 +1557,23 @@ function questionText(msg) {
   }
   return content
 }
+function jumpToAnswerPart(index, part) {
+  if (part === 'followup') {
+    focusQuestion()
+    return
+  }
+  const row = document.querySelector(`.msg-row[data-turn="${index}"]`)
+  const body = row?.querySelector('.msg-content')
+  const number = [...(body?.querySelectorAll('b, strong') || [])]
+    .find(node => /合计|总计|记录/.test(node.textContent || ''))
+  const target = part === 'source'
+    ? row?.querySelector('[data-testid="source-card"]') || document.querySelector('[data-testid="analysis-evidence"]')
+    : number || body
+  target?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
+}
+function hasCalculatedFigure(msg) {
+  return /(?:合计|总计|记录数)[：:]|\d+\s*条记录/.test(String(msg?.content || ''))
+}
 const taskTitle = computed(() => /费用|报销/.test(questionText(messages.value[latestQuestionIndex.value])) ? '费用分析与制度核查' : '资料分析与依据核查')
 const taskStages = computed(() => [
   { label: contextUsedData.value || activeDataFilename.value || referenceDocuments.value.length || contextSources.value.length ? '资料已准备' : '选择资料', state: contextUsedData.value || activeDataFilename.value || referenceDocuments.value.length || contextSources.value.length ? 'done' : 'waiting' },
@@ -1562,7 +1589,13 @@ const contextUsedData = computed(() => {
 })
 const contextScope = computed(() => {
   const content = String(contextAnalysisTurn.value?.msg.content || '').replace(/\*\*/g, '')
-  const read = label => content.match(new RegExp(`^${label}[：:]\\s*([^\\n]+)`, 'm'))?.[1] || ''
+  const read = label => {
+    const values = [...content.matchAll(new RegExp(`^${label}[：:]\\s*([^\\n]+)`, 'gm'))]
+      .map(match => match[1].trim())
+    return values.length > 1 && new Set(values).size > 1
+      ? `涉及多个${label}，请逐题查看分析结果`
+      : values[0] || ''
+  }
   return { period: read('期间'), filter: read('筛选'), unit: read('单位') }
 })
 const contextRecordedData = computed(() => {
@@ -1571,6 +1604,16 @@ const contextRecordedData = computed(() => {
 })
 function focusQuestion() {
   document.querySelector('[data-testid="chat-panel"] textarea')?.focus()
+}
+function keepMobileInputVisible() {
+  if (!window.matchMedia('(max-width: 760px)').matches) return
+  requestAnimationFrame(() => {
+    const field = document.querySelector('[data-testid="chat-input"]')
+    if (document.activeElement !== field) return
+    const visibleBottom = (window.visualViewport?.offsetTop || 0) + (window.visualViewport?.height || window.innerHeight)
+    const gap = field.getBoundingClientRect().bottom - visibleBottom + 16
+    if (gap > 0) window.scrollBy({ top: gap, behavior: 'instant' })
+  })
 }
 async function requestContextReport() {
   if (loading.value || hitl.value || !contextHasAnswer.value) return
@@ -1602,7 +1645,8 @@ async function requestContextReport() {
 }
 
 function sourceFaceOf(msg, index) {
-  const face = sourcesFace(readTurn(sourceReads, msg, index) || msg.sources)
+  const face = sourcesFace(readTurn(sourceReads, msg, index) || msg.sources,
+    { answerFailed: msg.terminalState === 'failed' })
   const filename = readTurn(serverDataReads, msg, index) || msg.serverDataFilename
   if (face?.kind === 'none' && typeof filename === 'string' && filename) {
     return { ...face, headline: '本轮依据数据表', reason: `统计来自「${filename}」，可到“数据”页面核对原始内容。` }
@@ -2255,7 +2299,7 @@ function renderMd(raw) {
 }
 </script>
 <template>
-  <section class="assistant-task">
+  <section :class="['assistant-task', { 'assistant-task--answered': contextHasAnswer }]">
   <header class="assistant-task__head">
     <div><h2>{{ taskTitle }}</h2><p>查看计算结果和资料依据，再按需要生成报告。</p></div>
     <div class="assistant-task__tools">
@@ -2267,6 +2311,7 @@ function renderMd(raw) {
   <ol class="assistant-task__stages" aria-label="本次任务状态">
     <li v-for="(stage, index) in taskStages" :key="index" :data-state="stage.state"><span class="assistant-task__stage-icon" aria-hidden="true">{{ stage.state === 'done' ? '✓' : stage.state === 'active' ? '…' : index + 1 }}</span><span>{{ stage.label }}</span></li>
   </ol>
+  <p v-if="contextHasAnswer" class="assistant-task__mobile-status" data-testid="mobile-task-status">{{ taskStages[1].label }} · {{ taskStages[2].label }} · {{ taskStages[3].label }}</p>
   <div class="assistant-workspace">
   <div class="chat-layout" data-testid="chat-panel">
     <!-- ===== 会话侧边栏 ===== -->
@@ -2431,6 +2476,9 @@ function renderMd(raw) {
                 <strong>{{ template.label }}</strong><span>{{ template.description }}</span>
               </UiButton>
             </div>
+            <p class="wc-hint">场景工具</p>
+            <UiButton variant="secondary" data-testid="expense-selfcheck-entry"
+              @click="router?.push({ name: 'expense-selfcheck' })">费用制度自查 →</UiButton>
           </div>
         </div>
         <section v-else-if="messages.length === 0 && !deepBlocked" class="analysis-draft-card">
@@ -2451,6 +2499,12 @@ function renderMd(raw) {
                  data-testid="deep-link-badge" :data-request="msg.requestId || null">{{ deepBadge }}</p>
               <div :class="['msg-bubble', msg.role]">
                 <h3 class="analysis-card-title">{{ msg.role === 'user' ? '你的问题' : '分析结果' }}</h3>
+                <nav v-if="msg.role === 'assistant' && i === contextTurn?.index && contextHasAnswer"
+                     class="mobile-answer-jumps" aria-label="本次回答快捷定位" data-testid="mobile-answer-jumps">
+                  <button v-if="hasCalculatedFigure(msg)" type="button" @click="jumpToAnswerPart(i, 'result')">看计算</button>
+                  <button v-if="contextSources.length" type="button" @click="jumpToAnswerPart(i, 'source')">核对依据</button>
+                  <button type="button" @click="jumpToAnswerPart(i, 'followup')">继续提问</button>
+                </nav>
                 <!-- 进度卡片 -->
                 <div v-if="msg.steps && msg.steps.length" class="steps-bar">
                   <div v-for="(st, si) in msg.steps" :key="si"
@@ -2471,6 +2525,7 @@ function renderMd(raw) {
                   :key="`headline-${turnKey(msg, i)}`"
                   :headline="headlineOf(msg, i)"
                   :has-answer="Boolean(msg.content)"
+                  :answer-failed="msg.terminalState === 'failed'"
                   :streaming="Boolean(loading && i === messages.length - 1)"
                 />
                 <!-- 本轮的图表卡片排在正文之前：R725 把图片地址贴在终答末尾，于是图永远站在
@@ -2484,7 +2539,13 @@ function renderMd(raw) {
                 </div>
                 <div v-else-if="msg.role === 'assistant'"
                      class="msg-content" @click="downloadReport($event, turnKey(msg, i))" v-html="renderMd(stripChartMarkers(msg.content))" />
-                <div v-else class="msg-content">{{ questionText(msg) }}</div>
+                <template v-else>
+                  <div class="msg-content mobile-question-full" :class="{ 'mobile-question-full--collapsible': contextHasAnswer && i === latestQuestionIndex }">{{ questionText(msg) }}</div>
+                  <details v-if="contextHasAnswer && i === latestQuestionIndex" class="mobile-question-details" data-testid="mobile-question-details">
+                    <summary><strong>查看本次问题</strong><span>{{ questionText(msg) }}</span></summary>
+                    <div class="msg-content">{{ questionText(msg) }}</div>
+                  </details>
+                </template>
                 <p v-if="reportDownloading === turnKey(msg, i)" role="status">正在下载报告…</p>
                 <UiErrorState v-if="reportDownloadError?.turn === turnKey(msg, i)"
                               title="报告下载失败" :description="errorDetail(reportDownloadError.cause, '请检查权限或稍后重试。')"

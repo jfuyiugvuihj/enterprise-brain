@@ -26,6 +26,9 @@ const route = useRoute()
 const router = useRouter()
 const navEl = shallowRef(null)
 const workspaceEl = shallowRef(null)
+const notificationBell = shallowRef(null)
+const mobileMenuOpen = shallowRef(false)
+const mobileProfileOpen = shallowRef(false)
 const isLoggedIn = shallowRef(false)
 const username = shallowRef('')
 const userRole = shallowRef('staff')
@@ -114,8 +117,15 @@ const logoutLabel = computed(() => (username.value
  */
 function openScreen(screen) {
   const name = String(screen || '')
+  mobileMenuOpen.value = false
+  mobileProfileOpen.value = false
   if (!screenRouteIds.includes(name) || route.name === name) return undefined
   return router.push({ name })
+}
+
+function openMobileMessages() {
+  mobileMenuOpen.value = false
+  notificationBell.value?.openPanel()
 }
 
 async function handleAsk(query) {
@@ -146,6 +156,11 @@ async function enterWorkspace() {
   readRuntimeHealth()
   // 登录不改地址，所以不会触发下面的切屏 watch；焦点由这里自己收尾到工作区主区。
   await nextTick()
+  // 窄屏登录时用户会向下滚到提交按钮；登录后仍停在登录页的滚动位置，顶部导航会直接
+  // 被滚出屏。先回到页首，再把焦点交给主区（focus 本身带 preventScroll）。
+  if (typeof window !== 'undefined' && typeof window.scrollTo === 'function') {
+    window.scrollTo(0, 0)
+  }
   focusScreenMain(workspaceEl.value)
 }
 
@@ -470,8 +485,12 @@ onUnmounted(() => {
             <strong>企业智脑</strong>
             <small>企业内部工作空间</small>
           </span>
+          <button class="mobile-menu-toggle" type="button" data-testid="mobile-menu-toggle"
+                  :aria-expanded="mobileMenuOpen" aria-controls="workspace-navigation"
+                  @click="mobileMenuOpen = !mobileMenuOpen">更多</button>
         </div>
-        <nav ref="navEl" class="nav-list" data-testid="navigation" @keydown="onNavKeydown">
+        <nav ref="navEl" id="workspace-navigation" class="nav-list" :class="{ 'mobile-open': mobileMenuOpen }"
+             data-testid="navigation" @keydown="onNavKeydown">
           <WorkspaceNavigation :items="navigationForRole(userRole)" :active-screen="String(route.name || '')" @navigate="openScreen" />
         </nav>
         <p class="sidebar-note">本地部署<br />数据留在企业内部</p>
@@ -489,7 +508,7 @@ onUnmounted(() => {
      全集未读口径（unread_total，另带 is_exact 说明是不是下界）把那句话推翻了；
      搜索那一枚仍不接——它到今天也没有诚实出处，接了就是回到假控件（判据⑧）。
      判据钉在 src/lib/notifications.js、src/components/NotificationBell.vue 与 r333 用例里。 -->
-<NotificationBell />
+<NotificationBell ref="notificationBell" />
             <span class="user-avatar">{{ username.slice(0, 1).toUpperCase() || 'A' }}</span>
             <span class="identity"><strong>{{ username }}</strong><span>{{ roleLabel }}</span></span>
             <UiButton
@@ -501,6 +520,13 @@ onUnmounted(() => {
               :title="logoutLabel"
               @click="doLogout"
             >⌄</UiButton>
+            <button class="mobile-profile-trigger" type="button" data-testid="mobile-profile-trigger"
+                    :aria-expanded="mobileProfileOpen" aria-controls="mobile-profile-menu"
+                    @click="mobileProfileOpen = !mobileProfileOpen">我的</button>
+            <div v-if="mobileProfileOpen" id="mobile-profile-menu" class="mobile-profile-menu" data-testid="mobile-profile-menu">
+              <button type="button" @click="openScreen('profile')">个人资料</button>
+              <button type="button" @click="doLogout">退出登录</button>
+            </div>
           </div>
         </header>
 
@@ -539,6 +565,12 @@ onUnmounted(() => {
           </RouterView>
         </section>
       </main>
+      <nav class="mobile-bottom-nav" aria-label="手机主导航" data-testid="mobile-bottom-nav">
+        <button type="button" data-testid="mobile-nav-chat" :aria-current="route.name === 'chat' ? 'page' : undefined" @click="openScreen('chat')">问答</button>
+        <button type="button" data-testid="mobile-nav-feed" :aria-current="route.name === 'feed' ? 'page' : undefined" @click="openScreen('feed')">资料</button>
+        <button type="button" data-testid="mobile-nav-artifacts" :aria-current="route.name === 'artifacts' ? 'page' : undefined" @click="openScreen('artifacts')">成果</button>
+        <button type="button" data-testid="mobile-nav-messages" aria-controls="notification-panel" @click="openMobileMessages">消息</button>
+      </nav>
     </div>
 
     <!-- 鉴权提示：401 失效与临期提醒共用这一条，替代原生 alert -->

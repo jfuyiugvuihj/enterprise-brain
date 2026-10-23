@@ -115,3 +115,8 @@ def test_display_interruption_does_not_swallow_following_explicit_refusal():
 def test_worker_results_deduplicate_repeated_body():
     assert chat._select_final_answer(worker_results={"data": "合计200元", "chart": "合计200元",
                                                      "export": "合计200元\n\n报告已生成"}) == "合计200元\n\n报告已生成"
+
+
+def test_numbered_calculations_keep_repeated_scope_within_one_worker():
+    answer = "① 一月\n\n当前授权范围内纳入 **1 条记录**。\n\n② 三月\n\n当前授权范围内纳入 **1 条记录**。"
+    assert chat._select_final_answer(worker_results={"data": answer}) == answer

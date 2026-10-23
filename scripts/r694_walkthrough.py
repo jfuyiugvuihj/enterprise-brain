@@ -620,6 +620,7 @@ class Walk:
         if not select.count():
             self.state["table_choice"] = choice
             return
+        select.first.scroll_into_view_if_needed()
         select.first.focus()
         page.wait_for_timeout(600)
         if page.locator("[data-testid=chat-data-table-reload]").count():
@@ -661,8 +662,13 @@ class Walk:
         assert self.page is not None
         page = self.page
         if table or lane:
+            settings = page.locator("details.analysis-input-settings")
+            if settings.count() and settings.first.get_attribute("open") is None:
+                settings.first.locator("summary").click()
             if lane:
-                page.select_option("#chat-lane-select", label=lane)
+                lane_value = {"问答档": "qa", "分析档": "analysis", "报告档": "report"}.get(lane, lane)
+                page.locator("#chat-lane-select").scroll_into_view_if_needed()
+                page.select_option("#chat-lane-select", value=lane_value)
             if table:
                 self._pick_table(page, table)
         # 上一发还在飞的时候输入框是 disabled：先等它自己松开，别把「按不动」记成「走不下去」。
@@ -1272,7 +1278,7 @@ class Walk:
         """在给定那一屏上用真键盘问一句要图的，只报提问有没有送出去与屏上读数。"""
         try:
             if page.locator("#chat-lane-select").count():
-                page.select_option("#chat-lane-select", label="分析档")
+                page.select_option("#chat-lane-select", value="analysis")
         except Exception as exc:  # noqa: BLE001 - 档位旋钮在另一枚身份下可能不给
             return {"asked": False, "blocked_reason": "档位选不中: %s" % exc}
         self._pick_table(page, self.args.data_table)
@@ -1314,6 +1320,8 @@ class Walk:
 
     def read_audit_screen(self) -> dict[str, Any]:
         """进「审计事件」面读那一格：计数与头几行的原文，屏上读数不是散文。"""
+        if not self.page.locator("[data-testid=nav-audit-events]").count():
+            self.page.click("[data-testid=nav-settings-toggle]")
         self.open_screen("nav-audit-events", "audit-panel")
         probe = self.page.evaluate(
             """() => {
@@ -1761,8 +1769,11 @@ class Walk:
             out["form_fields"] = fields.count()
             if out["form_fields"] < 3:
                 return out
-            fields.nth(0).fill(name)
-            fields.nth(1).fill("出差天数")
+            form = page.locator("[data-testid=rule-form]")
+            if self.args.data_table.lower().endswith((".csv", ".xlsx", ".xls")):
+                form.get_by_label("数据文件（可选）").fill(self.args.data_table)
+            form.get_by_label("规则名称").fill(name)
+            form.get_by_label("指标列名").fill("报销金额")
             trigger = page.locator("[data-testid=rule-form] [data-testid=ui-select-trigger]")
             if trigger.count():
                 trigger.first.click()
@@ -1772,7 +1783,7 @@ class Walk:
                     if "大于" in (gt.nth(index).inner_text() or ""):
                         gt.nth(index).click()
                         break
-            fields.nth(2).fill("0")
+            form.get_by_label("阈值").fill("0")
             save = page.locator("[data-testid=create-rule]")
             if save.count():
                 save.first.click(timeout=8000)
@@ -1829,7 +1840,7 @@ class Walk:
                         send.first.click(timeout=8000)
             # 回执与拒绝句是面板级的一枚：不等它换掉上一态留下的那一句，就会把 assign 的失败
             # 记成 close 的失败（10-07 18:1x 实测就串了这一次）。
-            changed = bool(wait_for(lambda: _face() != before_face, 12))
+            changed = bool(wait_for(lambda: bool(_face()) and _face() != before_face, 20))
             after_face = _face()
             states[action] = {
                 "clicked": True,

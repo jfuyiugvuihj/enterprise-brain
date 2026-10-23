@@ -16,6 +16,8 @@ vanishing into an exception. R163's matrix cell
 
 from typing import NamedTuple
 
+from app.common.departments import canonical_department, department_names
+
 from app.common.audit import record_audit
 from app.common.identity import Principal
 from app.common.permissions import ACTION_VIEW
@@ -52,9 +54,16 @@ class DocumentRetrievalScope(NamedTuple):
             return False
         if level not in self.classification_levels:
             return False
+        # Publication requires an identified source department. A legacy chunk
+        # with no department must not become readable merely because it carries
+        # an enterprise_shared label.
+        if not str(hit.get("department") or "").strip():
+            return False
         if self.departments is None:
             return True
-        return str(hit.get("department") or "") in self.departments
+        if level == 1 and str(hit.get("visibility") or "") == "enterprise_shared":
+            return True
+        return canonical_department(hit.get("department")) in self.departments
 
     def refusal_code(self, hit: dict) -> str:
         """Say why ``allows`` turned one recalled chunk away. It never decides access.
@@ -73,6 +82,8 @@ class DocumentRetrievalScope(NamedTuple):
             return "resource_scope_missing"
         if level not in self.classification_levels:
             return "clearance_insufficient"
+        if not str(hit.get("department") or "").strip():
+            return "resource_scope_missing"
         return "department_scope_denied"
 
 
@@ -128,7 +139,7 @@ def _resolve_document_retrieval_scope(principal: Principal | None) -> DocumentRe
         )
 
     departments = frozenset(
-        department
+        canonical_department(department)
         for department in dict.fromkeys([principal.department, *principal.department_ids])
         if department
     )
@@ -138,7 +149,22 @@ def _resolve_document_retrieval_scope(principal: Principal | None) -> DocumentRe
             "Document retrieval requires a department scope.",
         )
     return DocumentRetrievalScope(
-        filters={"$and": [classifications, {"department": {"$in": sorted(departments)}}]},
+        filters={
+            "$and": [
+                classifications,
+                {
+                    "$or": [
+                        {"department": {"$in": sorted(set().union(*(department_names(name) for name in departments)))}},
+                        {
+                            "$and": [
+                                {"classification": {"$in": [1]}},
+                                {"visibility": {"$in": ["enterprise_shared"]}},
+                            ]
+                        },
+                    ]
+                },
+            ]
+        },
         reason_code="department_scope",
         classification_levels=levels,
         departments=departments,

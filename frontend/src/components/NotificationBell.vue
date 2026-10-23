@@ -40,6 +40,7 @@ import {
   ALL_FILTER,
   INBOX_PATH,
   INBOX_PAGE_LIMIT,
+  MAX_COLLECTION_PAGES,
   bellLabel,
   badgeText,
   collectUnreadIds,
@@ -49,6 +50,7 @@ import {
   markRead,
   normalizeInbox,
   panelSummary,
+  readInbox,
   readFailureViewOf,
   shapeFailureViewOf,
   writeFailureView,
@@ -356,7 +358,9 @@ const stateLedger = shallowRef(null)
 const loading = shallowRef(true)
 const failure = shallowRef(null)
 const writeFailure = shallowRef(null)
+const bulkResult = shallowRef('')
 const busy = shallowRef('')
+const dismissCandidates = shallowRef([])
 const open = shallowRef(false)
 
 const bellEl = shallowRef(null)
@@ -376,8 +380,10 @@ const ariaLabel = computed(() => bellAriaLabel(
 const summary = computed(() => panelSummary(inbox.value))
 const face = computed(() => inboxFace({ loading: loading.value, failure: failure.value, rowCount: rows.value.length }))
 const hasUnread = computed(() => unread.value !== null && unread.value > 0)
+const dismissCandidateCount = computed(() => dismissCandidates.value.length)
 
 async function refresh() {
+  dismissCandidates.value = []
   loading.value = true
   failure.value = null
   try {
@@ -441,8 +447,10 @@ async function afterWrite() {
 async function markOne(row, action) {
   const id = row && row.id ? row.id : ''
   if (!id || busy.value) return null
+  dismissCandidates.value = []
   busy.value = id
   writeFailure.value = null
+  bulkResult.value = ''
   try {
     const receipt = action === 'dismiss' ? await dismissNotifications([id]) : await markRead([id])
     await afterWrite()
@@ -458,8 +466,10 @@ async function markOne(row, action) {
 
 async function markEverything() {
   if (busy.value) return null
+  dismissCandidates.value = []
   busy.value = 'all'
   writeFailure.value = null
+  bulkResult.value = ''
   try {
     const receipt = await markAllUnread()
     await afterWrite()
@@ -469,6 +479,86 @@ async function markEverything() {
     await afterWrite()
     return null
   } finally {
+    busy.value = ''
+  }
+}
+
+function dismissPreparationError(message) {
+  const err = new Error(message)
+  err.safeNotice = true
+  return err
+}
+
+async function prepareDismissAll() {
+  if (busy.value || loading.value || failure.value || !rows.value.length) return null
+  busy.value = 'collect-dismiss'
+  writeFailure.value = null
+  bulkResult.value = ''
+  dismissCandidates.value = []
+  try {
+    const ids = []
+    const seen = new Set()
+    let offset = 0
+    let complete = false
+    let expectedTotal = null
+    for (let page = 0; page < MAX_COLLECTION_PAGES; page += 1) {
+      const result = await readInbox({ state: ALL_FILTER, offset })
+      if (!result.isExact) throw dismissPreparationError('通知来源只返回了部分条目，不能当成全部划掉。')
+      if (expectedTotal === null) expectedTotal = result.total
+      if (result.total !== expectedTotal || (!result.rows.length && result.hasMore)) {
+        throw dismissPreparationError('通知列表读取时发生变化，请刷新后重试。')
+      }
+      for (const row of result.rows) {
+        if (!row.id) throw dismissPreparationError('通知缺少标识，不能安全地批量划掉。')
+        if (!seen.has(row.id)) {
+          seen.add(row.id)
+          ids.push(row.id)
+        }
+      }
+      offset += result.rows.length
+      if (!result.hasMore) {
+        complete = true
+        break
+      }
+    }
+    if (!complete || ids.length !== expectedTotal) {
+      throw dismissPreparationError('通知清单不完整，尚未划掉任何通知。')
+    }
+    dismissCandidates.value = ids
+    return ids
+  } catch (err) {
+    const view = writeFailureView(err)
+    writeFailure.value = { ...view, title: '无法准备批量划掉',
+      description: err.safeNotice ? err.message : view.description }
+    return null
+  } finally {
+    busy.value = ''
+  }
+}
+
+function cancelDismissAll() {
+  dismissCandidates.value = []
+}
+
+async function confirmDismissAll() {
+  if (busy.value || !dismissCandidates.value.length) return null
+  const ids = [...dismissCandidates.value]
+  busy.value = 'dismiss-all'
+  writeFailure.value = null
+  bulkResult.value = ''
+  try {
+    const receipt = await dismissNotifications(ids)
+    await afterWrite()
+    bulkResult.value = `已处理 ${receipt.requested - receipt.refused} 条，实际新划掉 ${receipt.changed} 条。`
+      + (receipt.refused ? `另有 ${receipt.refused} 条已失效或当前无权处理。` : '')
+      + (failure.value ? '列表未能重新读取，请稍后刷新核对。' : '')
+    return receipt
+  } catch (err) {
+    writeFailure.value = writeFailureView(err)
+    await afterWrite()
+    return null
+  } finally {
+    dismissCandidates.value = []
     busy.value = ''
   }
 }
@@ -484,7 +574,11 @@ defineExpose({
   bellEl,
   badge,
   busy,
+  bulkResult,
+  cancelDismissAll,
   closePanel,
+  confirmDismissAll,
+  dismissCandidateCount,
   face,
   failure,
   inbox,
@@ -496,6 +590,7 @@ defineExpose({
   open,
   openPanel,
   panelEl,
+  prepareDismissAll,
   refresh,
   rows,
   summary,
@@ -560,6 +655,7 @@ defineExpose({
       <p v-if="writeFailure" class="notif__note" role="status" data-testid="notification-write-note">
         {{ writeFailure.title }}：{{ writeFailure.description }}
       </p>
+      <p v-if="bulkResult" class="notif__note" role="status" data-testid="notification-bulk-result">{{ bulkResult }}</p>
 
       <!-- R385 判据②③④：这一格说的是「哪本账没答」，不是「有没有通知」，两脸分开画。
            句子逐字出自本件上面那两张表（LEDGER_LEGS 与 LEDGER_CAUSES），这里不写第二份；
@@ -654,6 +750,31 @@ defineExpose({
           data-testid="notification-mark-all"
           @click="markEverything"
         />
+        <template v-if="dismissCandidateCount">
+          <p class="notif__bulk-note" role="status">当前账号可见的已读和未读通知共 {{ dismissCandidateCount }} 条，将在确认后划掉。</p>
+          <UiButton
+            variant="primary"
+            size="sm"
+            type="button"
+            :label="`确认划掉 ${dismissCandidateCount} 条`"
+            :loading="busy === 'dismiss-all'"
+            :disabled="Boolean(busy) && busy !== 'dismiss-all'"
+            data-testid="notification-dismiss-all-confirm"
+            @click="confirmDismissAll"
+          />
+          <UiButton variant="ghost" size="sm" type="button" label="取消" :disabled="Boolean(busy)" data-testid="notification-dismiss-all-cancel" @click="cancelDismissAll" />
+        </template>
+        <UiButton
+          v-else
+          variant="ghost"
+          size="sm"
+          type="button"
+          label="全部划掉"
+          :loading="busy === 'collect-dismiss'"
+          :disabled="face !== 'list' || Boolean(busy)"
+          data-testid="notification-dismiss-all"
+          @click="prepareDismissAll"
+        />
       </footer>
     </section>
   </div>
@@ -710,10 +831,13 @@ defineExpose({
   top: var(--s-6);
   right: 0;
   z-index: var(--z-dropdown);
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: var(--s-2);
   width: 360px;
   max-width: 90vw;
+  max-height: min(680px, calc(100vh - 112px));
+  max-height: min(680px, calc(100dvh - 112px));
   padding: var(--s-4);
   background: var(--surface-2);
   border: 1px solid var(--border-2);
@@ -783,6 +907,8 @@ defineExpose({
   gap: var(--s-3);
   margin: 0;
   padding: 0;
+  min-height: 0;
+  overflow-y: auto;
   list-style: none;
 }
 
@@ -830,7 +956,15 @@ defineExpose({
 .notif__foot {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--s-2);
+}
+
+.notif__bulk-note {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-xs);
 }
 </style>
 

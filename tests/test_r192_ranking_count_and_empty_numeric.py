@@ -389,6 +389,11 @@ def _run_analyze(frame, query: str, config=None, answer=None) -> str:
 
     install(tools, "_authorized_dataset_files", lambda cfg: ([(PROBE_FILE, "p")], None))
     install(dataset_storage.DatasetRegistry, "get_active_by_filename", lambda self, filename: None)
+    # The versioned calculation lifecycle has its own tests. Keep this
+    # answer-shape fixture from failing at that unrelated persistence gate.
+    install(tools, "_start_calculation", lambda *args, **kwargs: "test-calculation")
+    install(tools, "_finish_calculation", lambda *args, **kwargs: None)
+    install(tools, "_fail_calculation", lambda *args, **kwargs: None)
     install(tools, "_record_dataset_evidence", lambda cfg, filename, df: None)
     install(excel, "load_excel", lambda path: frame)
     install(
