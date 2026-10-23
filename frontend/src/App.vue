@@ -6,6 +6,7 @@ import { focusScreenMain, navItems, nextNavItem } from './router/nav-focus'
 import { resetSessions } from './lib/sessions'
 import { UiButton } from './components/ui'
 import NotificationBell from './components/NotificationBell.vue'
+import InstallShortcut from './components/InstallShortcut.vue'
 import BrandMark from './components/BrandMark.vue'
 import WorkspaceGuide from './components/WorkspaceGuide.vue'
 import WorkspaceNavigation from './components/WorkspaceNavigation.vue'
@@ -427,6 +428,7 @@ onUnmounted(() => {
           </form>
 
           <p class="login-card__foot">没有账号？<br />请联系企业管理员开通。</p>
+          <InstallShortcut />
         </section>
       </div>
 
@@ -526,6 +528,7 @@ onUnmounted(() => {
             <div v-if="mobileProfileOpen" id="mobile-profile-menu" class="mobile-profile-menu" data-testid="mobile-profile-menu">
               <button type="button" @click="openScreen('profile')">个人资料</button>
               <button type="button" @click="doLogout">退出登录</button>
+              <InstallShortcut />
             </div>
           </div>
         </header>

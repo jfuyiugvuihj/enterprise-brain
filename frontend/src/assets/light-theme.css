@@ -476,6 +476,7 @@ body { background: var(--surface-0); }
   .app-root .login-capabilities { gap: 18px; }
   .app-root .login-capabilities > div { font-size: 12px; }
   .app-root .login-card { max-width: 480px; padding: 28px 24px; }
+  .app-root .login-card > .install-shortcut-trigger { width: 100%; margin-top: 12px; }
   .app-root .login-foot { padding: 20px 24px; }
   .login-foot__signature { display: none; }
   .workspace-guide { flex-direction: column; padding: 14px 16px; gap: 8px; }
