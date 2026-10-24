@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Run the C18 regression once in a detached local process, without auto-retry.
 
-Usage: python scripts/run_c18_once.py plan|start|status|stop|unlock
-The full gate is never started by plan/status/stop/unlock.
+Usage: python scripts/run_c18_once.py plan|start|status|stop|unlock|extend
+The full gate is never started by plan/status/stop/unlock/extend.
 """
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ RUNS = ROOT / "output" / "c18-local-runs"
 STATE = RUNS / "state.json"
 LOCK = RUNS / "active.lock"
 MAX_MINUTES = 60
+EXTENDED_MAX_MINUTES = 120
 WORKERS = 2
 HEARTBEAT_SECONDS = 5
 
@@ -81,8 +82,8 @@ def alive(pid: int | None) -> bool:
 
 
 def plan() -> None:
-    print("C18 完整回归预估：约 25–45 分钟（当前失败较多时的保守估算）；硬上限 60 分钟。")
-    print("固定 2 个 worker；历史干净回归的 1.5–4 分钟不适用于本轮。")
+    print("C18 全仓回归没有可靠的完成时间预估：上次 2 worker 运行 120 分钟仍在 99% 超时。")
+    print(f"本脚本默认硬上限 {MAX_MINUTES} 分钟、固定 {WORKERS} 个 worker；运行前应先决定是否需要全仓回归。")
     print("start 只启动一次，不会在失败、超时或 Codex 会话结束后自动重跑。")
 
 
@@ -159,6 +160,107 @@ def kill_tree(pid: int) -> None:
             pass
 
 
+def kill_process_only(pid: int) -> None:
+    """Stop the old watchdog without killing its still-running gate child."""
+    if os.name != "nt":
+        raise RuntimeError("Live takeover is supported only on Windows")
+    result = subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, check=False)
+    if result.returncode != 0 and alive(pid):
+        raise RuntimeError(f"Cannot stop watchdog PID {pid}: {result.returncode}")
+
+
+def extend() -> int:
+    state = read_state()
+    if state.get("status") == "extended_running":
+        print("本次运行已经延长，无需重复操作。")
+        return 0
+    if state.get("status") != "running" or not alive(state.get("worker_pid")) or not alive(state.get("gate_pid")):
+        print("当前没有可接管的运行中回归。", file=sys.stderr)
+        return 2
+    if not LOCK.exists() or LOCK.read_text(encoding="utf-8") != state["run_id"]:
+        print("运行锁不匹配，拒绝接管。", file=sys.stderr)
+        return 2
+    folder = Path(state["log"]).parent
+    flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+    with (folder / "guardian.log").open("a", encoding="utf-8") as log:
+        guardian = subprocess.Popen(
+            [str(PYTHON), str(Path(__file__).resolve()), "_guardian", state["run_id"]],
+            cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+            close_fds=True, creationflags=flags,
+        )
+    for _ in range(150):
+        time.sleep(0.1)
+        current = read_state()
+        if current.get("run_id") == state["run_id"] and current.get("guardian_pid") == guardian.pid:
+            print(f"已接管正在运行的回归；新上限 {EXTENDED_MAX_MINUTES} 分钟，guardian PID={guardian.pid}。")
+            return 0
+        if guardian.poll() is not None:
+            break
+    current = read_state()
+    if current.get("run_id") == state["run_id"] and current.get("guardian_pid") == guardian.pid:
+        print(f"已接管正在运行的回归；新上限 {EXTENDED_MAX_MINUTES} 分钟，guardian PID={guardian.pid}。")
+        return 0
+    print(f"接管未确认，请检查 {folder / 'guardian.log'}；不会再次启动回归。", file=sys.stderr)
+    return 2
+
+
+def guardian_main(run_id: str) -> int:
+    state = read_state()
+    if state.get("run_id") != run_id or state.get("status") != "running":
+        return 2
+    gate_pid = state["gate_pid"]
+    worker_pid = state["worker_pid"]
+    kernel = ctypes.windll.kernel32
+    kernel.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel.OpenProcess.restype = ctypes.c_void_p
+    kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    kernel.WaitForSingleObject.restype = ctypes.c_ulong
+    kernel.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+    kernel.GetExitCodeProcess.restype = ctypes.c_int
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    handle = kernel.OpenProcess(0x101000, False, gate_pid)  # SYNCHRONIZE | QUERY_LIMITED_INFORMATION
+    if not handle:
+        raise RuntimeError(f"Cannot open gate PID {gate_pid}")
+    try:
+        kill_process_only(worker_pid)
+        state.update(status="extended_running", guardian_pid=os.getpid(),
+                     max_minutes=EXTENDED_MAX_MINUTES, heartbeat_at=now())
+        write_state(state)
+        reason = "finished"
+        stop_request = Path(state["log"]).parent / "stop.request"
+        while kernel.WaitForSingleObject(handle, 1000) == 0x102:  # WAIT_TIMEOUT
+            elapsed = (datetime.now().astimezone() - datetime.fromisoformat(state["started_at"])).total_seconds()
+            if stop_request.exists():
+                reason = "stopped"
+                kill_tree(gate_pid)
+                break
+            if elapsed >= EXTENDED_MAX_MINUTES * 60:
+                reason = "timed_out"
+                kill_tree(gate_pid)
+                break
+            state["heartbeat_at"] = now()
+            write_state(state)
+        kernel.WaitForSingleObject(handle, 10000)
+        code = ctypes.c_ulong()
+        exit_code = code.value if kernel.GetExitCodeProcess(handle, ctypes.byref(code)) else None
+        if exit_code == 259:
+            exit_code = None
+        final_status = ("passed" if exit_code == 0 else "failed") if reason == "finished" else reason
+        ended = now()
+        state.update(status=final_status, exit_code=exit_code, ended_at=ended,
+                     heartbeat_at=ended, head_after=git_head(),
+                     elapsed_seconds=round((datetime.fromisoformat(ended) - datetime.fromisoformat(state["started_at"])).total_seconds(), 1))
+        state["head_unchanged"] = state["head_before"] == state["head_after"]
+        write_state(state)
+        with Path(state["log"]).open("a", encoding="utf-8") as log:
+            log.write(f"\nLOCAL_RUN_FINISHED reason={reason} exit={exit_code} elapsed_s={state['elapsed_seconds']}\n")
+        if LOCK.exists() and LOCK.read_text(encoding="utf-8") == run_id:
+            LOCK.unlink()
+        return 0
+    finally:
+        kernel.CloseHandle(handle)
+
+
 def worker_main(run_id: str) -> int:
     # Parent writes the detached PID before this process touches the state file.
     for _ in range(50):
@@ -233,6 +335,8 @@ def status() -> int:
         print("尚未启动本机 C18 回归；先运行 plan 查看预计时间。")
         return 0
     label = state["status"]
+    if label == "extended_running" and not alive(state.get("guardian_pid")):
+        label = "orphaned_gate" if alive(state.get("gate_pid")) else "interrupted"
     if label in {"launching", "running"} and not alive(state.get("worker_pid")):
         label = "orphaned_gate" if alive(state.get("gate_pid")) else "interrupted"
     log_path = Path(state["log"])
@@ -251,15 +355,21 @@ def status() -> int:
         "started_at": state["started_at"], "heartbeat_at": state["heartbeat_at"],
         "ended_at": state["ended_at"], "elapsed_seconds": elapsed,
         "exit_code": state["exit_code"], "head_unchanged": state["head_unchanged"],
-        "worker_pid": state["worker_pid"], "gate_pid": state["gate_pid"], "log": state["log"],
+        "worker_pid": state["worker_pid"], "gate_pid": state["gate_pid"],
+        "guardian_pid": state.get("guardian_pid"), "max_minutes": state["max_minutes"], "log": state["log"],
     }, ensure_ascii=False, indent=2))
     return 0
 
 
 def stop() -> int:
     state = read_state()
-    if state.get("status") not in {"launching", "running"}:
+    if state.get("status") not in {"launching", "running", "extended_running"}:
         print("没有运行中的回归。")
+        return 0
+    if state["status"] == "extended_running":
+        request = Path(state["log"]).parent / "stop.request"
+        request.write_text(state["run_id"], encoding="utf-8")
+        print("已请求延长后的 guardian 停止；用 status 查看最终状态。")
         return 0
     if not alive(state.get("worker_pid")):
         if alive(state.get("gate_pid")):
@@ -292,7 +402,7 @@ def unlock() -> int:
     if LOCK.read_text(encoding="utf-8") != state.get("run_id"):
         print("运行锁与状态不一致，可能正在启动；拒绝清锁。", file=sys.stderr)
         return 2
-    if alive(state.get("worker_pid")) or alive(state.get("gate_pid")):
+    if alive(state.get("worker_pid")) or alive(state.get("guardian_pid")) or alive(state.get("gate_pid")):
         print("进程仍在运行，拒绝清锁；先用 stop。", file=sys.stderr)
         return 2
     state.update(status="interrupted", ended_at=now())
@@ -304,7 +414,7 @@ def unlock() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["plan", "start", "status", "stop", "unlock", "_worker"])
+    parser.add_argument("action", choices=["plan", "start", "status", "stop", "unlock", "extend", "_worker", "_guardian"])
     parser.add_argument("run_id", nargs="?")
     args = parser.parse_args()
     if args.action == "plan":
@@ -318,6 +428,10 @@ def main() -> int:
         return stop()
     if args.action == "unlock":
         return unlock()
+    if args.action == "extend":
+        return extend()
+    if args.action == "_guardian":
+        return guardian_main(args.run_id or "")
     return worker_main(args.run_id or "")
 
 
