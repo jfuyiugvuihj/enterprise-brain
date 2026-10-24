@@ -481,6 +481,14 @@ class Walk:
     def ring3(self) -> None:
         assert self.page is not None
         page = self.page
+        upload_principal = None
+        # An admin without a registered department may manage the catalog but
+        # cannot assign an uploaded file to a business scope.  Exercise upload
+        # with the already configured department-bound employee in that case.
+        if not page.evaluate("() => !!localStorage.getItem('eb_department')"):
+            upload_principal = (self.page, self.context, self.principal)
+            page = self.new_principal(SECOND_USER, env_key(self.args.env_file, SECOND_PASS_KEY))
+            self.page, self.context, self.principal = page, page.context, "secondary"
         page.set_viewport_size({"width": 1440, "height": 900})
         self.open_screen("nav-feed", "documents-panel")
         fixture = Path(self.args.fixture)
@@ -538,6 +546,10 @@ class Walk:
         ) else "未达"
         self.state["uploaded"] = fixture.name
         self.finish(3, "上传文档", status, readings, shots)
+        if upload_principal is not None:
+            self.page, self.context, self.principal = upload_principal
+            self.page.set_viewport_size({"width": 1440, "height": 900})
+            page.context.close()
 
     def _doc_counts(self) -> dict[str, Any]:
         assert self.page is not None
@@ -1791,6 +1803,8 @@ class Walk:
                 save.first.click(timeout=8000)
                 out["rule_created"] = bool(wait_for(lambda: _rule_exists(name), 20))
             own_rule = page.locator("[data-testid=rule-rows] .rule-item").filter(has_text=name)
+            if out["rule_created"]:
+                wait_for(lambda: own_rule.count() > 0, 20)
             if out["rule_created"] and own_rule.locator("[data-testid=check-rule]").count():
                 own_rule.locator("[data-testid=check-rule]").first.click()
                 out["check_clicked"] = True
@@ -1995,6 +2009,11 @@ class Walk:
         """V2 环 15 知识图谱登记并读回：屏上登记一条关系，刷新以后列表里要读得回它。"""
         self.ensure_login()
         assert self.page is not None
+        graph_principal = None
+        if not self.page.evaluate("() => !!localStorage.getItem('eb_department')"):
+            graph_principal = (self.page, self.context, self.principal)
+            scoped_page = self.new_principal(SECOND_USER, env_key(self.args.env_file, SECOND_PASS_KEY))
+            self.page, self.context, self.principal = scoped_page, scoped_page.context, "secondary"
         nav = self._goto("/graph", "graph-panel")
         page = self.page
         marker = "走查主体" + self.nonce
@@ -2008,12 +2027,14 @@ class Walk:
             fields.nth(2).fill("走查客体")
             fields.nth(3).fill("r694 走查")
             page.click("[data-testid=save-relation]")
-            page.wait_for_timeout(1500)
+            wait_for(lambda: fields.nth(0).input_value() == ""
+                     or page.locator("[data-testid=ui-error-state]").count() > 0, 20)
             saved = True
         reload_button = page.locator("[data-testid=reload-relations]")
         if reload_button.count():
             reload_button.first.click()
             page.wait_for_timeout(1200)
+        wait_for(lambda: page.locator(".relation-item").filter(has_text=marker).count() > 0, 20)
         items = page.locator(".relation-item").all_inner_texts()
         shots.append(self.shot("v2-r15-graph-relations.png"))
         errors = page.locator("[data-testid=ui-error-state]").all_inner_texts()[:2]
@@ -2033,6 +2054,9 @@ class Walk:
             "未达差在登记这一腿：屏上读数记了表单在位枚数、有没有点保存、以及错误态那一句原话。"
         )
         self.finish(15, "知识图谱写读回路", status, readings, shots, note)
+        if graph_principal is not None:
+            self.page, self.context, self.principal = graph_principal
+            page.context.close()
 
 
     def ring16(self) -> None:

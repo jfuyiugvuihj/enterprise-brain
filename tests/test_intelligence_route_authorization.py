@@ -141,6 +141,25 @@ def test_knowledge_graph_write_requires_upload_permission():
     assert excinfo.value.status_code == 403
 
 
+def test_knowledge_graph_refuses_an_unscoped_relation_before_saving():
+    from app.api.v1 import intelligence
+    from app.knowledge_graph.service import KnowledgeGraph
+
+    graph = KnowledgeGraph()
+    intelligence._graph = graph
+    administrator = _principal("unscoped-admin", role="admin", department="")
+    with pytest.raises(HTTPException) as excinfo:
+        _call(intelligence.add_relation(
+            intelligence.RelationRequest(
+                source_entity="走查主体", relation="依赖", target="走查客体", source="走查文档"
+            ),
+            _request(administrator),
+        ))
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.detail == "authorization_unavailable"
+    assert graph.browse(principal=administrator) == []
+
+
 def test_knowledge_graph_rejects_a_relation_without_a_source():
     from app.api.v1 import intelligence
 

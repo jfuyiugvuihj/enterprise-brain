@@ -241,7 +241,8 @@ async def add_relation(data: RelationRequest, request: Request):
             "knowledge_graph_relation",
             str(exc).strip() or "permission_denied",
         )
-        raise HTTPException(status_code=403, detail="permission_denied") from exc
+        detail = "authorization_unavailable" if str(exc).strip() == "department_required" else "permission_denied"
+        raise HTTPException(status_code=403, detail=detail) from exc
     return record.to_dict()
 
 

@@ -346,6 +346,8 @@ class KnowledgeGraph:
         departments = [str(value) for value in (department_ids or []) if str(value)]
         if not departments and str(getattr(principal, "department", "") or ""):
             departments = [str(principal.department)]
+        if not departments:
+            raise PermissionError("department_required")
 
         relation_id = uuid4().hex
         record = Relation(
