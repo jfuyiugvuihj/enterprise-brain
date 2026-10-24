@@ -2658,7 +2658,9 @@ def _report_data_facts(filename: str, df, question: str, *, version_id: str = ""
     dates = [c for c in df.columns if "日期" in str(c) or "月份" in str(c)
              or pd.api.types.is_datetime64_any_dtype(df[c])]
     named_dates = [column for column in dates if str(column) in question]
-    date_column = named_dates[0] if len(named_dates) == 1 else dates[0] if len(dates) == 1 else None
+    date_column = (named_dates[0] if len(named_dates) == 1 else
+                   dimension if not named_dates and dimension in dates else
+                   dates[0] if len(dates) == 1 else None)
     if date_column is not None and not df.empty:
         parsed = pd.to_datetime(df[date_column], errors="coerce").dropna()
         if not parsed.empty:
@@ -2879,8 +2881,10 @@ def _verified_report_sections(facts: list[dict], analysis: str) -> list[dict]:
                 ["指标复核", "核对指标较高分组的原始记录与业务范围", "明细与来源记录一致"],
                 ["单位口径", "由材料提供者确认数值单位", "来源表明确标注单位"],
                 ["预算与对比", "明确预算与可比上期口径后进行差异计算", "同一范围、单位和时间口径"]]},
-            {"type": "text", "font_size": 10, "line_height": 5.3, "content": "本轮只计算当前筛选范围，未进行可比上期、预算和业务量的差异计算，不能据此判断增长、超支或确定原因。"
-                "建议先完成数据复核；未标注单位的字段不能直接视为人民币。"},
+            {"type": "text", "font_size": 10, "line_height": 5.3, "content":
+                f"本报告仅反映《{source['filename']}》当前授权与筛选范围；"
+                "未核验其他经营指标、上期、预算和业务量，不能判断增长、超支或原因。"
+                "未标注单位不能视为人民币。"},
             {"type": "heading", "content": "04 编制口径与数据来源", "level": 3},
             {"type": "text", "font_size": 10, "line_height": 5.3, "content": f"数据来源：{source['filename']}；版本：{source['version_id'] or '未登记'}\n"
                 f"工作表：{source['sheet'] or '单表'}；当前授权范围内筛选后 {source['rows']} 行。\n"

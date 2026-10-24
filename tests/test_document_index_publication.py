@@ -372,7 +372,7 @@ class _BrokenVectorStore(_VectorStore):
         raise RuntimeError("the collection is unreachable")
 
 
-def _principal(username="alice", department="finance", role="staff"):
+def _principal(username="alice", department="finance", role="admin"):
     from app.agents.contracts import Principal
 
     return Principal.from_user(
@@ -457,7 +457,7 @@ def test_upload_publishes_one_row_in_each_index_table(monkeypatch, tmp_path):
     version = versions[0]
     assert version["chunk_count"] == 3
     assert version["status"] == "published"
-    assert version["backend"] == "chroma"
+    assert version["backend"] == "pgvector"
     assert version["source_version_id"] == "policy.txt|v1"
     assert version["owner_id"] == "alice"
     assert registry[index_id]["current_version_id"] == version["index_version_id"]
