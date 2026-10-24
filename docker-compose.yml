@@ -262,6 +262,11 @@ services:
     # ``docker build`` can still start the stack with ``--no-build`` and resolve the
     # same name offline instead of an implicit local build.
     image: enterprise-brain-frontend:local
+    environment:
+      # Only substitute this one variable; nginx's own $host/$remote_addr
+      # variables must survive the template expansion unchanged.
+      NGINX_ENVSUBST_FILTER: ^BACKEND_HOST$
+      BACKEND_HOST: ${COMPOSE_PROJECT_NAME:-enterprise-brain}-backend-1
     depends_on:
       backend:
         condition: service_healthy
