@@ -25,8 +25,8 @@ import os
 import re
 import sqlite3
 
-import chromadb
 import pytest
+chromadb = pytest.importorskip("chromadb", reason="Chroma 已退役；此迁移期对拍只在安装旧依赖时运行")
 from chromadb.config import Settings
 
 from app.rag import indexing

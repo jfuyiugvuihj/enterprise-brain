@@ -41,7 +41,7 @@ from pathlib import Path
 
 import pytest
 
-import chromadb
+chromadb = pytest.importorskip("chromadb", reason="Chroma 已退役；此历史写回防护只在安装旧依赖时运行")
 from chromadb.config import Settings
 
 from app.rag.retriever import DocumentRetriever  # noqa: E402  -- 沙箱先钉好，这里才敢 import

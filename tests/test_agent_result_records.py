@@ -274,6 +274,10 @@ def test_queue_records_canonical_agent_result(monkeypatch):
     completed = {}
 
     class _Queue:
+        def execution_guard(self, request_id):
+            assert request_id == "req-q"
+            return lambda: True
+
         def complete(self, request_id, result, *, terminal=None):
             completed["request_id"] = request_id
             completed["result"] = result

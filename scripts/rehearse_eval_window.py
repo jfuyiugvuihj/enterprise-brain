@@ -716,20 +716,21 @@ def read_chat_assignment_literal(name: str, root=None) -> str:
 
 
 def read_error_event_text(root=None) -> str:
-    """``sse_event("error", {"content": "<一句 literal>"})`` 里那句超时文案。"""
+    """读取 Ask 与确认续跑共用的处理超时文案，排队超时另有自己的提示。"""
     rel = REPO_RELS["chat"]
-    texts = set()
+    texts = []
     for call in ast.walk(source_tree(rel, root)):
         if not (isinstance(call, ast.Call) and getattr(call.func, "id", "") == "sse_event"
                 and call.args and getattr(call.args[0], "value", "") == "error"
                 and len(call.args) > 1 and isinstance(call.args[1], ast.Dict)):
             continue
-        texts |= {value.value for key, value in zip(call.args[1].keys, call.args[1].values)
-                  if getattr(key, "value", "") == "content"
-                  and isinstance(value, ast.Constant) and isinstance(value.value, str)}
-    if len(texts) != 1:
-        raise FactError(f"{rel} 里 error 事件的固定文案不唯一：{sorted(texts)}")
-    return texts.pop()
+        texts.extend(value.value for key, value in zip(call.args[1].keys, call.args[1].values)
+                     if getattr(key, "value", "") == "content"
+                     and isinstance(value, ast.Constant) and isinstance(value.value, str))
+    shared = {text for text in texts if texts.count(text) >= 2}
+    if len(shared) != 1:
+        raise FactError(f"{rel} 里找不到唯一的 Ask/续跑共用超时文案：{sorted(texts)}")
+    return shared.pop()
 
 
 def read_approval_texts(root=None) -> dict:

@@ -62,6 +62,7 @@ function collectWireNames(src) {
     /canonical_sse_event\(\s*["']([a-z][a-z0-9_.]*)["']/g,
     /(?<!canonical_)\bsse_event\(\s*["']([a-z][a-z0-9_.]*)["']/g,
     /event:\s*([a-z][a-z0-9_]*)\\ndata:/g,
+    /(?:\bverdict\s*=\s*\(\s*|\bevent\s*=\s*)["']([a-z][a-z0-9_.]*)["']/g,
   ]
   for (const re of patterns) {
     for (const match of src.matchAll(re)) names.add(match[1])
