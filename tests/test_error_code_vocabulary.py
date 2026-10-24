@@ -24,6 +24,7 @@ from app.agents.contracts import ErrorEnvelope
 
 # 追认清单：每个码都必须有 app/** 下的真实出处，测试不许发明码名。
 RATIFIED = {
+    "queue_full": "app/common/reliable_queue.py",
     "invalid_filename": "app/api/v1/data.py",
     "dataset_filename_conflict": "app/api/v1/data.py",
     "dataset_preview_failed": "app/api/v1/data.py",

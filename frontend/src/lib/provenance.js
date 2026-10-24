@@ -498,11 +498,10 @@ export function queuePollFailedFace(error) {
 
 /** 全局排队人数（GET /queue/stats）：只用于「前面 N 人」之外的补充交代，读不到就不说。 */
 export function queueStatsFace(stats) {
-  const length = Number(stats?.queue_length)
-  const processing = Number(stats?.processing)
-  if (!Number.isFinite(length) && !Number.isFinite(processing)) return null
-  const waiting = Number.isFinite(length) ? Math.trunc(length) : 0
-  const running = Number.isFinite(processing) ? Math.trunc(processing) : 0
+  const known = value => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0
+  if (!known(stats?.queue_length) || !known(stats?.processing)) return null
+  const waiting = Math.trunc(Number(stats.queue_length))
+  const running = Math.trunc(Number(stats.processing))
   return { waiting, running, headline: `队列现状：等待 ${waiting} 个 · 正在跑 ${running} 个` }
 }
 

@@ -90,6 +90,7 @@ export const ERROR_CODES = {
   conflict: { message: '这条记录已被他人更新，请刷新后重试。', retryable: false },
   rate_limited: { message: '操作太频繁了，请稍等一会儿再试。', retryable: true },
   queue_unavailable: { message: '后台任务暂时排不上队，请稍后重试。', retryable: true },
+  queue_full: { message: '后台排队已满，这次没有提交成功。请稍后再试。', retryable: true },
   model_unavailable: { message: '分析模型当前不可用，请稍后重试或联系管理员。', retryable: true },
   // R30：本机 n_ctx 装不下「这一轮的提示词 + 对话历史」。后端注释把话说死了 —— 它不是可重试的
   // 错，「同一个提示词永远装不下」（app/agents/contracts.py:221-226），而且

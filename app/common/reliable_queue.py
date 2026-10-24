@@ -25,6 +25,12 @@ class QueueConnectionError(RuntimeError):
     code = "queue_unavailable"
 
 
+class QueueSaturatedError(RuntimeError):
+    """The configured pending-task limit has been reached."""
+
+    code = "queue_full"
+
+
 class QueueExecutionLost(RuntimeError):
     """The task was cancelled or this attempt no longer owns its lease."""
 
@@ -59,8 +65,7 @@ def artifact_execution_guard(guard):
         yield
 
 
-#: R155: 部署侧声明的排队上限。这一枚常量只产生「看得见」的读数，不产生任何执法——
-#: 「满了怎么办」（拒收 / 排队上限 / 降级）是业主裁定（跟进单 §79 三 R155），今天入队照旧全收。
+#: Pending-task limit shared by API processes through Redis.
 QUEUE_CAPACITY_ENV = "QUEUE_MAX_PENDING"
 #: capacity_source 的四枚取值：报出这枚容量从哪来，以及「读不到」算谁的。
 CAPACITY_SOURCE_ENV = f"env:{QUEUE_CAPACITY_ENV}"
@@ -321,6 +326,12 @@ class ReliableQueue:
             return self._enqueue_locked(payload, key)
 
     def _enqueue_locked(self, payload: dict[str, Any], key: str) -> QueueMessage:
+        # A shared lock makes the capacity check and admission one operation across
+        # API processes. The per-idempotency lock outside it keeps retries stable.
+        with self._mutation_lock("admission"):
+            return self._admit_locked(payload, key)
+
+    def _admit_locked(self, payload: dict[str, Any], key: str) -> QueueMessage:
         existing = self.redis.get(self._idempotency_key(key))
         if existing:
             request_id = existing.decode() if isinstance(existing, bytes) else str(existing)
@@ -329,6 +340,9 @@ class ReliableQueue:
                 data = json.loads(message)
                 return QueueMessage(request_id, data["payload"], int(data.get("attempts", 0)))
 
+        if self.capacity is not None and self.pending_depth() >= self.capacity:
+            raise QueueSaturatedError("后台任务排队已满，请稍后重试；本轮尚未提交。")
+
         request_id = uuid.uuid4().hex
         body = {"request_id": request_id, "payload": payload, "attempts": 0, "enqueued_at": time.time()}
         serialized = json.dumps(body, ensure_ascii=False, separators=(",", ":"))
@@ -336,7 +350,8 @@ class ReliableQueue:
             tx.set(self._idempotency_key(key), request_id, ex=self.idempotency_ttl)
             tx.set(self._message_key(request_id), serialized)
             tx.set(self._status_key(request_id), "queued")
-            tx.rpush(self.pending_key, request_id)
+            # RPOPLPUSH takes the rightmost item, so new work enters on the left.
+            tx.lpush(self.pending_key, request_id)
             tx.execute()
         return QueueMessage(request_id, payload, 0)
 
@@ -692,7 +707,7 @@ class ReliableQueue:
                 tx.rpush(self.dead_key, request_id)
                 tx.set(self._status_key(request_id), "dead")
             else:
-                tx.rpush(self.pending_key, request_id)
+                tx.lpush(self.pending_key, request_id)
                 tx.set(self._status_key(request_id), "queued")
             tx.execute()
         self._lease_tokens.pop(request_id, None)
@@ -705,7 +720,7 @@ class ReliableQueue:
             with self._mutation_lock(request_id):
                 if self.status(request_id) == "queued" and not self.redis.exists(self._lease_key(request_id)):
                     if self.redis.lrem(self.processing_key, 1, request_id):
-                        self.redis.rpush(self.pending_key, request_id)
+                        self.redis.lpush(self.pending_key, request_id)
                         moved += 1
                     continue
                 if self.redis.exists(self._lease_key(request_id)) or self.status(request_id) not in {"processing", "cancel_requested"}:
@@ -783,6 +798,12 @@ class ReliableQueue:
         #: 排队区深度：等开跑的请求数，「满」按这一枚算。
         return self._list_depth(self.pending_key)
 
+    def position(self, request_id: str) -> int | None:
+        """One-based waiting position in the order reserve consumes work."""
+        pending = self.redis.lrange(self.pending_key, 0, -1)
+        ids = [item.decode() if isinstance(item, bytes) else str(item) for item in pending]
+        return len(ids) - ids.index(request_id) if request_id in ids else None
+
     def processing_depth(self) -> int:
         #: 处理中深度：已被 worker 领走、还挂在处理表上的请求数。
         return self._list_depth(self.processing_key)
@@ -792,7 +813,7 @@ class ReliableQueue:
         return self._list_depth(self.dead_key)
 
     def stats(self) -> dict[str, Any]:
-        """把「满没满」变成能被读到的状态——只交读数，不做任何执法。
+        """Return the Redis queue depth and configured pending-task limit.
 
         - queue_length / processing：与 GET /api/v1/queue/stats 今天交出的两枚键同名
           同值（LLEN 与 len(LRANGE 0 -1) 在 Redis 语义上恒等），路由改成直接返回本方法时
@@ -803,7 +824,7 @@ class ReliableQueue:
           「读不到」和「还没满」是两句话，合并成一句就开始编数了。
         - capacity_source / depth_source：这两枚数是从哪来的，供审计与前端分色。
 
-        入队语义与本页无关：本方法一个字节都不写，也拒不了任何一条消息。
+        This read is passive; enqueue enforces a configured capacity separately.
         """
         pending = self.pending_depth()
         capacity = self.capacity

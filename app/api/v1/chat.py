@@ -2887,7 +2887,7 @@ def _enqueue_ask_turn(
     if not idempotency_key:
         raise HTTPException(status_code=400, detail="idempotency_key_required")
 
-    from app.common.reliable_queue import QueueConnectionError, connect_reliable_queue
+    from app.common.reliable_queue import QueueConnectionError, QueueSaturatedError, connect_reliable_queue
 
     # R294：下面这一枚 `principal` 是**入队那一刻**的身份快照，冻在这里就再没人回来更新。
     # 它从此只作两件事用：替 worker 定位用户库那一行的引用，以及作为漂移比对的证据——
@@ -2923,7 +2923,7 @@ def _enqueue_ask_turn(
         scoped_key = json.dumps([str(principal.user_id) if principal is not None else username,
                                  idempotency_key], separators=(",", ":"))
         message = queue.enqueue(payload, scoped_key)
-    except QueueConnectionError as exc:
+    except (QueueConnectionError, QueueSaturatedError) as exc:
         raise HTTPException(
             status_code=503,
             detail={"code": exc.code, "message": str(exc)},
@@ -6110,9 +6110,7 @@ async def queue_status(request_id: str, request: FastAPIRequest):
             )
         )
     elif status == "queued":
-        pending = queue.redis.lrange(queue.pending_key, 0, -1)
-        ids = [item.decode() if isinstance(item, bytes) else str(item) for item in pending]
-        readout["position"] = ids.index(request_id) + 1 if request_id in ids else None
+        readout["position"] = queue.position(request_id)
     elif status == reliable_queue.DEAD_STATUS:
         # R585 判据①：死终态过去在这一扇门上**一个键都不交**（量具读出 `terminal.shape="no_keys"`、`schema`／`state`／`sources_present` 全 null），客户屏上只剩哨兵 `<no-bytes-emitted>`。成因早在 worker 那一头算完了，本格只负责把它接到面上。
         readout.update(queue_dead_readout(queue, request_id, status))
@@ -6154,7 +6152,7 @@ async def queue_stats():
     """队列监控：排队数、处理中数，另加 R155 的容量读数（声明上限/剩余位/是否已满）。
 
     两枚旧键同名同值：接表只是把算法来源从 len(LRANGE 0 -1) 换成服务端 LLEN，
-    不改口径、不新增执法——「满了怎么办」仍属业主裁定。
+    不改读数口径；配置了 QUEUE_MAX_PENDING 时入队会拒绝超额请求。
     """
     from app.common.reliable_queue import QueueConnectionError
 

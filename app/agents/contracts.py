@@ -595,6 +595,7 @@ class ErrorEnvelope(BaseModel):
         "conflict",
         "rate_limited",
         "queue_unavailable",
+        "queue_full",
         "model_unavailable",
         # R30：本机 n_ctx 装不下「这条 prompt + 本档声明的输出」时吐的码。它不是可重试的错
         # （同一个提示词永远装不下），所以不进 evidence._RETRIABLE_CODES。出处有两条，都在

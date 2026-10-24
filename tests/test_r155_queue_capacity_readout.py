@@ -4,8 +4,7 @@
 `pending_depth` / `processing_depth` / `dead_letter_depth`、`ReliableQueue.stats`，
 以及 `connect_reliable_queue` 那枚从环境里读上限的通道。判据出处：跟进单 §79 三 R155。
 
-本单只交读数，不交策略：满了之后拒收、排队上限还是降级，是业主裁定。所以这里同时
-钉死「入队语义一个字都没变」——超出上限的第 N 条消息照样收进队列。
+C17 起配置上限同时约束入队；本件继续核对读数为 Redis 现值。
 """
 from __future__ import annotations
 
@@ -19,13 +18,14 @@ from app.common.reliable_queue import (
     DEPTH_SOURCE_REDIS_LLEN,
     QUEUE_CAPACITY_ENV,
     QueueConnectionError,
+    QueueSaturatedError,
     ReliableQueue,
     connect_reliable_queue,
     parse_queue_capacity,
 )
 from tests.test_reliable_queue import FakeRedis
 
-WRITES = {"set", "delete", "rpush", "lrem", "rpoplpush", "brpoplpush"}
+WRITES = {"set", "delete", "rpush", "lpush", "lrem", "rpoplpush", "brpoplpush"}
 
 
 class ReadableRedis(FakeRedis):
@@ -144,18 +144,16 @@ def test_the_reading_is_shared_state_not_a_per_process_counter():
     assert api.stats()["saturated"] is False
 
 
-def test_saturated_turns_true_at_capacity_while_enqueue_still_accepts_more():
-    """判据③：满是一种状态，不是一种行为。超限那条消息照样得排进去。"""
+def test_saturated_turns_true_at_capacity_and_rejects_new_work():
+    """A configured limit bounds waiting work while idempotent retries stay readable."""
     store = ReadableRedis()
     queue = _queue(store, capacity=2)
     _enqueue(queue, 2, "policy")
 
     assert queue.stats()["saturated"] is True
-    third = queue.enqueue({"message": "policy-2"}, "policy-2")
-
-    assert third.request_id
-    assert queue.status(third.request_id) == "queued"
-    assert queue.stats()["queue_length"] == 3
+    with pytest.raises(QueueSaturatedError):
+        queue.enqueue({"message": "policy-2"}, "policy-2")
+    assert queue.stats()["queue_length"] == 2
     assert queue.stats()["remaining"] == 0
     assert queue.stats()["saturated"] is True
 
@@ -233,6 +231,7 @@ def test_depth_is_read_with_llen_instead_of_fetching_the_whole_list():
     queue = _queue(store, capacity=10)
     _enqueue(queue, 4, "llen")
     store.command_log.clear()
+    store.depth_reads.clear()
 
     reading = queue.stats()
 

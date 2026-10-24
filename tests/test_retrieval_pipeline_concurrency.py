@@ -17,24 +17,10 @@ def test_unavailable_pg_is_not_an_empty_knowledge_base():
 def test_bm25_search_serializes_first_index_build(monkeypatch):
     from app.rag.retrieval_pipeline import BM25Searcher
 
-    class FakeCollection:
-        def get(self):
-            return {
-                "documents": ["报销流程需要提交申请", "差旅费标准按城市执行"],
-                "metadatas": [
-                    {"filename": "policy.txt"},
-                    {"filename": "travel.txt"},
-                ],
-            }
-
-    class FakeRetriever:
-        def __init__(self):
-            self.collection = FakeCollection()
-
-    monkeypatch.setattr(
-        "app.rag.retriever.DocumentRetriever",
-        FakeRetriever,
-    )
+    monkeypatch.setattr("app.rag.pg_store.switched_corpus", lambda: {
+        "documents": ["报销流程需要提交申请", "差旅费标准按城市执行"],
+        "metadatas": [{"filename": "policy.txt"}, {"filename": "travel.txt"}],
+    })
 
     searcher = BM25Searcher()
     with ThreadPoolExecutor(max_workers=5) as executor:
@@ -62,18 +48,10 @@ def test_bm25_search_falls_back_when_jieba_is_unavailable(monkeypatch):
         ("固定资产盘点每年进行一次", "assets.txt"),
     ]
 
-    class FakeCollection:
-        def get(self):
-            return {
-                "documents": [content for content, _ in docs],
-                "metadatas": [{"filename": name} for _, name in docs],
-            }
-
-    class FakeRetriever:
-        def __init__(self):
-            self.collection = FakeCollection()
-
-    monkeypatch.setattr("app.rag.retriever.DocumentRetriever", FakeRetriever)
+    monkeypatch.setattr("app.rag.pg_store.switched_corpus", lambda: {
+        "documents": [content for content, _ in docs],
+        "metadatas": [{"filename": name} for _, name in docs],
+    })
     # None 占位让 import jieba 抛 ImportError 而不是 ModuleNotFoundError，
     # 回退分支必须两种导入失败都挡住。
     monkeypatch.setitem(sys.modules, "jieba", None)

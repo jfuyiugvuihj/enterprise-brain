@@ -273,6 +273,8 @@ describe('E · 排队那张脸：三态与失败态各说各的', () => {
     expect(queueStatsFace({ queue_length: 2, processing: 1 }).headline).toContain('等待 2')
     expect(queueStatsFace({})).toBe(null)
     expect(queueStatsFace(null)).toBe(null)
+    expect(queueStatsFace({ queue_length: null, processing: 1 })).toBe(null)
+    expect(queueStatsFace({ queue_length: 2, processing: undefined })).toBe(null)
   })
 })
 

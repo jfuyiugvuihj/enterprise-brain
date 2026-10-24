@@ -5,7 +5,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from app.common.reliable_queue import QueueConnectionError, ReliableQueue, connect_reliable_queue
+from app.common.reliable_queue import QueueConnectionError, QueueSaturatedError, ReliableQueue, connect_reliable_queue
 
 
 class FakeRedis:
@@ -41,6 +41,10 @@ class FakeRedis:
 
     def rpush(self, key: str, value):
         self.lists.setdefault(key, []).append(str(value))
+        return len(self.lists[key])
+
+    def lpush(self, key: str, value):
+        self.lists.setdefault(key, []).insert(0, str(value))
         return len(self.lists[key])
 
     def brpoplpush(self, source: str, destination: str, timeout=0):
@@ -110,6 +114,9 @@ class _FakePipeline:
     def rpush(self, *args, **kwargs):
         return self._queue("rpush", *args, **kwargs)
 
+    def lpush(self, *args, **kwargs):
+        return self._queue("lpush", *args, **kwargs)
+
     def lrem(self, *args, **kwargs):
         return self._queue("lrem", *args, **kwargs)
 
@@ -135,6 +142,21 @@ def test_reliable_queue_is_idempotent_and_acknowledgeable():
     assert queue.status(first.request_id) == "processing"
     assert queue.ack(first.request_id) is True
     assert queue.status(first.request_id) == "done"
+
+
+def test_pending_work_is_served_in_arrival_order_and_capacity_is_atomic():
+    queue = ReliableQueue(FakeRedis(), name="test:q", capacity=2)
+    first = queue.enqueue({"task": "first"}, "first")
+    second = queue.enqueue({"task": "second"}, "second")
+    assert queue.redis.lrange(queue.pending_key, 0, -1) == [second.request_id, first.request_id]
+    assert queue.position(first.request_id) == 1
+    assert queue.position(second.request_id) == 2
+    assert queue.enqueue({"task": "duplicate"}, "first").request_id == first.request_id
+    with pytest.raises(QueueSaturatedError):
+        queue.enqueue({"task": "third"}, "third")
+    assert queue.reserve().request_id == first.request_id
+    assert queue.position(second.request_id) == 1
+    assert queue.reserve().request_id == second.request_id
 
 
 def test_reliable_queue_retries_then_dead_letters():
