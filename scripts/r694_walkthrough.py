@@ -1784,8 +1784,15 @@ class Walk:
             if out["form_fields"] < 3:
                 return out
             form = page.locator("[data-testid=rule-form]")
-            if self.args.data_table.lower().endswith((".csv", ".xlsx", ".xls")):
-                form.get_by_label("数据文件（可选）").fill(self.args.data_table)
+            visible_files = (_body("/data-files") or {}).get("files") or []
+            names = [str(row.get("filename") or "") for row in visible_files if isinstance(row, dict)]
+            preferred = self.args.data_table.strip()
+            data_filename = next((name for name in names if name == preferred), None)
+            if data_filename is None:
+                data_filename = next((name for name in names if preferred and preferred in name), None)
+            out["data_filename"] = data_filename
+            if data_filename:
+                form.get_by_label("数据文件（可选）").fill(data_filename)
             form.get_by_label("规则名称").fill(name)
             form.get_by_label("指标列名").fill("金额")
             trigger = page.locator("[data-testid=rule-form] [data-testid=ui-select-trigger]")
@@ -1802,6 +1809,7 @@ class Walk:
             if save.count():
                 save.first.click(timeout=8000)
                 out["rule_created"] = bool(wait_for(lambda: _rule_exists(name), 20))
+                out["save_errors"] = form.locator("[data-testid=ui-error-state], .ui-field__error").all_inner_texts()[:3]
             own_rule = page.locator("[data-testid=rule-rows] .rule-item").filter(has_text=name)
             if out["rule_created"]:
                 wait_for(lambda: own_rule.count() > 0, 20)
