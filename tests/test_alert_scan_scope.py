@@ -87,25 +87,37 @@ def scan_dirs(request):
 
 def test_sweep_evaluates_the_tenant_data_dir_and_not_the_other_folder(scan_dirs, monkeypatch):
     from app.api.v1 import alerts, data
+    from app.agents.contracts import Principal
+    from app.storage import datasets as dataset_storage
+    from app.storage.datasets import DatasetRegistry
 
     tenant, legacy = scan_dirs
-    _write_business_csv(tenant, "east.csv", 42.0)
+    east = _write_business_csv(tenant, "east.csv", 42.0)
     # The value the audit saw coming out of the repository folder.
-    _write_business_csv(legacy, "qa_ascii_leftover.csv", 560.0)
+    leftover = _write_business_csv(legacy, "qa_ascii_leftover.csv", 560.0)
     (legacy / "not_business.txt").write_text("ignore me", encoding="utf-8")
+    owner = Principal.from_user(
+        {"id": "u_scan_owner", "username": "scan_owner", "role": "manager", "department": "finance"}
+    )
+    tenant_registry = DatasetRegistry(root=tenant, metadata_path=tenant / ".dataset-metadata.json")
+    tenant_registry.register(east, principal=owner, filename="east.csv")
+    monkeypatch.setattr(dataset_storage, "dataset_registry", tenant_registry)
     monkeypatch.setattr(data, "DATA_DIR", str(tenant))
     _offline_rules(monkeypatch, [_rule()])
 
     summary: dict = {}
-    triggered = alerts.evaluate_all(scan_summary=summary)
+    triggered = alerts.evaluate_all(principal=owner, scan_summary=summary)
 
     assert summary["data_dir_configured"] is True
     assert summary["evaluated_files"] == ["east.csv"]
     assert [item["message"] for item in triggered] == ["profit-floor: profit=42.0 (gt 1.0)"]
     assert not any("560.0" in item["message"] for item in triggered)
     # DATA_DIR is what decides the scope, in both directions.
+    legacy_registry = DatasetRegistry(root=legacy, metadata_path=legacy / ".dataset-metadata.json")
+    legacy_registry.register(leftover, principal=owner, filename="qa_ascii_leftover.csv")
+    monkeypatch.setattr(dataset_storage, "dataset_registry", legacy_registry)
     monkeypatch.setattr(data, "DATA_DIR", str(legacy))
-    relocated = alerts.evaluate_all()
+    relocated = alerts.evaluate_all(principal=owner)
 
     assert [item["message"] for item in relocated] == ["profit-floor: profit=560.0 (gt 1.0)"]
 
