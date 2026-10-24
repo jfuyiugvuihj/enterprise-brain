@@ -140,7 +140,7 @@ def _build_retriever(tmp_path, monkeypatch, *, backend):
     hot_index.reset_hot_index_diagnostics()
     pg_store.reset_vector_read_diagnostics()
     rt.reset_search_shape()
-    instance = DocumentRetriever(str(tmp_path / "chroma"))
+    instance = DocumentRetriever()
     monkeypatch.setattr(instance.embedding, "embed_query", lambda text: list(QUERY))
     return instance
 
@@ -162,35 +162,25 @@ def retriever_off(tmp_path, monkeypatch, connection):
 # ---------------------------------------------------------------------- 开关本身
 
 
-def test_the_switch_defaults_to_the_legacy_engine(retriever_off, connection, monkeypatch):
-    """本轮硬要求"默认值不翻"：把开关的任一来源翻过去，这条立刻红。
-
-    判据③逼出来的口径改动：R231 起"默认"由 env 与常量两份合起来决定，所以这条得把 env
-    摘掉才谈得上"默认"。三行断言原样未动，也没有 skip/xfail。
-    """
+def test_the_default_read_backend_is_pgvector(retriever_off, connection, monkeypatch):
+    """未设置环境变量时只读 PG，不悄悄走退役的 Chroma。"""
     monkeypatch.delenv(indexing.INDEX_BACKEND_ENV, raising=False)
-    assert indexing.read_backend() == "chroma"
-    assert indexing.pgvector_reads_enabled() is False
-    assert retriever_off._pgvector_hits(list(QUERY), 5, WHERE_ADMIN) is None
-    assert connection.search_statements() == []
-    assert connection.statements == []
+    assert indexing.read_backend() == "pgvector"
+    assert indexing.pgvector_reads_enabled() is True
+    assert retriever_off._pgvector_hits(list(QUERY), 5, WHERE_ADMIN)
+    assert len(connection.search_statements()) == 1
 
 
-def test_an_unrecognised_backend_does_not_move_the_reads(monkeypatch):
-    """"pg_vetcor" 这种手滑必须留在遗留引擎上并说一句话，不许悄悄试另一个引擎。
-
-    同一枚判据③：常量这条路要单独可证，就得先把 env 那条路堵住，否则它测的其实是环境。
-    """
-    monkeypatch.delenv(indexing.INDEX_BACKEND_ENV, raising=False)
-    monkeypatch.setattr(indexing, "INDEX_BACKEND", "pg_vetcor")
-
-    assert indexing.read_backend() == "chroma"
-    assert indexing.pgvector_reads_enabled() is False
+def test_an_unrecognised_backend_is_rejected(monkeypatch):
+    """拼错引擎名时明确拒绝，不能隐式切回另一份资料。"""
+    monkeypatch.setenv(indexing.INDEX_BACKEND_ENV, "pg_vetcor")
+    with pytest.raises(ValueError, match="不再支持"):
+        indexing.read_backend()
 
 
 def test_the_version_ledger_and_the_read_path_share_one_backend_set():
-    """台账认的两个值与读路径认的两个值是同一份字面量，不许长成两套。"""
-    assert indexing.INDEX_BACKENDS == frozenset({"chroma", "pgvector"})
+    """登记与检索都只接受现役 PGVector。"""
+    assert indexing.INDEX_BACKENDS == frozenset({"pgvector"})
     assert indexing.INDEX_BACKEND in indexing.INDEX_BACKENDS
     assert indexing.PGVECTOR_BACKEND == "pgvector"
 
@@ -327,15 +317,12 @@ def test_no_filter_at_all_is_a_legal_shape(connection, monkeypatch):
 # ---------------------------------------------------------------------- 其余拒答面
 
 
-def test_reads_refuse_while_the_dual_write_switch_is_off(monkeypatch):
-    """双写没开，chunk_vectors 是一库空：读切过去只会问出零行，那必须是拒答而不是空答。"""
-    monkeypatch.setattr(indexing, "INDEX_BACKEND", indexing.PGVECTOR_BACKEND)
+def test_retired_dual_write_switch_does_not_disable_pg_reads(connection, monkeypatch):
+    """退役的双写开关不能让现役 PG 读腿突然失效。"""
     monkeypatch.setenv(pg_store.DUAL_WRITE_ENV, "off")
-
-    with pytest.raises(pg_store.VectorReadRejectedError) as refused:
-        pg_store.read_topk(query_vector=list(QUERY), k=5, where=WHERE_ADMIN)
-
-    assert refused.value.reason == pg_store.REASON_VECTOR_READ_WITHOUT_DUAL_WRITE
+    rows = pg_store.read_topk(query_vector=list(QUERY), k=5, where=WHERE_ADMIN)
+    assert len(rows) == len(ROWS)
+    assert len(connection.search_statements()) == 1
 
 
 def test_an_unmapped_distance_spelling_is_a_refusal_not_a_guessed_operator(
@@ -362,9 +349,9 @@ def test_the_operator_follows_the_recorded_scope(connection, monkeypatch):
     assert pg_store.DISTANCE_OPERATORS["l2"] in connection.search_statements()[-1][0]
 
 
-def test_a_refusal_falls_back_to_the_legacy_leg_which_still_filters(
+def test_a_pg_failure_does_not_fall_back_to_a_legacy_leg(
         retriever_on, connection, monkeypatch):
-    """拒答不许把检索问出异常：退回遗留腿，而且那一条仍带着同一份 where 下推。"""
+    """PG 不可用时拒答，不能从退役的 Chroma 泄露其他范围的资料。"""
     asked = {}
 
     class _Answers:
@@ -384,12 +371,11 @@ def test_a_refusal_falls_back_to_the_legacy_leg_which_still_filters(
             model=configured_model())))
     retriever_on.collection = _Answers()
 
-    hits = retriever_on.search("q", k=5, where=WHERE_DEPARTMENT)
-
-    assert [item["source"] for item in hits] == ["c.txt"]
-    assert asked["where"] == WHERE_DEPARTMENT
+    with pytest.raises(pg_store.VectorWriteRejectedError):
+        retriever_on.search("q", k=5, where=WHERE_DEPARTMENT)
+    assert asked == {}
     assert rt.search_shape_diagnostics()["last"]["answered_by"] == (
-        rt.RETRIEVAL_SERVER_CHROMA)
+        rt.RETRIEVAL_SERVER_PGVECTOR)
     assert pg_store.vector_read_diagnostics()["last_bypass"]["reason"] == (
         pg_store.REASON_VECTOR_MIRROR_UNAVAILABLE)
     assert connection.search_statements() == []

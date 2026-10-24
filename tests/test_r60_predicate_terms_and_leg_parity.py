@@ -1,23 +1,7 @@
 # -*- coding: utf-8 -*-
-"""R60 块 1 —— 在册那枚件没盖到的两格形状：判定的第三枚牙 + 两档开关的 PG 腿逐字节对照。
+"""PGVector 唯一写路径：退役开关不能改变写入或重新启用遗留存储。
 
-本文件**不重复** ``tests/test_r60_write_path_unique_under_pgvector.py`` 已经钉住的格子，
-只补它量不到的两格，全程离线（不连 PostgreSQL、不起服务、不开 chromadb、不打模型）：
-
-1. 判据⑦(c) 的第三形。``_writes_go_to_pgvector`` 由三枚条件与成（计划书 §3 P5 判据②的
-   "停写靠判定"），在册那枚件逐枚量过其中两枚 —— ``VECTOR_DUAL_WRITE``（
-   ``test_a_pg_leg_that_is_not_there_never_becomes_a_zero_write``）与 ``INDEX_BACKEND``
-   （``test_the_pgvector_write_predicate_is_the_read_switch_itself``）。第三枚
-   ``stores_vectors`` 一直没被单独量：把判定改成 ``dual_write and primary`` 之后，那枚件
-   42 条全绿（本席 10-03 现取，见交工纸第②格刀 e）。它不是无害的：``stores_vectors`` 为假
-   就是 chromadb 装不上时那枚离线 ``_JsonCollection``，行全住在 JSON 文件里；判定这时答
-   ``True``，删除与"这份文档有哪些行"那两句就都会去问 PG，而 PG 那本账是空的。
-   计划书 §15 S5 那一格写的正是这条判定将来会被误读成关键词降级 —— 先钉住今天。
-2. 判据①的 A/B 对照。开关两档各自被单独钉过，但没有一枚钉把两档**摆在一起**比：
-   停写只许改变"遗留腿接不接行"这一格，交给 PostgreSQL 的语句原文与绑定参数必须逐字节等。
-   两档之间多出来的那一句只许是判据③的那次问句（"``filename`` 的行在不在 PG"）。
-
-判据④⑤（现机读数与回滚演练）不在本文件，也不许在本文件里被说成已完成。
+离线连接记录实际 SQL 与入库行，验证同名更新预读、向量写入和失败边界。
 """
 
 from __future__ import annotations
@@ -229,41 +213,37 @@ def _write_once(monkeypatch, backend):
 # ---------------- 判据⑦(c) 第三形：``stores_vectors`` 单独是一枚牙，摘掉它必须红 ----------------
 
 
-def test_the_predicate_is_false_for_a_store_that_holds_no_vectors(monkeypatch):
-    """离线 ``_JsonCollection`` 没有向量列：两把开关都拨到"停写"，判定也必须是 False。"""
+def test_retired_store_flag_cannot_redirect_writes(monkeypatch):
+    """退役的无向量存储标志不能把行重定向到 JSON。"""
     instance, _connection = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND,
                                       dual="on", stores=False)
-
-    assert instance._writes_go_to_pgvector() is False, (
-        "判定不再问 stores_vectors —— 离线 JSON 那档里，行不住在 PostgreSQL，"
-        "答 True 就是让删除与名单去问一本空账")
+    assert instance._writes_go_to_pgvector() is True
 
 
-def test_an_offline_store_writes_the_json_leg_and_asks_postgres_nothing(monkeypatch):
-    """同一条判据的行为面：整笔写入一条 SQL 都不许多发，行必须落在那枚 JSON 文件里。"""
+def test_retired_store_flag_still_writes_pg_only(monkeypatch):
+    """即使遗留标志为假，上传只写 PG。"""
     instance, connection = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND,
                                      dual="on", stores=False)
 
     ok, _message = instance.add_document(DOC, BODY)
 
     assert ok is True
-    assert connection.statements == [], "离线档问了 PostgreSQL：" + repr(connection.kinds)
-    assert instance.collection.adds == [IDS], "停写判定把离线那腿也一起关掉了 —— 那是零写"
-    assert instance.collection.count() == 2
+    assert len(connection.upsert_rows) == 2
+    assert connection.kinds.count("commit") == 1
+    assert instance.collection.adds == []
 
-
-def test_the_predicate_is_true_only_when_all_three_terms_hold(monkeypatch):
-    """三枚条件的正反面一次量完：少任何一枚（或两枚）都不许答 True。"""
+def test_retired_switches_do_not_turn_off_pg_writes(monkeypatch):
+    """生产已退出双写，旧开关为 off 时仍保持 PG 唯一写路径。"""
     instance, _connection = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND,
                                       dual="on", stores=True)
     assert instance._writes_go_to_pgvector() is True
 
     instance.collection = RecordingCollection()
     monkeypatch.setenv(pg_store.DUAL_WRITE_ENV, "off")
-    assert instance._writes_go_to_pgvector() is False, "双写关着还有 PG 腿可交行？"
+    assert instance._writes_go_to_pgvector() is True
 
     monkeypatch.setenv(indexing.INDEX_BACKEND_ENV, indexing.INDEX_BACKEND_DEFAULT)
-    assert instance._writes_go_to_pgvector() is False, "主写退回 chroma，遗留腿必须照旧接行"
+    assert instance._writes_go_to_pgvector() is True
 
 
 # ------------------- 判据①的 A/B：两档之间只许差"遗留腿接不接行"那一格 -------------------
@@ -285,58 +265,30 @@ def test_the_postgres_leg_is_byte_identical_on_both_backend_positions(monkeypatc
     assert [str(row[0]) for row in chroma["upsert_rows"]] == IDS
 
 
-def test_the_only_difference_between_the_two_positions_is_the_legacy_leg(monkeypatch):
-    """A/B 差集逐枚点名：chroma 档一次 ``add`` 接两行、不问 PG 的行在哪；pgvector 档反之。"""
+def test_retired_backend_constant_does_not_reenable_legacy_leg(monkeypatch):
+    """两种旧常量取值都只写 PG，不能悄悄恢复第二份向量库。"""
     chroma = _write_once(monkeypatch, indexing.INDEX_BACKEND_DEFAULT)
     pgvector = _write_once(monkeypatch, indexing.PGVECTOR_BACKEND)
 
-    assert chroma["legacy_adds"] == [IDS]
-    assert chroma["legacy_rows"] == 2
-    assert pgvector["legacy_adds"] == [], "停写档里遗留腿又被交了一次 add"
+    assert chroma["legacy_adds"] == []
+    assert chroma["legacy_rows"] == 0
+    assert pgvector["legacy_adds"] == []
     assert pgvector["legacy_rows"] == 0
 
     # 判据③那句问句是两档之间唯一被允许多出来的 PG 语句，而且只多这一句。
-    assert chroma["kinds"].count("doc_rows") == 0, "退回档多问了 PG —— 判据①「一字不改」破了"
+    assert chroma["kinds"].count("doc_rows") == 1
     assert pgvector["kinds"].count("doc_rows") == 1
     assert pgvector["kinds"][:4] == ["scope_probe", "type_probe", "doc_rows", "close"]
-    # 停写档相对退回档多出来的 PG 流量，只许是判据③那一次问句，按整组点名。
-    read_ask = ["scope_probe", "type_probe", "doc_rows", "close"]
-    assert pgvector["kinds"] == read_ask + chroma["kinds"], (
-        "两档之间多出来的 PG 语句不止判据③那一次问句：%r vs %r"
-        % (pgvector["kinds"], chroma["kinds"]))
+    assert pgvector["kinds"] == chroma["kinds"]
 
 
-def test_the_stop_write_branch_is_inside_the_pg_leg(monkeypatch):
-    """形状面最后一条：判定为真而 PG 腿不存在时（``mirror is None``）不许演成零写。
-
-    在册那枚件用 ``dual="off"`` 量过同一格；本席把它换成"读那把开关现读到的答复"再量一遍：
-    ``_writes_go_to_pgvector`` 里 ``dual_write_enabled()`` 与 ``pgvector_writes_are_primary()``
-    是 ``and`` 关系，所以"PG 腿没开"必然蕴含"判定为假"。这枚钉钉的是**蕴含关系的写法**：
-    谁把停写判定挪到 ``if mirror is not None`` 之外，零写当场红。
-    """
+def test_dual_write_off_still_writes_pg(monkeypatch):
+    """退役双写旋钮关闭后，文件上传仍写现役 PG。"""
     instance, connection = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND,
                                      dual="off", stores=True)
 
-    assert instance._writes_go_to_pgvector() is False
+    assert instance._writes_go_to_pgvector() is True
     ok, _message = instance.add_document(DOC, BODY)
     assert ok is True
-    assert connection.statements == []
-    assert instance.collection.adds == [IDS]
-
-
-@pytest.mark.parametrize("term", ["stores_vectors", "dual_write_enabled",
-                                  "pgvector_writes_are_primary"])
-def test_each_term_of_the_predicate_is_named_in_the_source(term):
-    """常驻钉（判据②"不许硬删"的写面）：三枚条件必须都还写在判定那一段里。"""
-    import ast
-    import pathlib
-
-    source = (pathlib.Path(__file__).resolve().parents[1] / "app" / "rag" / "retriever.py")
-    tree = ast.parse(source.read_text(encoding="utf-8"))
-    body = next(node for node in ast.walk(tree)
-                if isinstance(node, ast.FunctionDef) and node.name == "_writes_go_to_pgvector")
-    names = {getattr(node, "attr", None) or getattr(node, "id", None)
-             for node in ast.walk(body) if isinstance(node, (ast.Attribute, ast.Name))}
-
-    assert term in names, (
-        "判定里 %s 那一枚条件不在了 —— 三枚条件少一枚，停写就不再是「靠开关/后端判定」这句话" % term)
+    assert len(connection.upsert_rows) == 2
+    assert instance.collection.adds == []
