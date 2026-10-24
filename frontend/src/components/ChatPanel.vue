@@ -1109,6 +1109,9 @@ async function send(dataFilename = activeDataFilename.value) {
 
     const result = await consumeSseStream(response, aiMsg, {
       signal,
+      onStatus: (status) => {
+        turnStatus.value = { ...turnStatus.value, [turn]: status }
+      },
       onHitl: ({ pending, labels }) => {
         // 挂起期间仍可中断，所以先结束 loading 再展示待确认卡。
         hitl.value = { pending, labels, interrupted: false }
@@ -1301,6 +1304,9 @@ async function approve(approved) {
     readLaneHeaders(turn, aiMsg, response)
     const result = await consumeSseStream(response, aiMsg, {
       signal,
+      onStatus: (status) => {
+        turnStatus.value = { ...turnStatus.value, [turn]: status }
+      },
       onHitl: ({ pending: nextPending, labels }) => {
         hitl.value = { pending: nextPending, labels, interrupted: false }
         endStream()
@@ -1393,6 +1399,7 @@ const serverDataReads = ref({}) // R415 · 终态帧报回来的用表读数：�
 const terminalReads = ref({}) // R510 · 终态帧那四枚键的读数：只装后端真交回来的键，没交的键整格缺席
 const unseenReads = ref({})   // 本轮发出、界面尚未认领的事件名
 const queueReads = ref({})    // GET /queue/status/{id} 的最近一次读数
+const turnStatus = ref({})    // 当前流的排队或运行提示，按轮显示且不写入历史
 const queuePieces = ref({})   // R558 · 队列道增量片段：上一发的游标 + 已经画上屏的那一截字
 const queueFaults = ref({})   // 排队状态这一次没读回来时的原始错误
 const queueStops = ref({})    // 这一轮的轮询被终止性判定叫停：停表之后读数不会自己回来
@@ -2539,7 +2546,9 @@ function renderMd(raw) {
                 </div>
                 <div v-else-if="msg.role === 'assistant'"
                      class="msg-content" @click="downloadReport($event, turnKey(msg, i))" v-html="renderMd(stripChartMarkers(msg.content))" />
-                <template v-else>
+                <p v-if="msg.role === 'assistant' && loading && i === messages.length - 1 && !msg.content && turnStatus[turnKey(msg, i)]"
+                   class="turn-status" role="status" data-testid="ask-turn-status">{{ turnStatus[turnKey(msg, i)] }}</p>
+                <template v-if="msg.role === 'user'">
                   <div class="msg-content mobile-question-full" :class="{ 'mobile-question-full--collapsible': contextHasAnswer && i === latestQuestionIndex }">{{ questionText(msg) }}</div>
                   <details v-if="contextHasAnswer && i === latestQuestionIndex" class="mobile-question-details" data-testid="mobile-question-details">
                     <summary><strong>查看本次问题</strong><span>{{ questionText(msg) }}</span></summary>
@@ -3099,6 +3108,7 @@ function renderMd(raw) {
 }
 
 /* ===== 打字动画 ===== */
+.turn-status { margin: 8px 0 0; color: #52627a; font-size: 13px; }
 .typing-dots { display: flex; gap: 4px; padding: 4px 0; }
 .typing-dots span {
   width: 6px; height: 6px;

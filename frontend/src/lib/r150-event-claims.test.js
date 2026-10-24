@@ -383,6 +383,15 @@ describe('C · 读流层：告警有主，错误体不再是对象', () => {
     expect(got[0].hiddenCount).toBe(2)
   })
 
+  it('等待中的状态帧立即交给界面显示', async () => {
+    const notes = []
+    await consumeSseStream(fakeStream([
+      'event: status\ndata: {"type":"status","content":"正在排队等待"}\n\n',
+      'event: done\ndata: {"type":"done"}\n\n',
+    ]), { role: 'assistant', content: '' }, { onStatus: note => notes.push(note) })
+    expect(notes).toEqual(['正在排队等待'])
+  })
+
   it('缓存回调随 text 帧到达，不等整轮结束', async () => {
     const hits = []
     const msg = { role: 'assistant', content: '' }

@@ -602,7 +602,7 @@ export function createStreamReducer(msg, state) {
       case 'status': {
         const note = typeof payload?.content === 'string' ? payload.content : ''
         if (note) state.statusNote = note
-        return { action: 'ignored' }
+        return note ? { action: 'status', note } : { action: 'ignored' }
       }
       case 'error': {
         const detail = typeof payload?.content === 'string' ? payload.content : ''
@@ -716,6 +716,9 @@ export async function consumeSseStream(response, msg, handlers = {}) {
     for (const frame of split.frames) {
       const result = reduce(parseSseFrame(frame))
       switch (result.action) {
+        case 'status':
+          handlers.onStatus?.(result.note, state)
+          break
         case 'hitl':
           handlers.onHitl?.(result.hitl)
           stopped = 'hitl'
