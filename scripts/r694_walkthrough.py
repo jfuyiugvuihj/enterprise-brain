@@ -1672,6 +1672,7 @@ class Walk:
         assert self.page is not None
         nav = self._goto("/overview", "dashboard-kpis")
         demo_flag = self.page.locator("[data-testid=dashboard-demo-flag]").all_inner_texts()
+        demo_values_on_screen = any("演示数据" in text for text in demo_flag)
         tiles = self.page.evaluate(
             "() => Array.from(document.querySelectorAll('[data-testid^=dashboard-kpi-]'))"
             ".map(e => ({ id: e.getAttribute('data-testid'),"
@@ -1693,6 +1694,7 @@ class Walk:
         readings = {
             "nav": nav,
             "demo_flag_on_screen": demo_flag,
+            "demo_values_on_screen": demo_values_on_screen,
             "kpi_tiles": tiles,
             "kpi_documents": kpi_docs,
             "feed_tile_documents": docs_now.get("tile"),
@@ -1700,7 +1702,7 @@ class Walk:
             "feed_catalog_documents": catalog_count,
         }
         status = "达" if (
-            not demo_flag and kpi_docs is not None and docs_now.get("tile") == kpi_docs
+            not demo_values_on_screen and kpi_docs is not None and docs_now.get("tile") == kpi_docs
             and catalog.get("status") == 200 and catalog_count == kpi_docs
         ) else "未达"
         note = "" if status == "达" else (
@@ -1773,7 +1775,7 @@ class Walk:
             if self.args.data_table.lower().endswith((".csv", ".xlsx", ".xls")):
                 form.get_by_label("数据文件（可选）").fill(self.args.data_table)
             form.get_by_label("规则名称").fill(name)
-            form.get_by_label("指标列名").fill("报销金额")
+            form.get_by_label("指标列名").fill("金额")
             trigger = page.locator("[data-testid=rule-form] [data-testid=ui-select-trigger]")
             if trigger.count():
                 trigger.first.click()
@@ -1792,7 +1794,9 @@ class Walk:
             if out["rule_created"] and own_rule.locator("[data-testid=check-rule]").count():
                 own_rule.locator("[data-testid=check-rule]").first.click()
                 out["check_clicked"] = True
-                out["alert_landed"] = bool(wait_for(lambda: _alert_landed(name), 180, poll_s=3.0))
+                wait_for(lambda: page.locator("[data-testid=check-receipt], [data-testid=ui-error-state]").count() > 0, 40)
+                out["check_receipt"] = page.locator("[data-testid=check-receipt]").all_inner_texts()[:1]
+                out["alert_landed"] = bool(wait_for(lambda: _alert_landed(name), 40, poll_s=2.0))
             if out["alert_landed"] and page.locator("[data-testid=reload-alerts]").count():
                 page.click("[data-testid=reload-alerts]")
                 wait_for(lambda: rows.count() > 0, 30, poll_s=1.0)
@@ -1945,6 +1949,8 @@ class Walk:
         assert self.page is not None
         nav = self._goto("/traces", "trace-panel")
         page = self.page
+        wait_for(lambda: page.locator("[data-testid=runs-cell]").get_attribute("data-face")
+                 in ("ready", "empty", "failure"), 25)
         runs = page.locator("[data-testid=pick-run]")
         runs_readout = page.locator("[data-testid=runs-cell]").all_inner_texts()[:6]
         events = 0
@@ -2146,6 +2152,8 @@ class Walk:
         assert self.page is not None
         page = self.page
         nav = self._goto("/profile", "profile-panel")
+        wait_for(lambda: page.locator("[data-testid=profile-cells]").count() > 0
+                 or page.locator("[data-testid=ui-error-state]").count() > 0, 25)
         cells = {key: page.locator("[data-testid=cell-%s-value]" % key).all_inner_texts()[:1]
                  for key in ("username", "role", "clearance")}
         department = page.locator("[data-testid=cell-department] .profile-value").all_inner_texts()[:1]
