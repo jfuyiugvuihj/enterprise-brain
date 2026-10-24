@@ -18,8 +18,9 @@ from contextlib import aclosing
 from pathlib import Path
 from typing import Any, get_args
 
-# 显式线程池 — 支持 1000+ 并发（每个 uvicorn 实例）
+# 显式线程池承载编排；交互轮次的准入另由下方的闸门限制。
 _executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="ezn_")
+_ASK_TURN_GATE = threading.Lock()
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, UploadFile, File, Form, Request as FastAPIRequest, Response as FastAPIResponse, HTTPException
@@ -3326,12 +3327,36 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 # 就是把本轮身份漏给下一个跑在同一枚线程上的请求。
                 reset_retrieval_trace(trace_token)
 
-        loop = asyncio.get_running_loop()
-        agent_future = loop.run_in_executor(_executor, _run)
-        _reap_agent_worker(agent_future, session_id=thread_id, stage="ask")
-
-        yield f"event: status\ndata: {json.dumps({'type': 'status', 'content': '🔍 正在分析您的问题...'}, ensure_ascii=False)}\n\n"
+        waiting = _ASK_TURN_GATE.locked()
+        initial_status = ("⏳ 前方有分析任务，正在排队等待..." if waiting
+                          else "🔍 正在分析您的问题...")
+        yield f"event: status\ndata: {json.dumps({'type': 'status', 'content': initial_status}, ensure_ascii=False)}\n\n"
         await asyncio.sleep(0)
+        last_queue_heartbeat = time.monotonic()
+        while not _ASK_TURN_GATE.acquire(blocking=False):
+            if not waiting:
+                waiting = True
+                yield sse_event("status", {"type": "status", "content": "⏳ 前方有分析任务，正在排队等待..."})
+            if cancel_event.is_set():
+                yield sse_event("cancelled", {"type": "cancelled", "session_id": thread_id})
+                return
+            if budget.expired():
+                yield sse_event("error", {"type": "error", "content": "等待分析资源超时，请稍后重试"})
+                return
+            if time.monotonic() - last_queue_heartbeat >= heartbeat_interval:
+                yield sse_event("heartbeat", {"type": "heartbeat"})
+                last_queue_heartbeat = time.monotonic()
+            await asyncio.sleep(0.05)
+        try:
+            loop = asyncio.get_running_loop()
+            agent_future = loop.run_in_executor(_executor, _run)
+            agent_future.add_done_callback(lambda _future: _ASK_TURN_GATE.release())
+        except BaseException:
+            _ASK_TURN_GATE.release()
+            raise
+        _reap_agent_worker(agent_future, session_id=thread_id, stage="ask")
+        if waiting:
+            yield sse_event("status", {"type": "status", "content": "🔍 开始分析您的问题..."})
 
         start_time = time.time()
         last_emit = time.monotonic()

@@ -1,29 +1,11 @@
 # -*- coding: utf-8 -*-
-"""R60 判据①②③ —— 停写之后的写路径唯一化必须真的在码上，而且必须留得下退路。
+"""PGVector 唯一写路径的上传、同名更新、删除与目录读回回归。
 
-这一枚文件不许只查环境变量。``INDEX_BACKEND=pgvector`` 答得漂亮而 ``_write_batch`` 背地里
-还往 Chroma 塞行，是这一单最坏的一种假话：双写看起来还在跑、诊断里 read_backend 也确实
-是 pgvector，而"退役中的遗留件"其实每天都在长新行 —— 于是没有任何一天能把它归档下线。
-所以本文件的断言全落在**两腿各自的行数**上，一枚一枚数：
-
-1. 遗留腿那枚假目录是一张可数的表（``LegacyHandle.count()``），不是只记调用次数的桩：
-   第④格的形状（PG +N / Chroma +0）在这里先离线量一遍，真库现取读数见交付纸第④格。
-2. PG 那一腿是一张按 ``chunk_vectors`` 列形状记账的假表；语句标记一律取 ``pg_store`` 里的
-   真源常量，本桩不自带第二份 SQL —— 改了 SQL 而桩还是绿，就是桩在骗人。
-3. 删除这一腿问的是"行住在哪一库"，不是"遗留腿知道些什么"：只住在 PG 的行必须删得掉，
-   两腿都持有的行必须两边都删掉，热集收到的必须是并集。
-
-开关退回 ``chroma`` 那一档（＝唯一的回滚通路）时要求的是**逐字不变**：一次
-``collection.get(where=...)``、一次 ``collection.add``、一条 SQL 都不许多问 PG。判据②
-的常驻钉是这里唯一不许"改一改就算过"的一枚：停写靠判定，不靠把代码摘掉。
-
-全程离线：不连 PostgreSQL、不起服务、不开 chromadb、不打模型。
+假 PG 表按现役 SQL 列序储存行，旧 collection 只用于反证不应被调用。
+全程离线，不连接 PostgreSQL 或模型。
 """
 
 from __future__ import annotations
-
-import ast
-import pathlib
 
 import pytest
 
@@ -33,15 +15,12 @@ from app.rag import pg_store
 from app.rag import retriever as rt
 from app.rag.retriever import DocumentRetriever
 
-REPO = pathlib.Path(__file__).resolve().parents[1]
-RETRIEVER_PY = REPO / "app" / "rag" / "retriever.py"
-
 DIM = 8
 MODEL = "nomic-embed-test"
 #: 与 VectorMirror.build_rows 交回的那一行同列序（pg_store._UPSERT_COLUMNS）：假表按它记账，
 #: 再把 pg_store 的两枚 SELECT 真源翻译回各自的列序。桩不抄 SQL，只读 SQL 常量。
 UPSERT_COLUMNS = ("vector_id", "filename", "chunk_index", "content", "classification",
-                  "department", "content_sha256", "index_version_id", "embedding",
+                  "department", "visibility", "content_sha256", "index_version_id", "embedding",
                   "embedding_model", "embedding_dimension", "distance_function")
 
 
@@ -117,7 +96,8 @@ def legacy_row(vector_id, document="上一版的正文", metadata=None, embeddin
 def pg_row(vector_id, filename, chunk_index, content, sha, *, classification=2,
            department="研发中心"):
     """按 _UPSERT_VECTOR_SQL 的列序摆一行，给假表当存量。"""
-    return (vector_id, filename, chunk_index, content, classification, department, sha,
+    return (vector_id, filename, chunk_index, content, classification, department,
+            "private", sha,
             None, "[0.1]", MODEL, DIM, "cosine")
 
 
@@ -342,102 +322,73 @@ def test_pgvector_primary_write_leaves_the_legacy_store_empty(monkeypatch):
     assert instance.collection.adds == [], "停写态里遗留腿仍被交了一次 add"
 
 
-def test_the_legacy_knob_still_writes_both_legs_unchanged(monkeypatch):
-    """判据①第二半＋判据②：开关退回 chroma，遗留腿照旧接行，PG 那一腿也照旧写。
-
-    这一枚同时是判据⑦第二把的正面：不许把双写一起关成零写 —— 两腿都写才是那一档的今天。
-    """
+def test_default_backend_writes_only_pg(monkeypatch):
+    """默认配置下上传的文本块只进入 PG。"""
     instance, connection, table = _assemble(monkeypatch, backend=indexing.INDEX_BACKEND_DEFAULT)
 
     ok, _message = instance.add_document("a.txt", "一\n二")
 
     assert ok is True
-    assert instance.collection.count() == 2
+    assert instance.collection.count() == 0
     assert len(table.rows) == 2
-    assert instance.collection.adds == [["a.txt_0", "a.txt_1"]]
+    assert instance.collection.adds == []
     assert "upsert" in connection.log and "commit" in connection.log
 
 
-def test_the_shipped_default_sends_no_postgres_statement(monkeypatch):
-    """判据①「行为一字不改」最严的一档：什么都不设 ＝ 一条 SQL 都不发，行全在遗留腿。"""
+def test_unset_switches_still_write_pg(monkeypatch):
+    """不设置已退役的两个旋钮也不能把上传退回旧库。"""
     instance, connection, table = _assemble(monkeypatch, backend=None, dual=None)
 
     instance.add_document("a.txt", "一\n二")
 
-    assert instance.collection.count() == 2
-    assert connection.log == []
-    assert len(table.rows) == 0
+    assert instance.collection.count() == 0
+    assert "upsert" in connection.log and "commit" in connection.log
+    assert len(table.rows) == 2
 
 
-def test_a_pg_leg_that_is_not_there_never_becomes_a_zero_write(monkeypatch):
-    """判据②反证第二把的形状：开关在 pgvector 而双写关着，遗留腿必须仍写。
-
-    谁都不写是本单最贵的错：上传报成功、两库里都没有这份文档的向量。
-    """
+def test_retired_dual_write_off_still_writes_pg(monkeypatch):
+    """双写旋钮关闭后上传仍落 PG，不能成功回执却零写入。"""
     instance, _connection, table = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND,
                                              dual="off")
 
     ok, _message = instance.add_document("b.txt", "三\n四")
 
     assert ok is True
-    assert instance.collection.count() == 2
-    assert len(table.rows) == 0
+    assert instance.collection.count() == 0
+    assert len(table.rows) == 2
 
 
-def test_the_pgvector_write_predicate_is_the_read_switch_itself(monkeypatch):
-    """判据②：停写靠"后端判定"，判定来自 indexing 那一把开关，而且每次调用现读。"""
+def test_retired_switches_cannot_reenable_legacy_writes(monkeypatch):
+    """旧配置值变化时，写目标始终只有 PG。"""
     instance, _connection, _table = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND)
     assert instance._writes_go_to_pgvector() is True
     monkeypatch.setenv(indexing.INDEX_BACKEND_ENV, indexing.INDEX_BACKEND_DEFAULT)
-    assert instance._writes_go_to_pgvector() is False
+    assert instance._writes_go_to_pgvector() is True
     monkeypatch.setenv(indexing.INDEX_BACKEND_ENV, "not-a-backend")
-    assert instance._writes_go_to_pgvector() is False, "拼错的值必须留在出厂档，不许猜另一台"
+    assert instance._writes_go_to_pgvector() is True
 
 
-def test_stopping_the_write_is_a_switch_and_not_a_deletion():
-    """判据②常驻钉（R625 改写）：停写是判定，不是删码——而"摘没摘"要逐枚点名。
-
-    原来这一格写的是 len(_write_batch 里的 collection.add) >= 2。那句话钉不住任何一枚具体写点
-    的身份：主写路径上再多出一枚 add，它只会更满足；把停写判定中和成 if False，它一字不动还是绿。
-    现在改判身份。名册按 AST 现取 app/ 里每一枚 Chroma 写点的名字、各自的闸门条件、各自允许喂的
-    id，四格（名册对账/闸门/id 来源/主写路径无闸门写点）任一不中都红，报的是那一枚写点的名字。
-    名册是两枚件共用的一份（tests/test_r625_chroma_write_sites_are_named_one_by_one.py），
-    不在这里再抄一套判据；行号一枚都不抄，行号会漂。
-    """
-    # 函数内 import：本文件的模块级假腿正被那枚件复用，模块级互领会成循环 import。
-    from test_r625_chroma_write_sites_are_named_one_by_one import write_site_findings
-
-    findings = write_site_findings()
-    assert findings == [], ("Chroma 写点不再逐枚点名了（身份/闸门/允许喂的 id/主写路径）：\n"
-                            + "\n".join(findings))
+def test_failed_pg_write_does_not_report_success_or_write_legacy(monkeypatch):
+    """PG 写失败时不能将任务伪装成成功，也不能改写旧 collection。"""
+    instance, connection, table = _assemble(
+        monkeypatch, backend=indexing.PGVECTOR_BACKEND, fail_on=("upsert",))
+    with pytest.raises(rt.VectorWriteRejectedError) as caught:
+        instance.add_document("a.txt", "一\n二")
+    assert caught.value.reason == pg_store.REASON_VECTOR_MIRROR_WRITE_FAILED
+    assert table.rows == {}
+    assert instance.collection.adds == []
+    assert connection.rollbacks == 1
 
 
-def test_the_write_leg_reads_no_second_switch():
-    """判据②：retriever.py 里不许长出第二枚名字带 BACKEND 的环境变量。
-
-    凭据：计划书 R592 那枚"一把开关"的钉对端点层立的正是这条，写路径同理。
-    """
-    source = RETRIEVER_PY.read_text(encoding="utf-8")
-    names = []
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.Call):
-            func = node.func
-            dotted = getattr(func, "attr", None) or getattr(func, "id", None)
-            via_environ_get = (dotted == "get"
-                               and getattr(getattr(func, "value", None), "attr", "") == "environ")
-            if (dotted == "getenv" or via_environ_get) and node.args:
-                first = node.args[0]
-                if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                    names.append(first.value)
-        elif isinstance(node, ast.Subscript):
-            value = node.value
-            if (getattr(value, "attr", "") == "environ"
-                    and isinstance(node.slice, ast.Constant)
-                    and isinstance(node.slice.value, str)):
-                names.append(node.slice.value)
-    second = [name for name in names if "BACKEND" in name.upper()]
-    assert second == [], "retriever.py 自己读了后端开关：" + repr(second)
-    assert "pgvector_writes_are_primary" in source, "写路径没问那一把开关，问的是别的什么"
+def test_pg_unavailable_does_not_fall_back_to_legacy_write(monkeypatch):
+    """PG 连接失败时，旧 collection 不得代收新文档。"""
+    instance, connection, table = _assemble(
+        monkeypatch, backend=indexing.PGVECTOR_BACKEND, fail_on=("scope_probe",))
+    with pytest.raises(rt.VectorWriteRejectedError) as caught:
+        instance.add_document("a.txt", "一\n二")
+    assert caught.value.reason == pg_store.REASON_VECTOR_MIRROR_UNAVAILABLE
+    assert table.rows == {}
+    assert instance.collection.adds == []
 
 
 # --------------------------------------------------------------------- 判据③：删除那一腿
@@ -462,8 +413,8 @@ def test_delete_asks_postgres_when_the_legacy_store_holds_nothing(monkeypatch):
     assert instance.collection.deletes == [], "遗留腿没持有的东西，不许假装删过"
 
 
-def test_delete_removes_legacy_rows_too_and_notes_the_union(monkeypatch):
-    """判据③「不留孤儿」：两腿都持有的那份文档，删完之后哪一腿都不许留着它的行。"""
+def test_delete_only_changes_the_active_pg_store(monkeypatch):
+    """旧归档行不参与现役删除，PG 中对应文档必须删净。"""
     table = PgTable([pg_row("a.txt_0", "a.txt", 0, "上一版的正文", "legacy-hash")])
     legacy = LegacyHandle([legacy_row("a.txt_0")])
     instance, connection, _t = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND,
@@ -471,11 +422,11 @@ def test_delete_removes_legacy_rows_too_and_notes_the_union(monkeypatch):
 
     instance.delete_document("a.txt")
 
-    assert legacy.count() == 0, "删了 PG、Chroma 还留着孤儿行"
-    assert len(table.rows) == 0, "两腿里只剩一腿有行同样是没删干净"
-    assert instance.collection.deletes == [["a.txt_0"]]
+    assert legacy.count() == 1
+    assert len(table.rows) == 0
+    assert instance.collection.deletes == []
     assert "delete" in connection.log
-    assert instance._r60_noted.get("delete") == ["a.txt_0"], "_note_hot_delete 必须收到并集"
+    assert instance._r60_noted.get("delete") == ["a.txt_0"]
 
 
 def test_a_pg_only_delete_is_not_refused_for_lacking_a_legacy_snapshot(monkeypatch):
@@ -541,15 +492,14 @@ def test_undo_does_not_delete_rows_the_legacy_leg_never_held(monkeypatch):
 
 
 def test_a_postgres_that_cannot_answer_is_a_refusal_not_a_fallback(monkeypatch):
-    """判据③：PG 问不出行 ⇒ 拒答。退回"遗留腿知道的那些"就是报一次没定位成功的删除。"""
+    """PG 查行失败时删除不得改动旧集合，也不得报告成功。"""
     instance, _connection, _table = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND,
                                               legacy=LegacyHandle([legacy_row("a.txt_0")]),
                                               fail_on=("doc_rows",))
 
-    with pytest.raises(rt.VectorWriteRejectedError) as caught:
+    with pytest.raises(StoreError):
         instance.delete_document("a.txt")
 
-    assert caught.value.reason == rt.REASON_VECTOR_MIRROR_UNAVAILABLE
     assert instance.collection.deletes == [], "拒答之前一个字节都不许动"
 
 
@@ -571,10 +521,7 @@ def test_document_chunks_follows_the_store_that_holds_the_rows(monkeypatch):
 
 
 def test_list_documents_follows_the_same_answer(monkeypatch):
-    """判据③的读回面：app/api/v1/chat.py:4786 拿这份名单过滤可见文档。
-
-    停在切换那一刻就是假话：之后上传的每一枚文档都不在名单里，而它明明能被供应商检索出来。
-    """
+    """资料目录只列 PG 中的文档，旧集合的孤儿名不应出现。"""
     legacy = LegacyHandle([legacy_row("a.txt_0")])
     instance, _connection, _table = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND,
                                               legacy=legacy)
@@ -583,16 +530,17 @@ def test_list_documents_follows_the_same_answer(monkeypatch):
     assert instance.list_documents() == ["b.txt"]
 
     monkeypatch.setenv(indexing.INDEX_BACKEND_ENV, indexing.INDEX_BACKEND_DEFAULT)
-    assert instance.list_documents() == ["a.txt"], "开关退回 chroma 时名单仍只来自遗留腿，一字不改"
+    assert instance.list_documents() == ["b.txt"]
 
 
-def test_the_hot_index_still_learns_the_written_ids(monkeypatch):
-    """判据③的边角：热集那本账记的是"id 还有没有效"，与行住在哪一库无关，写与删都得收到。"""
+def test_delete_invalidates_cached_ids_without_dual_writing(monkeypatch):
+    """PG 删除通知热集失效，但 PG 上传不能向旧集合双写。"""
     instance, _connection, _table = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND,
                                               hot=True)
 
     instance.add_document("b.txt", "三\n四")
 
-    assert instance._r60_noted.get("write") == ["b.txt_0", "b.txt_1"]
+    assert instance._r60_noted.get("write") is None
+    assert instance.collection.adds == []
     instance.delete_document("b.txt")
     assert instance._r60_noted.get("delete") == ["b.txt_0", "b.txt_1"]

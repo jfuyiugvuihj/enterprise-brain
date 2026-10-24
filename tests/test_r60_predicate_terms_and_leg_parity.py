@@ -6,8 +6,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app.rag import hot_index
 from app.rag import indexing
 from app.rag import pg_store
@@ -20,7 +18,7 @@ DOC = "a.txt"
 BODY = "一\n二"
 IDS = ["a.txt_0", "a.txt_1"]
 
-#: 写腿那五枚语句的固定形状（两档共用，本文件按它做逐字节对照）。
+#: 写腿那五枚语句的固定形状，用于核对退役开关不改变 PG 写入。
 WRITE_LEG = ("scope_probe", "type_probe", "upsert_many", "commit", "close")
 
 
@@ -199,8 +197,9 @@ def _assemble(monkeypatch, *, backend, dual="on", stores=True):
     return instance, connection
 
 
-def _write_once(monkeypatch, backend):
-    instance, connection = _assemble(monkeypatch, backend=backend)
+def _write_once(monkeypatch, *, dual):
+    instance, connection = _assemble(monkeypatch, backend=indexing.PGVECTOR_BACKEND,
+                                     dual=dual)
     ok, message = instance.add_document(DOC, BODY)
     assert ok is True, message
     return {"kinds": connection.kinds,
@@ -210,7 +209,7 @@ def _write_once(monkeypatch, backend):
             "legacy_rows": instance.collection.count()}
 
 
-# ---------------- 判据⑦(c) 第三形：``stores_vectors`` 单独是一枚牙，摘掉它必须红 ----------------
+# ---------------- 退役配置不改变现役写路径 ----------------
 
 
 def test_retired_store_flag_cannot_redirect_writes(monkeypatch):
@@ -246,40 +245,31 @@ def test_retired_switches_do_not_turn_off_pg_writes(monkeypatch):
     assert instance._writes_go_to_pgvector() is True
 
 
-# ------------------- 判据①的 A/B：两档之间只许差"遗留腿接不接行"那一格 -------------------
+# ------------------- 退役双写开关的两档写入对照 -------------------
 
 
-def test_the_postgres_leg_is_byte_identical_on_both_backend_positions(monkeypatch):
-    """``INDEX_BACKEND`` 两档交给 PG 的语句原文与绑定参数逐字节等；停写不改 PG 那本账。"""
-    chroma = _write_once(monkeypatch, indexing.INDEX_BACKEND_DEFAULT)
-    pgvector = _write_once(monkeypatch, indexing.PGVECTOR_BACKEND)
+def test_the_pg_write_is_identical_with_retired_dual_write_switch(monkeypatch):
+    """旧双写开关 on/off 均只提交相同的 PG 向量行。"""
+    switch_on = _write_once(monkeypatch, dual="on")
+    switch_off = _write_once(monkeypatch, dual="off")
 
-    assert chroma["write_leg"][0:2] == pgvector["write_leg"][0:2]
-    assert chroma["write_leg"][-3:] == pgvector["write_leg"][-3:], (
-        "写腿那三枚语句在两档之间不一样了：SQL 原文或参数漂了一枚")
-    assert [item[0] for item in chroma["write_leg"]] == list(WRITE_LEG)
-    assert [item[0] for item in pgvector["write_leg"]] == list(WRITE_LEG)
-    assert chroma["upsert_rows"] == pgvector["upsert_rows"], (
-        "交进 chunk_vectors 的行本身在两档之间不同 —— 停写只该决定遗留腿接不接行")
-    assert len(chroma["upsert_rows"]) == 2
-    assert [str(row[0]) for row in chroma["upsert_rows"]] == IDS
+    assert switch_on["write_leg"] == switch_off["write_leg"]
+    assert [item[0] for item in switch_on["write_leg"]] == list(WRITE_LEG)
+    assert switch_on["upsert_rows"] == switch_off["upsert_rows"]
+    assert len(switch_on["upsert_rows"]) == 2
+    assert [str(row[0]) for row in switch_on["upsert_rows"]] == IDS
 
 
-def test_retired_backend_constant_does_not_reenable_legacy_leg(monkeypatch):
-    """两种旧常量取值都只写 PG，不能悄悄恢复第二份向量库。"""
-    chroma = _write_once(monkeypatch, indexing.INDEX_BACKEND_DEFAULT)
-    pgvector = _write_once(monkeypatch, indexing.PGVECTOR_BACKEND)
+def test_retired_dual_write_switch_does_not_reenable_legacy_leg(monkeypatch):
+    """旧开关两档均先从 PG 读同名行，且不调用旧 collection.add。"""
+    switch_on = _write_once(monkeypatch, dual="on")
+    switch_off = _write_once(monkeypatch, dual="off")
 
-    assert chroma["legacy_adds"] == []
-    assert chroma["legacy_rows"] == 0
-    assert pgvector["legacy_adds"] == []
-    assert pgvector["legacy_rows"] == 0
-
-    # 判据③那句问句是两档之间唯一被允许多出来的 PG 语句，而且只多这一句。
-    assert chroma["kinds"].count("doc_rows") == 1
-    assert pgvector["kinds"].count("doc_rows") == 1
-    assert pgvector["kinds"][:4] == ["scope_probe", "type_probe", "doc_rows", "close"]
-    assert pgvector["kinds"] == chroma["kinds"]
+    for result in (switch_on, switch_off):
+        assert result["legacy_adds"] == []
+        assert result["legacy_rows"] == 0
+        assert result["kinds"].count("doc_rows") == 1
+        assert result["kinds"][:4] == ["scope_probe", "type_probe", "doc_rows", "close"]
 
 
 def test_dual_write_off_still_writes_pg(monkeypatch):

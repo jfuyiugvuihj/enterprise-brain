@@ -1,24 +1,7 @@
-"""R59b 判据④：读路径接到 PGVector 之后，这几枚钉子必须能反证。
+"""PGVector 检索回归：权限先过滤再排名，故障不回退到退役存储。
 
-写法照 R44/R158 那一族的规矩：全程不连真库、不打 Ollama、不开服务。假连接按语句前缀分派，
-并把每一条**发出去的 SQL 原文**记下来 —— 这一单要钉的不是"答案对不对"，而是"什么语句被发
-出去了"：权限谓词有没有进 WHERE、翻译不出来时是不是干脆没发、只读腿有没有顺手 commit。
-先验（RAG_ACTIVITY_PRIOR）显式关掉：它默认要读一张计数表，那是真 IO，本文件一条都不许发。
-
-R231 之后这枚开关有了两个来源（env 与模块常量，env 赢）。本文件仍走"只改常量"这条老路，
-所以凡是要断言"没人翻过开关"的用例都得自己把 env 摘干净 —— 见下面两枚 delenv，它们不是
-放宽，是把前置说到脸上：本班实测机器上有一行 $env:INDEX_BACKEND='pgvector' 时，那两枚
-用例当场红在 assert 'pgvector' == 'chroma'，而那台机器上的代码与常量一个字都没动。
-
-每枚用例都留了一处"摘掉守卫就变红"的地方，逐条写在 docstring 里：
-
-- 默认仍在 chroma —— 把 `indexing.INDEX_BACKEND` 翻过去，这条立刻红。
-- 切了读就不许多问 Chroma —— 把 PG 腿改成恒回 None（等于没接上），这条立刻红。
-- 认不出的过滤器**一条向量 SQL 都不许发** —— 把 `sql_scope_filter` 的 raise 换成 `return "", []`，
-  这条立刻红；而那处改动看着无害，交回的却是别人的高分 chunk。
-- 双写没开就不许读 —— 删掉 `read_topk` 里 `mirror is None` 那一支，这条立刻红。
-- 密级 NULL 原样交回 None —— 在读腿把它补成 1，这条立刻红（R57 的 fail-closed）。
-- 热集在切读态让路 —— 删掉 `_hot_hits` 顶部那枚守卫，这条立刻红（半切比不切更难查）。
+假连接记录实际 SQL 与绑定参数；测试不连接数据库或模型。仍保留不可翻译过滤器
+不发查询、NULL 密级不补默认值、读操作不提交事务等权限反证。
 """
 
 import pytest
@@ -147,7 +130,7 @@ def _build_retriever(tmp_path, monkeypatch, *, backend):
 
 @pytest.fixture
 def retriever_on(tmp_path, monkeypatch, connection):
-    """切读态：开关在 pgvector、双写在开、Chroma 腿设成"一问就红"。"""
+    """PG 读态，退役存储的调用会立即失败。"""
     instance = _build_retriever(tmp_path, monkeypatch, backend=indexing.PGVECTOR_BACKEND)
     instance.collection = _NeverAsked()
     return instance
@@ -155,7 +138,7 @@ def retriever_on(tmp_path, monkeypatch, connection):
 
 @pytest.fixture
 def retriever_off(tmp_path, monkeypatch, connection):
-    """默认态：INDEX_BACKEND 一个字不动（仍是 chroma），读腿必须一 SQL 都不发。"""
+    """未显式指定后端时也应走 PG。"""
     return _build_retriever(tmp_path, monkeypatch, backend=None)
 
 
@@ -239,7 +222,7 @@ def test_the_read_leg_commits_nothing(retriever_on, connection):
 
 
 def test_k_zero_asks_for_no_rows_instead_of_a_negative_limit(retriever_on, connection):
-    """LIMIT 负数在 PG 里是语法错误：k<=0 折成 0 行，与遗留腿一样答不出东西。"""
+    """LIMIT 负数在 PG 里非法；k<=0 应折成 0。"""
     retriever_on.search("q", k=0, where=WHERE_ADMIN)
     assert connection.search_statements()[-1][1][-1] == 0
 
