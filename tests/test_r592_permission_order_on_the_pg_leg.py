@@ -241,7 +241,7 @@ def _switch_on(monkeypatch, double):
 
 
 def _retriever(tmp_path, monkeypatch, handle):
-    instance = DocumentRetriever(str(tmp_path / "chroma"))
+    instance = DocumentRetriever()
     monkeypatch.setattr(instance.embedding, "embed_query", lambda text: list(QUERY))
     instance.collection = handle
     return instance
@@ -379,22 +379,17 @@ def test_the_permission_filter_still_runs_before_deduplication(tmp_path, monkeyp
 
 
 def test_an_untranslatable_predicate_refuses_the_pushdown(tmp_path, monkeypatch):
-    """形状 4：一枚 $or。下推腿只能拒答，不能退化成「没有 WHERE」。
-
-    判三格：一条排名 SQL 都不发；同一份 where 原样带进遗留腿（回落不等于放宽）；
-    稳定码 vector_read_filter_untranslatable 记进那本绕行账。
-    """
+    """不认识的作用域必须拒答，且不能无 WHERE 查询或退回旧库。"""
     double = _PgDouble(rows=[_row("rd.txt_0", MINE, "rd.txt", 1, RD)])
     _switch_on(monkeypatch, double)
     handle = _Handle(rows=[_legacy("rd.txt_0", MINE, 1, RD)])
     instance = _retriever(tmp_path, monkeypatch, handle)
 
-    hits = instance.search("差旅标准", k=5, where=WHERE_OR)
+    with pytest.raises(pg_store.ScopeFilterUntranslatable):
+        instance.search("差旅标准", k=5, where=WHERE_OR)
 
     assert double.search_statements() == [], "谓词没翻译出来还发 SQL，就是发了条没 WHERE 的"
-    assert handle.queries, "拒答之后没回遗留腿"
-    assert handle.queries[-1]["where"] == WHERE_OR, "回落时把权限谓词丢了"
-    assert [hit["content"] for hit in hits] == [MINE]
+    assert not handle.queries, "拒答后不许访问退役存储"
     reading = pg_store.vector_read_diagnostics()
     assert reading["last_bypass"]["reason"] == (
         pg_store.REASON_VECTOR_READ_FILTER_UNTRANSLATABLE)
@@ -405,22 +400,16 @@ def test_an_untranslatable_predicate_refuses_the_pushdown(tmp_path, monkeypatch)
 
 
 def test_an_empty_department_value_refuses_the_pushdown_too(tmp_path, monkeypatch):
-    """形状 5（块1 判据②c 的权限半边）：department 的 $in 里有空串。
-
-    镜像把缺部门归一成空串，遗留引擎那边压根没有这个键 —— 同一份 $in 在两侧答案相反。
-    猜哪一侧都会让下推后的过滤比它替代的那份更宽或更窄，所以只能拒答：不发 SQL、带着同一份
-    where 回落遗留腿、记同一枚稳定码。反证：摘掉 pg_store._scope_clause 里那个空串分支
-    ⇒ 本用例当场红（会发出一条把空串当命中条件的 SQL）。
-    """
+    """含空部门的作用域必须拒答，不能猜测缺失部门的含义。"""
     double = _PgDouble(rows=[_row("rd.txt_0", MINE, "rd.txt", 1, RD)])
     _switch_on(monkeypatch, double)
     handle = _Handle(rows=[_legacy("rd.txt_0", MINE, 1, RD)])
     instance = _retriever(tmp_path, monkeypatch, handle)
 
-    hits = instance.search("差旅标准", k=5, where=WHERE_EMPTY_DEPARTMENT)
+    with pytest.raises(pg_store.ScopeFilterUntranslatable):
+        instance.search("差旅标准", k=5, where=WHERE_EMPTY_DEPARTMENT)
 
     assert double.search_statements() == [], "空串那一档发了 SQL：下推比原口径宽"
-    assert handle.queries[-1]["where"] == WHERE_EMPTY_DEPARTMENT
-    assert hits == [], "遗留腿按原口径答：没有哪个账号的可见部门是空串"
+    assert not handle.queries, "拒答后不许访问退役存储"
     assert pg_store.vector_read_diagnostics()["last_bypass"]["reason"] == (
         pg_store.REASON_VECTOR_READ_FILTER_UNTRANSLATABLE)

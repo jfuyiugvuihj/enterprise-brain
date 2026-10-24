@@ -86,13 +86,11 @@ class _ScanCollection:
 
 
 def _build_bm25(monkeypatch, metadatas, scores):
-    """只替掉两处外部依赖（向量库句柄、BM25 打分），被测的是 build_index 本体。"""
+    """用 PG 语料形状替代外部连接，检验真实 BM25 建索引路径。"""
     documents = [f"[{meta['filename']}] 财务制度 正文" for meta in metadatas]
-    collection = _ScanCollection(
-        {"documents": documents, "metadatas": [dict(meta) for meta in metadatas]}
-    )
-    stub = type("StubRetriever", (), {"collection": collection})
-    monkeypatch.setattr(retriever_module, "DocumentRetriever", stub)
+    from app.rag import pg_store
+    monkeypatch.setattr(pg_store, "switched_corpus", lambda: {
+        "documents": documents, "metadatas": [dict(meta) for meta in metadatas]})
     monkeypatch.setattr(retrieval_pipeline, "BM25Okapi", type("Scorer", (_StubBM25,), {"scores": scores}))
     searcher = BM25Searcher()
     searcher.build_index()
@@ -143,6 +141,8 @@ def _chroma_where_matches(metadata, where):
         return True
     if "$and" in where:
         return all(_chroma_where_matches(metadata, clause) for clause in where["$and"])
+    if "$or" in where:
+        return any(_chroma_where_matches(metadata, clause) for clause in where["$or"])
     for key, condition in where.items():
         value = metadata.get(key)
         if isinstance(condition, dict):
@@ -189,6 +189,14 @@ def _vector_hits(monkeypatch, metadatas, *, ignores_where, clearance=2):
     collection = _QueryCollection(rows, ignores_where)
     retriever.collection = collection
     retriever.embedding = _StubEmbeddings()
+    retriever._activity_prior_loader = lambda: {}
+    from app.rag import indexing, pg_store
+    monkeypatch.setattr(indexing, "pgvector_reads_enabled", lambda: True)
+    def read_topk(*, query_vector, k, where):
+        page = collection.query(query_embeddings=[query_vector], n_results=k, where=where)
+        return [{"content": doc, **meta} for doc, meta in zip(
+            page["documents"][0], page["metadatas"][0])]
+    monkeypatch.setattr(pg_store, "read_topk", read_topk)
     scope = resolve_document_retrieval_scope(_staff(clearance=clearance))
     return retriever.search("财务制度", k=5, where=scope.filters), scope, collection
 

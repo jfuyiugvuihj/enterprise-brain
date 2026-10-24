@@ -16,6 +16,7 @@
 administrator_scope 可见」。全程不建 PersistentClient、不打 Ollama。
 """
 import inspect
+import itertools
 
 import numpy as np
 import pytest
@@ -23,6 +24,7 @@ import pytest
 from app.agents.contracts import Principal
 from app.rag import filters as filters_module
 from app.rag import retrieval_pipeline
+from app.rag import indexing, pg_store
 from app.rag.filters import DocumentRetrievalScope, resolve_document_retrieval_scope
 from app.rag.retrieval_pipeline import (
     BM25Searcher,
@@ -34,6 +36,24 @@ from app.rag.retrieval_pipeline import (
 from app.rag.retriever import DocumentRetriever
 
 ORIGINAL_ALLOWS = DocumentRetrievalScope.allows
+_STORES = {}
+_STORE_IDS = itertools.count(1)
+
+
+@pytest.fixture(autouse=True)
+def _pg_read_seam(monkeypatch):
+    """Route each isolated pipeline's embedding to its own PG top-k test store."""
+    monkeypatch.setattr(indexing, "pgvector_reads_enabled", lambda: True)
+
+    def read_topk(*, query_vector, k, where):
+        store = _STORES[int(query_vector[0])]
+        page = store.query(query_embeddings=[query_vector], n_results=k, where=where)
+        return [{"content": doc, **meta} for doc, meta in zip(
+            page["documents"][0], page["metadatas"][0])]
+
+    monkeypatch.setattr(pg_store, "read_topk", read_topk)
+    yield
+    _STORES.clear()
 
 
 # ==================== 测试替身 ====================
@@ -48,6 +68,8 @@ def _chroma_matches(metadata, where):
         return True
     if "$and" in where:
         return all(_chroma_matches(metadata, clause) for clause in where["$and"])
+    if "$or" in where:
+        return any(_chroma_matches(metadata, clause) for clause in where["$or"])
     for key, condition in where.items():
         value = metadata.get(key)
         if isinstance(condition, dict):
@@ -85,6 +107,9 @@ class _RecordingCollection:
             "metadatas": [[dict(row["metadata"]) for row in page]],
         }
 
+    def get(self, **kwargs):
+        return {"documents": [], "metadatas": []}
+
 
 class _FailOpenCollection(_RecordingCollection):
     """不执行 where 的召回实现：缺陷② 的注入点。"""
@@ -95,12 +120,13 @@ class _FailOpenCollection(_RecordingCollection):
 class _CountingEmbeddings:
     """只计数，不联网：向量往返次数就是本文件要钉的复杂度指标。"""
 
-    def __init__(self):
+    def __init__(self, store_id=0):
         self.calls = 0
+        self.store_id = store_id
 
     def embed_query(self, text):
         self.calls += 1
-        return [0.0] * 8
+        return [float(self.store_id)] + [0.0] * 7
 
 
 class _RecordingLogger:
@@ -212,8 +238,11 @@ def _wire(rows, *, collection_cls=_RecordingCollection, keyword=None, rewriter=N
     """
     retriever = DocumentRetriever.__new__(DocumentRetriever)
     collection = collection_cls(rows, **collection_kwargs)
+    store_id = next(_STORE_IDS)
+    _STORES[store_id] = collection
     retriever.collection = collection
-    retriever.embedding = _CountingEmbeddings()
+    retriever.embedding = _CountingEmbeddings(store_id)
+    retriever._activity_prior_loader = lambda: {}
 
     semantic = SemanticSearcher.__new__(SemanticSearcher)
     semantic.retriever = retriever
@@ -698,17 +727,17 @@ def test_the_pipeline_holds_no_second_scope_rule():
 
 # ============ 判据④：fail-closed 口径不许松动 ============
 
-def test_empty_department_rows_stay_visible_only_to_the_administrator_scope():
+def test_empty_department_rows_stay_invisible_even_to_administrators():
     staff_scope = resolve_document_retrieval_scope(_staff("finance", 2))
     admin_scope = resolve_document_retrieval_scope(_admin())
     legacy = {"content": "遗留正文", "source": "legacy.txt", "chunk_index": 0,
               "classification": 1, "department": ""}
 
     assert staff_scope.allows(legacy) is False
-    assert admin_scope.allows(legacy) is True
+    assert admin_scope.allows(legacy) is False
     # 预过滤只是"同一个判定作用于列表"，不许改变空部门行的可见性
     assert _retain_permitted([legacy], staff_scope.allows) == []
-    assert _retain_permitted([legacy], admin_scope.allows) == [legacy]
+    assert _retain_permitted([legacy], admin_scope.allows) == []
     assert _retain_permitted([legacy], None) is not None
     # 下推给向量库的谓词里也不许出现空部门：口径必须是"只列有名字的部门"
     assert "" not in staff_scope.departments
