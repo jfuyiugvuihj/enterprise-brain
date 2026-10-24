@@ -112,7 +112,7 @@ describe('V7-3 · 演示面板必须挂牌，且不许借用告警语言', () =>
     expect(s).not.toContain('data-demo=')
     expect(s).toContain('data-testid="dashboard-demo-flag"')
     expect(s.match(/class="demo-flag"/g)).toHaveLength(1)
-    expect(s).toContain('演示数据')
+    expect(s).toContain('暂无趋势数据')
   })
 
   // 钉的是「改回假数据就必须红」：告警账本没有 severity 这一列，谁要再把演示常量

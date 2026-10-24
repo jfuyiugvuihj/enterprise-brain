@@ -125,7 +125,7 @@ describe('R267④ · 屏幕上读不到源码路径与 HTTP 路由', () => {
     const text = visibleText(html)
     expect(html).toContain('data-testid="dashboard-demo-flag"')
     expect(html).toContain('class="demo-flag"')
-    expect(text).toContain('演示数据')
+    expect(text).toContain('暂无趋势数据')
     const note = /class="demo-note"[^>]*>([^<]{30,})/.exec(html)
     expect(note, '徽标旁边那句说明不许缩成空话').not.toBe(null)
     expect(note[1]).toContain('数据趋势')

@@ -1788,8 +1788,9 @@ class Walk:
             if save.count():
                 save.first.click(timeout=8000)
                 out["rule_created"] = bool(wait_for(lambda: _rule_exists(name), 20))
-            if out["rule_created"] and page.locator("[data-testid=run-alert-check]").count():
-                page.click("[data-testid=run-alert-check]")
+            own_rule = page.locator("[data-testid=rule-rows] .rule-item").filter(has_text=name)
+            if out["rule_created"] and own_rule.locator("[data-testid=check-rule]").count():
+                own_rule.locator("[data-testid=check-rule]").first.click()
                 out["check_clicked"] = True
                 out["alert_landed"] = bool(wait_for(lambda: _alert_landed(name), 180, poll_s=3.0))
             if out["alert_landed"] and page.locator("[data-testid=reload-alerts]").count():
@@ -1947,6 +1948,7 @@ class Walk:
         runs = page.locator("[data-testid=pick-run]")
         runs_readout = page.locator("[data-testid=runs-cell]").all_inner_texts()[:6]
         events = 0
+        events_pairs = []
         picked = False
         options_open = 0
         if runs.count():

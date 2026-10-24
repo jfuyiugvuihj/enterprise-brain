@@ -333,8 +333,8 @@ onMounted(async () => {
       <!-- 诚实牌只在这一格还没有服务端数字时挂着：R332 已经把按期间汇总的序列交出来了，
            再写「服务端还没提供」就是替服务端说谎；数字一上屏，这块牌自己收掉。 -->
       <aside v-if="!trendReal" class="demo-flag-row" data-testid="dashboard-demo-flag">
-        <span class="demo-flag">演示数据</span>
-        <span class="demo-note">「数据趋势」这一格此刻还没有服务端回传的数字：没有数字就不画线、也不放金额刻度。上面四个数字、下面的异常行、文档行与口径出处都读自服务端，按登录者可见范围计算。</span>
+        <span class="demo-flag">暂无趋势数据</span>
+        <span class="demo-note">「数据趋势」当前没有可展示的期间序列，因此不画线。上方指标、异常和文档列表按当前权限读自服务端。</span>
       </aside>
 
       <section class="kpi-grid" data-testid="dashboard-kpis" aria-describedby="dashboard-scope-note">
