@@ -25,9 +25,6 @@ PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
 RUNS = ROOT / "output" / "c18-local-runs"
 STATE = RUNS / "state.json"
 LOCK = RUNS / "active.lock"
-MAX_MINUTES = 60
-EXTENDED_MAX_MINUTES = 120
-WORKERS = 2
 HEARTBEAT_SECONDS = 5
 
 
@@ -82,9 +79,9 @@ def alive(pid: int | None) -> bool:
 
 
 def plan() -> None:
-    print("C18 全仓回归没有可靠的完成时间预估：上次 2 worker 运行 120 分钟仍在 99% 超时。")
-    print(f"本脚本默认硬上限 {MAX_MINUTES} 分钟、固定 {WORKERS} 个 worker；运行前应先决定是否需要全仓回归。")
-    print("start 只启动一次，不会在失败、超时或 Codex 会话结束后自动重跑。")
+    print("C18 全仓回归没有可靠的完成时间预估：上次 2 worker 运行 120 分钟到 99% 后被旧脚本截断。")
+    print("worker 数量由 run_gate.py 按当时可用内存决定；不设置自动停止时间。")
+    print("start 只启动一次；失败或 Codex 会话结束后不会自动重跑。需要中止时手动执行 stop。")
 
 
 def start() -> int:
@@ -110,8 +107,8 @@ def start() -> int:
         "head_before": git_head(),
         "head_after": None,
         "head_unchanged": None,
-        "workers": WORKERS,
-        "max_minutes": MAX_MINUTES,
+        "workers": "auto",
+        "max_minutes": None,
         "worker_pid": None,
         "gate_pid": None,
         "exit_code": None,
@@ -192,13 +189,13 @@ def extend() -> int:
         time.sleep(0.1)
         current = read_state()
         if current.get("run_id") == state["run_id"] and current.get("guardian_pid") == guardian.pid:
-            print(f"已接管正在运行的回归；新上限 {EXTENDED_MAX_MINUTES} 分钟，guardian PID={guardian.pid}。")
+            print(f"已接管正在运行的回归；不设自动停止时间，guardian PID={guardian.pid}。")
             return 0
         if guardian.poll() is not None:
             break
     current = read_state()
     if current.get("run_id") == state["run_id"] and current.get("guardian_pid") == guardian.pid:
-        print(f"已接管正在运行的回归；新上限 {EXTENDED_MAX_MINUTES} 分钟，guardian PID={guardian.pid}。")
+        print(f"已接管正在运行的回归；不设自动停止时间，guardian PID={guardian.pid}。")
         return 0
     print(f"接管未确认，请检查 {folder / 'guardian.log'}；不会再次启动回归。", file=sys.stderr)
     return 2
@@ -224,18 +221,13 @@ def guardian_main(run_id: str) -> int:
     try:
         kill_process_only(worker_pid)
         state.update(status="extended_running", guardian_pid=os.getpid(),
-                     max_minutes=EXTENDED_MAX_MINUTES, heartbeat_at=now())
+                     max_minutes=None, heartbeat_at=now())
         write_state(state)
         reason = "finished"
         stop_request = Path(state["log"]).parent / "stop.request"
         while kernel.WaitForSingleObject(handle, 1000) == 0x102:  # WAIT_TIMEOUT
-            elapsed = (datetime.now().astimezone() - datetime.fromisoformat(state["started_at"])).total_seconds()
             if stop_request.exists():
                 reason = "stopped"
-                kill_tree(gate_pid)
-                break
-            if elapsed >= EXTENDED_MAX_MINUTES * 60:
-                reason = "timed_out"
                 kill_tree(gate_pid)
                 break
             state["heartbeat_at"] = now()
@@ -272,7 +264,8 @@ def worker_main(run_id: str) -> int:
         return 2
     log_path = Path(state["log"])
     stop_request = log_path.parent / "stop.request"
-    command = [str(PYTHON), "-u", str(ROOT / "scripts" / "run_gate.py"), "-n", str(WORKERS), "--tb=short"]
+    command = [str(PYTHON), "-u", str(ROOT / "scripts" / "run_gate.py"),
+               "-vv", "--tb=short", "--durations=20"]
     begun = time.monotonic()
     reason = "finished"
     gate = None
@@ -291,10 +284,6 @@ def worker_main(run_id: str) -> int:
             while gate.poll() is None:
                 if stop_request.exists():
                     reason = "stopped"
-                    kill_tree(gate.pid)
-                    break
-                if time.monotonic() - begun >= MAX_MINUTES * 60:
-                    reason = "timed_out"
                     kill_tree(gate.pid)
                     break
                 state["heartbeat_at"] = now()
