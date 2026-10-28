@@ -192,6 +192,8 @@ async def index_dataset_copy(
     retriever: Any,
     owner_id: str = "",
     registry_fetch: Callable[[str], dict] | None = None,
+    publish=None,
+    visibility: str = 'private',
 ) -> dict[str, str]:
     """Send one already-stored dataset file down the knowledge-base leg.
 
@@ -225,9 +227,11 @@ async def index_dataset_copy(
 
     level = classification_level_for(classification)
     try:
+        kwargs = {'before_commit': publish} if publish is not None else {}
+        if visibility != 'private':
+            kwargs['visibility'] = visibility
         accepted, message = await asyncio.to_thread(
-            retriever.add_document, display_filename, content, level, department or None
-        )
+            retriever.add_document, display_filename, content, level, department or None, **kwargs)
     except Exception as exc:  # noqa: BLE001 - the vector leg fails closed with a reason code
         reason = _last_embedding_reason(retriever) or type(exc).__name__
         logger.error(f"[Data] knowledge-base index failed: {display_filename} reason={reason}")
@@ -239,7 +243,7 @@ async def index_dataset_copy(
         return _receipt(STATUS_SKIPPED, skipped, index_notice(skipped))
 
     await _rebuild_keyword_corpus()
-    if owner_id:
+    if owner_id and publish is None:
         from app.documents.catalog import record_document_version
 
         try:

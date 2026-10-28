@@ -59,7 +59,8 @@ def owner(connection) -> Iterator[str]:
     """一个带 tag 的 owner_id，用例写完就把这个 owner 在两表里的行全部清掉。"""
     owner_id = "r249-acc-" + uuid.uuid4().hex[:10]
     yield owner_id
-    for table in _TABLES:
+    connection.rollback()
+    for table in reversed(_TABLES):
         connection.execute(f"DELETE FROM {table} WHERE owner_id = %s", (owner_id,))
     connection.commit()
 
@@ -76,7 +77,7 @@ def registry(tmp_path, url, owner) -> DatasetRegistry:
 
 def _register(registry: DatasetRegistry, filename: str, body: str):
     """把文件落到存储根里再登记：登记只认根内的字节，这是表的边界，不是测试的偏好。"""
-    path = registry.root / filename
+    path = registry.new_version_path(filename)
     path.write_text(body, encoding="utf-8")
     return registry.register(path, principal=registry.principal, filename=filename)
 
@@ -114,9 +115,11 @@ def test_a_restarted_registry_reads_the_same_fields_back(registry, url, owner) -
 def test_three_registrations_make_three_version_rows_on_the_real_tables(registry, connection, owner) -> None:
     """真库上的 J-2：一行 datasets、三行 dataset_versions，部分唯一索引不许被绕过。"""
     dataset_ids = set()
+    stored = []
     for index in range(3):
         record = _register(registry, "sales.csv", f"department,revenue\nfinance,{index}\n")
         dataset_ids.add(record.dataset_id)
+        stored.append(record.storage_path)
     connection.commit()
 
     datasets = connection.execute(
@@ -133,6 +136,8 @@ def test_three_registrations_make_three_version_rows_on_the_real_tables(registry
     assert int(datasets[0]) == 1
     assert [int(row[0]) for row in versions] == [1, 2, 3]
     assert len({str(row[1]) for row in versions}) == 3
+    assert [open(path, encoding='utf-8').read() for path in stored] == [
+        f'department,revenue\nfinance,{i}\n' for i in range(3)]
 
 
 def test_a_second_active_row_with_the_same_name_is_refused(registry, connection, owner, tmp_path) -> None:

@@ -11,6 +11,7 @@ import DocumentPreviewModal from './DocumentPreviewModal.vue'
 import { rowScopeVisibleNote } from './DocumentPreviewModal.vue'
 // 产物列表（W2-2 挂载）与两步删除状态机共用一份实现：两处删除入口的确认行为不许各写一遍
 import ArtifactList, { advanceDelete, deleteButtonLabel, deleteErrorView, isPendingDelete } from './ArtifactList.vue'
+import DatasetVersionPanel from './DatasetVersionPanel.vue'
 
 /**
  * R186 · 行级判定的三张脸。后端（R180）已经把结论写进两枚成功体字段 ——
@@ -75,6 +76,7 @@ watch(allowedUploadLevels, levels => {
 })
 const listClassification = ref('')
 const filteredDataFiles = computed(() => filterFileClassification(dataFiles.value, listClassification.value))
+const selectedDataFile = computed(() => dataFiles.value.find(file => file.filename === dataFile.value) || null)
 const filesLoading = ref(false)
 const filesError = ref('')
 // 行级判定的两份原始载荷：预览那一屏的 row_scope 与列表那一屏的 restricted，各自随请求重置。
@@ -89,7 +91,11 @@ const deletingFile = ref(false)
 const fileDeleteError = ref('')
 const fileDeleteDenied = ref(false)
 
-const quickActions = ANALYSIS_TEMPLATES
+const hasDateColumn = computed(() => (profile.value?.columns || []).some(column =>
+  /datetime|date/i.test(column.dtype || '')
+  || /日期|时间|月份|年月|期间|季度|年度|^(?:年|月)$|(?:^|_)(?:date|time|period|month|year)(?:$|_)/i.test(column.name || '')))
+const quickActions = computed(() => !profile.value || selectingFile.value ? []
+  : ANALYSIS_TEMPLATES.filter(action => action.id !== 'trend' || hasDateColumn.value))
 
 const emit = defineEmits(['ask'])
 
@@ -155,6 +161,11 @@ async function loadDataFiles(preferredFilename = '') {
   } finally {
     filesLoading.value = false
   }
+}
+
+async function reloadUpdatedDataFile(filename) {
+  await loadDataFiles(filename)
+  await selectDataFile(filename)
 }
 
 async function selectDataFile(filename) {
@@ -554,6 +565,13 @@ onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route
         </div>
       </div>
 
+      <DatasetVersionPanel
+        v-if="canUpload"
+        :target="selectedDataFile"
+        :disabled="selectingFile || filesLoading || uploading || deletingFile"
+        @completed="reloadUpdatedDataFile"
+        @refresh="loadDataFiles"
+      />
       <UiErrorState
         v-if="fileDeleteError"
         :title="fileDeleteView.title"
@@ -594,6 +612,7 @@ onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route
     <div class="quick-actions" data-testid="data-quick-actions">
       <h4>选择分析模板</h4>
       <p class="analysis-template-note">选择后会带入当前文件和可编辑的问题，补充期间或口径后再发送。</p>
+        <p v-if="profile && !selectingFile && !hasDateColumn" class="analysis-template-note">未识别到日期或月份字段，暂不提供趋势分析；可先检查字段与数据质量。</p>
       <UiButton
         v-for="act in quickActions"
         :key="act.label"
@@ -821,8 +840,11 @@ onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route
 
 .data-file-actions {
   display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 6px;
-  flex-shrink: 0;
+  flex-shrink: 1;
 }
 
 .data-action-btn {

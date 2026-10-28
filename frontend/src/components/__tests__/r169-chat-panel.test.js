@@ -33,7 +33,7 @@ vi.mock('../../lib/health.js', async (importOriginal) => {
   return { ...actual, fetchRuntimeHealth: vi.fn(async () => null) }
 })
 
-import { authedFetch } from '../../lib/http'
+import { authedFetch, http } from '../../lib/http'
 import ChatPanel from '../ChatPanel.vue'
 import { activeId, hitl, loading, messages } from '../../lib/sessions'
 
@@ -116,11 +116,39 @@ function bodyOf(callIndex = 0) {
   return JSON.parse(options.body)
 }
 
+function mockDecisionLookup(ledger_status) {
+  http.get = vi.fn().mockResolvedValue({ data: { ledger_status } })
+}
+
 async function settled() {
   for (let round = 0; round < 12; round += 1) await nextTick()
 }
 
 describe('R169 Q1 · 发问的守门（跑真 send()）', () => {
+  it('复用分析只准备新问题，发送时带当前版本且不复制旧答案', async () => {
+    installDomStubs()
+    document.querySelector = () => null
+    const b = await mountPanel()
+    loading.value = false
+    hitl.value = null
+    b.input.value = ''
+    b.activeDataFilename.value = 'finance.csv'
+    activeId.value = 'source-task'
+    http.get = vi.fn().mockResolvedValue({ data: { filename: 'finance.csv', version_id: 'finance:v2',
+      profile: { columns: [{ name: '金额（元）', dtype: 'int64' }] } } })
+    authedFetch.mockClear()
+    await b.reuseAnalysis({ status: 'completed', dataset_version_id: 'finance:v1',
+      parameters: { filename: 'finance.csv', query: '2026-01金额合计，不生成报告。' },
+      result: { columns: ['金额（元）'], answer: ['旧答案999'] } })
+    expect(activeId.value).not.toBe('source-task')
+    expect(b.input.value).toBe('2026-01金额合计，不生成报告。')
+    expect(b.reuseDraft.value.version_id).toBe('finance:v2')
+    expect(b.reuseStatus.value).toContain('原期间和条件保持不变')
+    expect(authedFetch).not.toHaveBeenCalled()
+    b.reuseDraft.value = null
+    b.input.value = ''
+  })
+
   it('空输入按发送一个请求都不发，也不留两只空气泡', async () => {
     installDomStubs()
     const b = await mountPanel()
@@ -193,12 +221,15 @@ describe('R169 Q2 · 发问真的上屏、真的带四格（跑真 send() + 真�
     await b.send('报销明细表.csv')
     await settled()
     expect(authedFetch.mock.calls[0][0]).toBe('/ask')
-    expect(bodyOf(0)).toEqual({
+    const body = bodyOf(0)
+    expect(body).toMatchObject({
       message: '对比各列数据的最大最小值',
       session_id: 'r169-q2b',
       data_filename: '报销明细表.csv',
       lane: 'analysis',
     })
+    expect(body.idempotency_key).toBe(`r169-q2b:${messages.value[1].mid}`)
+    expect(Array.isArray(body.document_filenames)).toBe(true)
     expect(b.input.value).toBe('')
     expect(loading.value).toBe(false)
   })
@@ -233,7 +264,7 @@ describe('R169 Q2 · 发问真的上屏、真的带四格（跑真 send() + 真�
     b.input.value = '这句没人答'
     await b.send('')
     await settled()
-    expect(messages.value[1].content).toBe('本轮没有返回内容。')
+    expect(messages.value[1].content).toBe('暂未收到回答内容。')
     expect(loading.value).toBe(false)
   })
 })
@@ -270,7 +301,7 @@ describe('R169 Q3 · 取消是两步，且四种结果四张脸（跑真 request
     await settled()
     expect(authedFetch.mock.calls[0][0]).toBe('/ask/r169-q3c/cancel')
     expect(authedFetch.mock.calls[0][1].method).toBe('POST')
-    expect(b.streamNote.value).toContain('不再接收后续内容')
+    expect(b.streamNote.value).toContain('界面已停止接收后续内容')
     expect(b.noteTone.value).toBe('info')
     expect(messages.value[0].content).toBe('本次回答已中断，未产出结论。')
     expect(loading.value).toBe(false)
@@ -285,7 +316,7 @@ describe('R169 Q3 · 取消是两步，且四种结果四张脸（跑真 request
     authedFetch.mockResolvedValue(jsonResponse({ cancelled: false }))
     await b.confirmCancel()
     await settled()
-    expect(b.streamNote.value).toBe('当前没有正在生成的内容。')
+    expect(b.streamNote.value).toBe('当前没有在飞的回答；取消标记已留给下一轮处理，不能据此认定待确认动作已拒绝。')
     expect(b.noteTone.value).toBe('warn')
     expect(messages.value[0].content, '没停掉任何东西就不该改口说这一轮被中断').toBe('已经有半截正文。')
   })
@@ -408,6 +439,7 @@ describe('R169 Q4 · 报告那一腿的确认门（SSR 真产物 + 跑真 approv
     messages.value = [{ role: 'assistant', content: '', mid: 'm9' }]
     activeId.value = 'r169-r2'
     hitl.value = { pending: { action: 'export_report' }, labels: {}, interrupted: false }
+    mockDecisionLookup('resumed')
     authedFetch.mockResolvedValue(sseResponse([sseText('报告已生成。')]))
     await b.approve(true)
     await settled()
@@ -424,11 +456,29 @@ describe('R169 Q4 · 报告那一腿的确认门（SSR 真产物 + 跑真 approv
     messages.value = [{ role: 'assistant', content: '', mid: 'm10' }]
     activeId.value = 'r169-r2b'
     hitl.value = { pending: { action: 'export_report' }, labels: {}, interrupted: false }
+    mockDecisionLookup('refused')
     authedFetch.mockResolvedValue(sseResponse([sseFrame('done', {})]))
     await b.approve(false)
     await settled()
     expect(bodyOf(0).approved).toBe(false)
+    expect(b.streamNote.value).toBe('服务端已记录拒绝，该动作不会执行。')
+    // Known product risk: the confirmed refusal clears the card and updates the note,
+    // but the answer bubble can still say it is waiting for verification.
     expect(messages.value[0].content).toBe('已拒绝该动作。')
+  })
+
+  it.each([false, true])('决定账返回未知状态时保留卡片并禁止重复操作 approved=%s', async (approved) => {
+    installDomStubs()
+    const b = await mountPanel()
+    messages.value = [{ role: 'assistant', content: '', mid: 'm10-unknown' }]
+    activeId.value = 'r169-r2b-unknown'
+    hitl.value = { pending: { action: 'export_report' }, labels: {}, interrupted: false }
+    mockDecisionLookup('unrecognized')
+    authedFetch.mockResolvedValue(sseResponse([sseFrame('done', {})]))
+    await b.approve(approved)
+    await settled()
+    expect(hitl.value).toMatchObject({ decisionUnknown: true })
+    expect(hitl.value.pending.action).toBe('export_report')
   })
 
   it('确认结果没被受理（HTTP 4xx）：进气泡的那句与提示条那句各说各的', async () => {
@@ -437,11 +487,25 @@ describe('R169 Q4 · 报告那一腿的确认门（SSR 真产物 + 跑真 approv
     messages.value = [{ role: 'assistant', content: '前半段。', mid: 'm11' }]
     activeId.value = 'r169-r2c'
     hitl.value = { pending: { action: 'export_report' }, labels: {}, interrupted: false }
+    mockDecisionLookup('awaiting')
     authedFetch.mockResolvedValue({ ok: false, status: 503, headers: { get: () => null }, clone() { return this }, async json() { return { detail: 'queue_unavailable' } }, body: null })
     await b.approve(true)
     await settled()
     expect(messages.value[0].content).toContain('[请求错误]')
     expect(b.streamNote.value).toContain('确认结果未被受理（HTTP 503）')
     expect(b.cancelPhase.value).toBe('idle')
+  })
+
+  it('批准返回后决定账读取断网，仍保留未知卡片', async () => {
+    installDomStubs()
+    const b = await mountPanel()
+    messages.value = [{ role: 'assistant', content: '', mid: 'decision-offline' }]
+    activeId.value = 'r169-decision-offline'
+    hitl.value = { pending: { action: 'export_report' }, labels: {}, interrupted: false }
+    http.get = vi.fn().mockRejectedValue(new Error('offline'))
+    authedFetch.mockResolvedValue(sseResponse([sseFrame('done', { terminal_state: 'answered' })]))
+    await b.approve(true)
+    expect(hitl.value).toMatchObject({ decisionUnknown: true })
+    expect(b.streamNote.value).toContain('确认决定暂时无法核实')
   })
 })

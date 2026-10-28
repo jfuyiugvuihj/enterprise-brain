@@ -1,0 +1,2797 @@
+{
+  "notice": "Each run has an explicit selected scope. passed does not mean the full C18 suite passed. Older failed groups may have later individual fixes. No PIDs, locks, credentials, or raw failure text are transferred.",
+  "runs": [
+    {
+      "run_id": "20261025-132631-50810b",
+      "status": "passed",
+      "started_at": "2026-10-25T13:26:31+08:00",
+      "ended_at": "2026-10-25T13:26:36+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 5.0,
+      "cases": [
+        "tests/test_c18_progress.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [
+        {
+          "nodeid": "tests/test_c18_progress.py::test_running_case_and_teardown_error_are_retained",
+          "outcome": "passed",
+          "at": "2026-10-25T13:26:32+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_workers_do_not_count_the_collection_twice",
+          "outcome": "passed",
+          "at": "2026-10-25T13:26:32+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_partially_written_worker_snapshot_is_reported",
+          "outcome": "passed",
+          "at": "2026-10-25T13:26:32+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_evidence_fingerprint_includes_uncommitted_and_untracked_code",
+          "outcome": "passed",
+          "at": "2026-10-25T13:26:32+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_real_pytest_records_failures_and_collection_errors",
+          "outcome": "passed",
+          "at": "2026-10-25T13:26:33+08:00"
+        }
+      ],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 5,
+          "completed": 5,
+          "outcomes": {
+            "passed": 5
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261025-163639-aa1313",
+      "status": "passed",
+      "started_at": "2026-10-25T16:36:39+08:00",
+      "ended_at": "2026-10-25T16:37:31+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 50.1,
+      "cases": [
+        "tests/test_task_review_context.py",
+        "tests/test_quality_approval_lifecycle.py",
+        "tests/test_quality_chart_layout.py",
+        "tests/test_quality_pdf_layout.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [
+        {
+          "nodeid": "tests/test_task_review_context.py::test_joint_review_keeps_document_versions_until_explicit_new_task",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_explicit_period_excludes_other_dates_before_totals",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_invalid_or_ambiguous_period_never_silently_sums_all_rows",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_review_followup_keeps_input_version_and_original_filters",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_partial_scope_change_preserves_other_conditions[\\u53ea\\u7edf\\u8ba1\\u5df2\\u652f\\u4ed8]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_partial_scope_change_preserves_other_conditions[\\u4ec5\\u8ba1\\u7b97\\u5df2\\u652f\\u4ed8]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_partial_scope_change_preserves_other_conditions[\\u53ea\\u4fdd\\u7559\\u5df2\\u652f\\u4ed8]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_partial_scope_change_preserves_other_conditions[\\u6539\\u8bfb\\u5de5\\u4f5c\\u8868\\u300c\\u8d39\\u7528\\u660e\\u7ec6\\u300d]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_policy_identity_does_not_depend_on_file_title",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_deleted_policy_quote_is_withheld_from_history",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_review_does_not_append_unfiltered_table_quotes_as_calculation_basis",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_policy_review_quotes_original_and_never_calls_approval_tiers_a_limit",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_explicit_status_change_replaces_prior_status_equals_phrase",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_policy_evidence_keeps_actual_hit_version",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_report_distinguishes_requested_period_from_observed_dates",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_calculated_answer_explains_total_with_filtered_detail",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_report_preserves_analysis_explanation_limits_and_detail_table",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_original_analysis_chart_becomes_report_slot_not_internal_url_text",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_non_expense_report_does_not_sum_identifiers_or_ratios_or_invent_missing_budget",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_report_original_question_does_not_request_a_new_chart_or_analysis",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_retrieved_policy_keeps_index_identity_through_hit_projection",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_review_routing_keeps_original_action_constraints_after_rewrite",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_approval_lifecycle.py::test_refusal_does_not_execute_next_unapproved_action",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_approval_lifecycle.py::test_approval_executes_only_current_action",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_approval_lifecycle.py::test_explicit_prohibition_removes_model_and_plan_side_effects",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_approval_lifecycle.py::test_no_chart_request_still_exports_requested_pdf",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_approval_lifecycle.py::test_resuming_keeps_one_primary_answer_in_history",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_approval_lifecycle.py::test_approval_history_keeps_actual_step_verdict",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_approval_lifecycle.py::test_display_interruption_does_not_swallow_following_explicit_refusal",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_approval_lifecycle.py::test_worker_results_deduplicate_repeated_body",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_approval_lifecycle.py::test_numbered_calculations_keep_repeated_scope_within_one_worker",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_single_bar_keeps_category_space_in_rendered_axes[False]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_single_bar_keeps_category_space_in_rendered_axes[True]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_negative_value_labels_stay_outside_bar_ends[False]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_negative_value_labels_stay_outside_bar_ends[True]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_zero_value_axis_starts_at_zero[False]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_zero_value_axis_starts_at_zero[True]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_negative_zero_is_displayed_as_zero[False]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_negative_zero_is_displayed_as_zero[True]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_many_long_chinese_labels_remain_visible_without_overlap",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_empty_or_nonfinite_values_do_not_write_chart[values0]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_empty_or_nonfinite_values_do_not_write_chart[values1]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_chart_layout.py::test_empty_or_nonfinite_values_do_not_write_chart[values2]",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_short_report_has_no_disclaimer_only_ending_page",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:14+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_management_template_starts_with_metrics_and_renders_numeric_table",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:15+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_chart_section_and_legacy_path_embed_once_with_business_caption",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_chart_heading_stays_with_chart_when_first_page_is_nearly_full",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_expense_brief_keeps_chart_with_summary_and_details_in_two_pages",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:18+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_expense_brief_without_chart_uses_first_page_for_details",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:18+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_legacy_chart_caption_never_exposes_random_filename",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:19+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_long_title_heading_and_paragraph_remain_inside_page",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:20+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_heading_moves_with_first_body_line",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:21+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_tall_chart_keeps_caption_on_same_page",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:22+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_review_brief_does_not_strand_limitations_on_nearly_empty_third_page",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:23+08:00"
+        },
+        {
+          "nodeid": "tests/test_quality_pdf_layout.py::test_empty_brief_explains_absent_groups_and_does_not_invent_review_target",
+          "outcome": "passed",
+          "at": "2026-10-25T16:37:24+08:00"
+        }
+      ],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 55,
+          "completed": 55,
+          "outcomes": {
+            "passed": 55
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261025-170039-01a6d4",
+      "status": "failed",
+      "started_at": "2026-10-25T17:00:39+08:00",
+      "ended_at": "2026-10-25T17:01:51+08:00",
+      "exit_code": 3,
+      "elapsed_seconds": 70.2,
+      "cases": [
+        "tests/test_task_review_context.py",
+        "tests/test_alert_scan_scope.py",
+        "tests/test_c18_progress.py",
+        "tests/test_r32_lane_contract.py",
+        "tests/test_r42_fallback_upgrade.py",
+        "tests/test_route_fallback_correction.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [
+        {
+          "nodeid": "tests/test_task_review_context.py::test_joint_review_keeps_document_versions_until_explicit_new_task",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:25+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_explicit_period_excludes_other_dates_before_totals",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_invalid_or_ambiguous_period_never_silently_sums_all_rows",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_month_column_keeps_independent_question_totals",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_numeric_months_are_calendar_months_and_mixed_precision_is_rejected",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_missing_requested_metric_never_becomes_another_metric",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_unrelated_empty_condition_does_not_cancel_absolute_output_refusal",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_negated_outputs_do_not_route_to_report_or_dispatch_exports[\\u4e0d\\u8981\\u751f\\u6210\\u56fe\\u6216\\u62a5\\u544a]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_negated_outputs_do_not_route_to_report_or_dispatch_exports[\\u4e0d\\u751f\\u6210\\u56fe\\u8868\\u6216\\u62a5\\u544a]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_negated_outputs_do_not_route_to_report_or_dispatch_exports[\\u65e0\\u9700\\u751f\\u6210\\u56fe\\u8868\\u548cPDF]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_finished_calculation_is_not_retried_for_refused_outputs",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_chart_refusal_keeps_requested_pdf_export",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_review_followup_keeps_input_version_and_original_filters",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_partial_scope_change_preserves_other_conditions[\\u53ea\\u7edf\\u8ba1\\u5df2\\u652f\\u4ed8]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_partial_scope_change_preserves_other_conditions[\\u4ec5\\u8ba1\\u7b97\\u5df2\\u652f\\u4ed8]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_partial_scope_change_preserves_other_conditions[\\u53ea\\u4fdd\\u7559\\u5df2\\u652f\\u4ed8]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_partial_scope_change_preserves_other_conditions[\\u6539\\u8bfb\\u5de5\\u4f5c\\u8868\\u300c\\u8d39\\u7528\\u660e\\u7ec6\\u300d]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_policy_identity_does_not_depend_on_file_title",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_deleted_policy_quote_is_withheld_from_history",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_review_does_not_append_unfiltered_table_quotes_as_calculation_basis",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_policy_review_quotes_original_and_never_calls_approval_tiers_a_limit",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_explicit_status_change_replaces_prior_status_equals_phrase",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_policy_evidence_keeps_actual_hit_version",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_report_distinguishes_requested_period_from_observed_dates",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_calculated_answer_explains_total_with_filtered_detail",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_report_preserves_analysis_explanation_limits_and_detail_table",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_original_analysis_chart_becomes_report_slot_not_internal_url_text",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_non_expense_report_does_not_sum_identifiers_or_ratios_or_invent_missing_budget",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_report_original_question_does_not_request_a_new_chart_or_analysis",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_retrieved_policy_keeps_index_identity_through_hit_projection",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_task_review_context.py::test_review_routing_keeps_original_action_constraints_after_rewrite",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:26+08:00"
+        },
+        {
+          "nodeid": "tests/test_alert_scan_scope.py::test_sweep_evaluates_the_tenant_data_dir_and_not_the_other_folder",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_alert_scan_scope.py::test_registry_path_mismatch_is_not_empty_success_or_recovery",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_alert_scan_scope.py::test_sweep_never_resolves_to_the_repository_data_folder",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_alert_scan_scope.py::test_sweep_only_evaluates_datasets_the_principal_may_analyze",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_alert_scan_scope.py::test_missing_tenant_data_dir_reports_no_data_without_falling_back",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_alert_scan_scope.py::test_empty_data_dir_reports_no_data_files",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_alert_scan_scope.py::test_repeated_sweep_keeps_distinct_dataset_findings_without_duplicate_notifications",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:44+08:00"
+        },
+        {
+          "nodeid": "tests/test_alert_scan_scope.py::test_one_sweep_appends_a_memory_alert_only_once",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:45+08:00"
+        },
+        {
+          "nodeid": "tests/test_alert_scan_scope.py::test_check_route_reports_the_scope_it_evaluated",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:47+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_running_case_and_teardown_error_are_retained",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:47+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_workers_do_not_count_the_collection_twice",
+          "outcome": "passed",
+          "at": "2026-10-25T17:01:47+08:00"
+        }
+      ],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 137,
+          "completed": 42,
+          "outcomes": {
+            "passed": 42
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261025-170331-e1a515",
+      "status": "passed",
+      "started_at": "2026-10-25T17:03:31+08:00",
+      "ended_at": "2026-10-25T17:04:23+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 50.1,
+      "cases": [
+        "tests/test_c18_progress.py",
+        "tests/test_r32_lane_contract.py",
+        "tests/test_r42_fallback_upgrade.py",
+        "tests/test_route_fallback_correction.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [
+        {
+          "nodeid": "tests/test_c18_progress.py::test_running_case_and_teardown_error_are_retained",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:07+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_workers_do_not_count_the_collection_twice",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:07+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_partially_written_worker_snapshot_is_reported",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:07+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_locked_windows_snapshot_does_not_abort_test_execution",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:08+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_evidence_fingerprint_includes_uncommitted_and_untracked_code",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:08+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_real_pytest_records_failures_and_collection_errors",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:09+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_fingerprint_tracks_migrations_and_frontend_entry_in_real_git",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_c18_progress.py::test_real_xdist_crash_is_failed_and_not_still_active",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_lane_field_is_a_closed_set_of_three_tiers_plus_empty",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_second_lane_spelling_cannot_drift_from_the_discriminator",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:10+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_declared_tier_is_accepted_and_still_runs_in_person[]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_declared_tier_is_accepted_and_still_runs_in_person[qa]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_declared_tier_is_accepted_and_still_runs_in_person[analysis]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_declared_tier_is_accepted_and_still_runs_in_person[report]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[REPORT]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[QA]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[Qa]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[qa-]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[qa x]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[analysis,qa]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[\\u62a5\\u544a]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[\\u95ee\\u7b54]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[chat]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[auto]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[fast]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[false]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[0]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_unknown_tier_is_refused_with_the_ratified_stable_code[report lane]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[REPORT]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[QA]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[Qa]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[qa-]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[qa x]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[analysis,qa]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[\\u62a5\\u544a]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[\\u95ee\\u7b54]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[chat]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[auto]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[fast]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[false]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:11+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[0]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_refusal_leaves_no_session_row_queue_entry_or_model_call[report lane]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_error_body_is_a_valid_envelope_and_names_the_field",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_whitespace_alone_declares_nothing[  ]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_whitespace_alone_declares_nothing[]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_whitespace_alone_declares_nothing[ qa ]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_whitespace_alone_declares_nothing[report\\t]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_wrongly_typed_lane_is_the_request_models_job_not_this_gates",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_gate_answers_401_before_it_answers_400",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_wire_default_is_declare_nothing_not_qa",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_non_report_label_never_enters_the_queue[-None]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_non_report_label_never_enters_the_queue[-1]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_non_report_label_never_enters_the_queue[qa-None]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_non_report_label_never_enters_the_queue[qa-1]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_non_report_label_never_enters_the_queue[analysis-None]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_non_report_label_never_enters_the_queue[analysis-1]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_report_label_still_owns_the_only_real_queue_route",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_non_report_turn_completes_in_person_and_publishes_no_queue_receipt[]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_non_report_turn_completes_in_person_and_publishes_no_queue_receipt[qa]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_a_non_report_turn_completes_in_person_and_publishes_no_queue_receipt[analysis]",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_an_illegal_label_never_reaches_the_queue_even_with_the_switch_on",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_gate_and_the_queue_predicate_do_not_call_each_other",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_three_tiers_ask_for_the_same_authorization_scope_in_the_same_way",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:13+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_visible_hit_set_is_the_one_this_principal_is_entitled_to",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:14+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_scope_recorder_can_tell_two_principals_apart",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:14+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_three_end_to_end_slots_are_still_gated_on_lane_labels",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:14+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_trace_retains_execution_lane_without_inventing_an_owner",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:14+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_contract_still_names_the_lane_attribution_blocker",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:14+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_prose_line_about_the_lane_field_tells_todays_truth",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:14+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_client_label_changes_exactly_one_behaviour_and_it_is_default_off",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:14+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_nothing_outside_the_two_lane_functions_reads_the_request_label",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:15+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_gate_is_called_once_and_before_the_store",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:15+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_model_counters_have_teeth",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:15+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_tier_selector_is_only_real_while_the_tiers_really_diverge",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:15+08:00"
+        },
+        {
+          "nodeid": "tests/test_r32_lane_contract.py::test_the_four_hundred_renders_honestly_on_the_client_without_new_frontend",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:15+08:00"
+        },
+        {
+          "nodeid": "tests/test_r42_fallback_upgrade.py::test_the_chart_keyword_fallback_outvotes_the_question_lane",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:15+08:00"
+        },
+        {
+          "nodeid": "tests/test_r42_fallback_upgrade.py::test_the_export_keyword_fallback_outvotes_the_question_lane",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:15+08:00"
+        },
+        {
+          "nodeid": "tests/test_r42_fallback_upgrade.py::test_the_data_keyword_fallback_outvotes_the_question_lane",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_r42_fallback_upgrade.py::test_a_question_lane_fill_never_clobbers_a_real_dispatch",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_r42_fallback_upgrade.py::test_the_fill_adds_a_read_on_a_dead_question_turn",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_r42_fallback_upgrade.py::test_the_fill_refuses_to_invent_a_side_effect_for_the_report_lane",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_r42_fallback_upgrade.py::test_the_analysis_lane_dead_turn_is_left_exactly_as_today",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_r42_fallback_upgrade.py::test_reflect_reopens_a_turn_the_question_lane_called_good_enough",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_r42_fallback_upgrade.py::test_reflect_still_escalates_a_missing_chart_on_a_question_lane_turn",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_r42_fallback_upgrade.py::test_the_lane_is_a_separate_axis_from_intent",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_policy_question_moves_wrong_data_dispatch_back_to_doc",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_policy_question_still_corrected_when_plan_is_a_single_data_step",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_document_reference_does_not_keep_a_wrong_export_dispatch",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_chart_intent_overrides_the_wrong_data_dispatch",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_chart_fallback_keeps_planned_retrieval_step_ahead_of_it",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_abstained_supervisor_defers_to_a_multi_step_plan",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_plan_branch_appends_export_once_upstreams_are_done",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_plan_branch_appends_chart_once_upstreams_are_done",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_abstained_supervisor_with_single_step_plan_still_dispatches_it",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_chart_and_export_only_append_one_side_effect_per_round",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_answered_turn_with_single_step_plan_terminates",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_single_step_plan_does_not_clobber_a_multi_worker_dispatch",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        },
+        {
+          "nodeid": "tests/test_route_fallback_correction.py::test_keyword_fallback_leaves_a_clean_data_dispatch_alone",
+          "outcome": "passed",
+          "at": "2026-10-25T17:04:16+08:00"
+        }
+      ],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 98,
+          "completed": 98,
+          "outcomes": {
+            "passed": 98
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-102840-f97bbd",
+      "status": "failed",
+      "started_at": "2026-10-27T10:28:40+08:00",
+      "ended_at": "2026-10-27T10:29:11+08:00",
+      "exit_code": 1,
+      "elapsed_seconds": 30.1,
+      "cases": [
+        "tests/test_artifact_list.py",
+        "tests/test_file_upload_security.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_list_path_is_published_in_the_openapi_document",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_list_returns_only_artifacts_of_scopes_the_caller_can_see",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_an_artifact_is_listed_exactly_when_the_content_route_serves_it",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_an_anonymous_caller_is_refused_the_stable_code",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_an_administrator_crosses_departments_and_a_low_clearance_caller_does_not",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_owner_of_an_artifact_keeps_it_even_below_its_classification",
+          "outcome": "failed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_paging_neither_repeats_nor_drops_a_row",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_limit_is_clamped_and_a_negative_offset_floors_at_zero",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_type_filter_narrows_the_list_without_touching_scope",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_a_row_carries_the_delivery_urls_and_the_scope_but_no_server_path",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_a_retired_expired_or_vanished_artifact_is_never_listed",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_registry_query_is_not_a_second_access_rule_of_its_own",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_rejects_client_path_segments",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extension_and_magic_mismatch",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_a_pdf_signature",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_uses_resource_id_and_stays_under_root",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_rejects_an_invalid_resource_id",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_stream_to_temporary_file_writes_in_chunks_and_returns_a_private_path",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_stream_to_temporary_file_removes_partial_content_when_limit_is_exceeded",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_security_error_keeps_the_stable_contract_code",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_knowledge_base_whitelist_is_limited_to_parsable_document_types",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_double_extensions",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_a_forged_docx_body",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base[legacy.xls]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base[deck.pptx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base[archive.zip]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base[legacy.doc]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base[payload.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_accepts_the_whitelist_and_refuses_everything_else[.xlsx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_accepts_the_whitelist_and_refuses_everything_else[.csv]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_accepts_the_whitelist_and_refuses_everything_else[.xls]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_accepts_the_whitelist_and_refuses_everything_else[.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_normalizes_a_bare_whitelisted_extension",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.csv]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:02+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.docx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.md]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.pdf]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.xlsx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_load_document_reads_markdown_with_encoding_detection",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_load_document_reads_gbk_markdown",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_load_document_hands_spreadsheets_to_the_parser",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_route_passes_the_stored_path_and_display_name_to_the_parser",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_route_ingests_a_csv_through_the_real_parser",
+          "outcome": "failed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_http_upload_ingests_a_markdown_document",
+          "outcome": "failed",
+          "at": "2026-10-27T10:29:03+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_inherits_the_uploader_department_and_not_the_form_one",
+          "outcome": "failed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_an_upload_with_no_subject_stays_unscoped",
+          "outcome": "failed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_http_upload_ingests_a_fake_workbook_and_keeps_the_file",
+          "outcome": "failed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_route_still_refuses_a_name_the_whitelist_does_not_cover[legacy.xls]",
+          "outcome": "failed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_route_still_refuses_a_name_the_whitelist_does_not_cover[notes.pptx]",
+          "outcome": "failed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[IT\\u5b89\\u5168\\u7ba1\\u7406\\u5236\\u5ea6V3.1.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYBI_V3.1_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYBI_\\u90e8\\u7f72\\u624b\\u518cV1.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYBI_\\u90e8\\u7f72\\u624b\\u518cV2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYO_V5.3_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYO_V5.4_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYOps_V2.0_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[\\u5458\\u5de5\\u7ee9\\u6548\\u8003\\u6838\\u529e\\u6cd5V1.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[\\u5458\\u5de5\\u7ee9\\u6548\\u8003\\u6838\\u529e\\u6cd5V2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[\\u8d22\\u52a1\\u7ba1\\u7406\\u5236\\u5ea6_V2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[\\u8d39\\u7528\\u62a5\\u9500\\u7ba1\\u7406\\u5236\\u5ea6V2.1.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_accept_list_really_holds_the_11_case_filenames",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[IT\\u5b89\\u5168\\u7ba1\\u7406\\u5236\\u5ea6V3.1.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYBI_V3.1_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYBI_\\u90e8\\u7f72\\u624b\\u518cV1.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYBI_\\u90e8\\u7f72\\u624b\\u518cV2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYO_V5.3_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYO_V5.4_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYOps_V2.0_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[\\u5458\\u5de5\\u7ee9\\u6548\\u8003\\u6838\\u529e\\u6cd5V1.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[\\u5458\\u5de5\\u7ee9\\u6548\\u8003\\u6838\\u529e\\u6cd5V2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[\\u8d22\\u52a1\\u7ba1\\u7406\\u5236\\u5ea6_V2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[\\u8d39\\u7528\\u62a5\\u9500\\u7ba1\\u7406\\u5236\\u5ea6V2.1.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_a_two_digit_version_in_a_pdf_name",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_rule_judges_the_shape_of_the_name_not_the_number_of_dots",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_disguised_middle_segment[a.pdf.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_disguised_middle_segment[\\u653f\\u7b56.docx.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_disguised_middle_segment[notes.md.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_disguised_middle_segment[sheet.xlsx.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_disguised_middle_segment[a.tar.gz.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_refuses_a_disguised_upload[a.tar.gz.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_refuses_a_disguised_upload[payload.pdf.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_disguise_check_is_case_insensitive[.PDF]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_disguise_check_is_case_insensitive[.ExE]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_disguise_check_is_case_insensitive[.DOCX]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_name_that_starts_with_a_dot[.hidden.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_name_that_starts_with_a_dot[..hidden.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_still_requires_a_real_name[None]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_still_requires_a_real_name[]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_still_requires_a_real_name[   ]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_still_requires_a_real_name[.]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_still_requires_a_real_name[..]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_disguise_blocklist_is_the_reviewed_closed_set",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.md]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.pdf]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.docx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.csv]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.xlsx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.doc]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.xls]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.ppt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.pptx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.dll]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.com]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.scr]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.msi]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.lnk]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.jar]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.js]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.vbs]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:04+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.bat]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.cmd]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.sh]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.ps1]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.php]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.html]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.htm]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.svg]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.tar]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.gz]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.bz2]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.xz]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.zip]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.rar]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.7z]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_type_is_also_refused_as_a_middle_segment",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_a_versioned_upload_is_still_stored_under_one_uuid_suffix",
+          "outcome": "passed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_http_upload_accepts_all_11_versioned_corpus_names",
+          "outcome": "failed",
+          "at": "2026-10-27T10:29:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_http_upload_still_rejects_a_disguised_name_with_the_stable_code",
+          "outcome": "failed",
+          "at": "2026-10-27T10:29:05+08:00"
+        }
+      ],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 131,
+          "completed": 131,
+          "outcomes": {
+            "passed": 121,
+            "failed": 10
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-103419-0e7e76",
+      "status": "failed",
+      "started_at": "2026-10-27T10:34:19+08:00",
+      "ended_at": "2026-10-27T10:34:45+08:00",
+      "exit_code": 1,
+      "elapsed_seconds": 25.1,
+      "cases": [
+        "tests/test_artifact_list.py",
+        "tests/test_file_upload_security.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_list_path_is_published_in_the_openapi_document",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_list_returns_only_artifacts_of_scopes_the_caller_can_see",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_an_artifact_is_listed_exactly_when_the_content_route_serves_it",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_an_anonymous_caller_is_refused_the_stable_code",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_an_administrator_crosses_departments_and_a_low_clearance_caller_does_not",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_an_owner_still_needs_clearance_for_their_artifact",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_paging_neither_repeats_nor_drops_a_row",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_limit_is_clamped_and_a_negative_offset_floors_at_zero",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_type_filter_narrows_the_list_without_touching_scope",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_a_row_carries_the_delivery_urls_and_the_scope_but_no_server_path",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:39+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_a_retired_expired_or_vanished_artifact_is_never_listed",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_the_registry_query_is_not_a_second_access_rule_of_its_own",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_rejects_client_path_segments",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extension_and_magic_mismatch",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_a_pdf_signature",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_uses_resource_id_and_stays_under_root",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_rejects_an_invalid_resource_id",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_stream_to_temporary_file_writes_in_chunks_and_returns_a_private_path",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_stream_to_temporary_file_removes_partial_content_when_limit_is_exceeded",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_security_error_keeps_the_stable_contract_code",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_knowledge_base_whitelist_is_limited_to_parsable_document_types",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_double_extensions",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_a_forged_docx_body",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base[legacy.xls]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base[deck.pptx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base[archive.zip]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base[legacy.doc]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_rejects_extensions_outside_the_knowledge_base[payload.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_accepts_the_whitelist_and_refuses_everything_else[.xlsx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_accepts_the_whitelist_and_refuses_everything_else[.csv]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_accepts_the_whitelist_and_refuses_everything_else[.xls]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_accepts_the_whitelist_and_refuses_everything_else[.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_build_storage_path_normalizes_a_bare_whitelisted_extension",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.csv]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.docx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.md]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.pdf]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_extension_is_routed_by_load_document[.xlsx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_load_document_reads_markdown_with_encoding_detection",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_load_document_reads_gbk_markdown",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_load_document_hands_spreadsheets_to_the_parser",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_route_passes_the_stored_path_and_display_name_to_the_parser",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_route_ingests_a_csv_through_the_real_parser",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_http_upload_ingests_a_markdown_document",
+          "outcome": "failed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_inherits_the_uploader_department_and_not_the_form_one",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_an_upload_with_no_subject_stays_unscoped",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_http_upload_ingests_a_fake_workbook_and_keeps_the_file",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:40+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_route_still_refuses_a_name_the_whitelist_does_not_cover[legacy.xls]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_upload_route_still_refuses_a_name_the_whitelist_does_not_cover[notes.pptx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[IT\\u5b89\\u5168\\u7ba1\\u7406\\u5236\\u5ea6V3.1.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYBI_V3.1_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYBI_\\u90e8\\u7f72\\u624b\\u518cV1.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYBI_\\u90e8\\u7f72\\u624b\\u518cV2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYO_V5.3_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYO_V5.4_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[MYOps_V2.0_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[\\u5458\\u5de5\\u7ee9\\u6548\\u8003\\u6838\\u529e\\u6cd5V1.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[\\u5458\\u5de5\\u7ee9\\u6548\\u8003\\u6838\\u529e\\u6cd5V2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[\\u8d22\\u52a1\\u7ba1\\u7406\\u5236\\u5ea6_V2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_accepts_a_version_number_in_the_middle[\\u8d39\\u7528\\u62a5\\u9500\\u7ba1\\u7406\\u5236\\u5ea6V2.1.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_accept_list_really_holds_the_11_case_filenames",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[IT\\u5b89\\u5168\\u7ba1\\u7406\\u5236\\u5ea6V3.1.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYBI_V3.1_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYBI_\\u90e8\\u7f72\\u624b\\u518cV1.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYBI_\\u90e8\\u7f72\\u624b\\u518cV2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYO_V5.3_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYO_V5.4_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[MYOps_V2.0_\\u66f4\\u65b0\\u65e5\\u5fd7.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[\\u5458\\u5de5\\u7ee9\\u6548\\u8003\\u6838\\u529e\\u6cd5V1.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[\\u5458\\u5de5\\u7ee9\\u6548\\u8003\\u6838\\u529e\\u6cd5V2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[\\u8d22\\u52a1\\u7ba1\\u7406\\u5236\\u5ea6_V2.0.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_the_real_corpus_filenames[\\u8d39\\u7528\\u62a5\\u9500\\u7ba1\\u7406\\u5236\\u5ea6V2.1.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_accepts_a_two_digit_version_in_a_pdf_name",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_rule_judges_the_shape_of_the_name_not_the_number_of_dots",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_disguised_middle_segment[a.pdf.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_disguised_middle_segment[\\u653f\\u7b56.docx.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_disguised_middle_segment[notes.md.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_disguised_middle_segment[sheet.xlsx.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_disguised_middle_segment[a.tar.gz.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_refuses_a_disguised_upload[a.tar.gz.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_inspect_upload_header_refuses_a_disguised_upload[payload.pdf.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_disguise_check_is_case_insensitive[.PDF]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_disguise_check_is_case_insensitive[.ExE]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_disguise_check_is_case_insensitive[.DOCX]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_name_that_starts_with_a_dot[.hidden.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_refuses_a_name_that_starts_with_a_dot[..hidden.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_still_requires_a_real_name[None]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_still_requires_a_real_name[]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_still_requires_a_real_name[   ]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_still_requires_a_real_name[.]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_sanitize_upload_filename_still_requires_a_real_name[..]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_the_disguise_blocklist_is_the_reviewed_closed_set",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.txt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.md]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.pdf]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.docx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.csv]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.xlsx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.doc]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.xls]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.ppt]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.pptx]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.exe]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.dll]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.com]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.scr]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.msi]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.lnk]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.jar]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.js]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.vbs]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.bat]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.cmd]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.sh]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.ps1]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.php]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.html]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.htm]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.svg]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.tar]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.gz]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.bz2]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.xz]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.zip]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.rar]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_entry_in_the_blocklist_is_actually_refused_in_the_middle[.7z]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_every_whitelisted_type_is_also_refused_as_a_middle_segment",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_a_versioned_upload_is_still_stored_under_one_uuid_suffix",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:41+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_http_upload_accepts_all_11_versioned_corpus_names",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:42+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_http_upload_still_rejects_a_disguised_name_with_the_stable_code",
+          "outcome": "passed",
+          "at": "2026-10-27T10:34:42+08:00"
+        }
+      ],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 131,
+          "completed": 131,
+          "outcomes": {
+            "passed": 130,
+            "failed": 1
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-103547-c83c28",
+      "status": "passed",
+      "started_at": "2026-10-27T10:35:47+08:00",
+      "ended_at": "2026-10-27T10:36:18+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 30.1,
+      "cases": [
+        "tests/test_file_upload_security.py::test_http_upload_ingests_a_markdown_document",
+        "tests/test_file_upload_security.py::test_http_upload_without_a_subject_is_rejected_before_writing",
+        "tests/test_artifact_list.py::test_an_owner_still_needs_clearance_for_their_artifact"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_http_upload_ingests_a_markdown_document",
+          "outcome": "passed",
+          "at": "2026-10-27T10:36:09+08:00"
+        },
+        {
+          "nodeid": "tests/test_file_upload_security.py::test_http_upload_without_a_subject_is_rejected_before_writing",
+          "outcome": "passed",
+          "at": "2026-10-27T10:36:09+08:00"
+        },
+        {
+          "nodeid": "tests/test_artifact_list.py::test_an_owner_still_needs_clearance_for_their_artifact",
+          "outcome": "passed",
+          "at": "2026-10-27T10:36:11+08:00"
+        }
+      ],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 3,
+          "completed": 3,
+          "outcomes": {
+            "passed": 3
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-105308-65d1e1",
+      "status": "failed",
+      "started_at": "2026-10-27T10:53:08+08:00",
+      "ended_at": "2026-10-27T10:53:39+08:00",
+      "exit_code": 1,
+      "elapsed_seconds": 30.1,
+      "cases": [
+        "tests/test_document_catalog_sync.py",
+        "tests/test_memory_production_schema.py",
+        "tests/test_phase7_mcp.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_doc_panel_uses_catalog_endpoint",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:12+08:00"
+        },
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_document_catalog_route_returns_metadata",
+          "outcome": "failed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_0007_adds_a_nullable_chunk_count_to_both_catalog_tables",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_0007_stays_additive_and_never_touches_the_vector_column",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_0007_lets_the_owner_be_absent_in_every_mirrored_table",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_the_offline_migration_plan_loads_every_version_through_0016",
+          "outcome": "failed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_memory_production_schema.py::test_production_memory_schema_checks_do_not_execute_runtime_ddl[app.memory.long_term-memories]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_memory_production_schema.py::test_production_memory_schema_checks_do_not_execute_runtime_ddl[app.memory.profile-user_profiles]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_memory_production_schema.py::test_production_memory_schema_checks_do_not_execute_runtime_ddl[app.documents.catalog-document_versions]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_memory_production_schema.py::test_production_memory_schema_checks_do_not_execute_runtime_ddl[app.api.v1.alerts-table_name3]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_memory_production_schema.py::test_production_memory_schema_requires_migration[app.memory.long_term-None]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_memory_production_schema.py::test_production_memory_schema_requires_migration[app.memory.profile-None]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_memory_production_schema.py::test_production_memory_schema_requires_migration[app.documents.catalog-None]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_memory_production_schema.py::test_production_memory_schema_requires_migration[app.api.v1.alerts-None]",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_phase7_mcp.py::TestMcpServer::test_create_server",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_phase7_mcp.py::TestMcpServer::test_five_tools_registered",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        },
+        {
+          "nodeid": "tests/test_phase7_mcp.py::TestMcpServer::test_mcp_does_not_accept_a_declared_identity",
+          "outcome": "passed",
+          "at": "2026-10-27T10:53:35+08:00"
+        }
+      ],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 17,
+          "completed": 17,
+          "outcomes": {
+            "passed": 15,
+            "failed": 2
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-110741-eeec11",
+      "status": "passed",
+      "started_at": "2026-10-27T11:07:41+08:00",
+      "ended_at": "2026-10-27T11:08:12+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 30.1,
+      "cases": [
+        "tests/test_document_catalog_sync.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_doc_panel_uses_catalog_endpoint",
+          "outcome": "passed",
+          "at": "2026-10-27T11:07:43+08:00"
+        },
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_document_catalog_route_returns_metadata",
+          "outcome": "passed",
+          "at": "2026-10-27T11:08:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_0007_adds_a_nullable_chunk_count_to_both_catalog_tables",
+          "outcome": "passed",
+          "at": "2026-10-27T11:08:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_0007_stays_additive_and_never_touches_the_vector_column",
+          "outcome": "passed",
+          "at": "2026-10-27T11:08:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_0007_lets_the_owner_be_absent_in_every_mirrored_table",
+          "outcome": "passed",
+          "at": "2026-10-27T11:08:05+08:00"
+        },
+        {
+          "nodeid": "tests/test_document_catalog_sync.py::test_offline_migration_plan_loads_the_discovered_catalog",
+          "outcome": "passed",
+          "at": "2026-10-27T11:08:06+08:00"
+        }
+      ],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 6,
+          "completed": 6,
+          "outcomes": {
+            "passed": 6
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-111018-72713d",
+      "status": "failed",
+      "started_at": "2026-10-27T11:10:18+08:00",
+      "ended_at": "2026-10-27T11:10:23+08:00",
+      "exit_code": 4,
+      "elapsed_seconds": 5.0,
+      "cases": [
+        "tests/test_r438_correctness_denominator_is_wired_and_both_calibers_publish.py::test_route_lists_both_rulers_for_a_scorable_report"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 0,
+          "completed": 0,
+          "outcomes": {},
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-111204-ee2aae",
+      "status": "passed",
+      "started_at": "2026-10-27T11:12:04+08:00",
+      "ended_at": "2026-10-27T11:12:30+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 25.1,
+      "cases": [
+        "tests/test_r438_correctness_denominator_is_wired_and_both_calibers_publish.py::test_the_route_lists_both_rulers_for_a_scorable_report"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "case_observations": [
+        {
+          "nodeid": "tests/test_r438_correctness_denominator_is_wired_and_both_calibers_publish.py::test_the_route_lists_both_rulers_for_a_scorable_report",
+          "outcome": "passed",
+          "at": "2026-10-27T11:12:24+08:00"
+        }
+      ],
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 1,
+          "completed": 1,
+          "outcomes": {
+            "passed": 1
+          },
+          "collection_errors": []
+        }
+      ]
+    }
+  ]
+}

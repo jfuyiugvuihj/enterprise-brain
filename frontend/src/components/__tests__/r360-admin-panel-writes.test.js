@@ -34,8 +34,11 @@ import {
   USER_WRITE_DELETE,
   USER_WRITE_DEPARTMENT,
   USER_WRITE_PASSWORD,
+  USER_WRITE_RESET_PASSWORD,
+  USER_WRITE_STATUS,
   USER_DEPARTMENT_PATH,
   USER_PASSWORD_PATH,
+  USER_STATUS_PATH,
 } from '../../lib/users'
 import { countNativeButtons } from './r288-native-button-scan.js'
 import { findNativeDialogs } from './r288-native-dialog-scan.js'
@@ -75,7 +78,7 @@ function clickTags(text) {
 
 const clickMap = text => Object.fromEntries(clickTags(text).filter(item => item.testid).map(item => [item.testid, item.click]))
 
-/** 一枚 UiDialog 从开标签到它自己那一枚闭合的源码区间：四枚互不嵌套，所以第一个闭合就是它自己的。 */
+/** 一枚 UiDialog 从开标签到它自己那一枚闭合的源码区间：各枚互不嵌套，所以第一个闭合就是它自己的。 */
 function dialogRange(text, model) {
   const open = new RegExp('<UiDialog[^>]*v-model="' + model + '"').exec(text)
   if (!open) throw new Error('模板里找不到 ' + model + ' 那一枚 UiDialog')
@@ -85,7 +88,7 @@ function dialogRange(text, model) {
 }
 
 function row(overrides = {}) {
-  return { id: 7, username: 'baiye', role: 'admin', department: 'finance', created_at: '2026-09-01T10:00:00+08:00', ...overrides }
+  return { id: 7, username: 'baiye', role: 'admin', department: 'finance', created_at: '2026-09-01T10:00:00+08:00', status: 'active', ...overrides }
 }
 
 const ok = (rows) => ({ status: 200, data: { users: rows } })
@@ -99,16 +102,20 @@ const failure = (code, detail) => ({ response: { status: code, data: { detail } 
 function stubRoutes({ roster = [row()], reply = accepted() } = {}) {
   const calls = []
   let reads = 0
+  let currentRoster = typeof roster === 'function' ? null : roster.map(item => ({ ...item }))
   http.get.mockImplementation(async (url) => {
     if (url !== USERS_PATH) throw new Error(`这一屏只该读那一条路径，收到 ${url}`)
     calls.push(['get', url])
     reads += 1
-    return ok(typeof roster === 'function' ? roster() : roster)
+    return ok(typeof roster === 'function' ? roster() : currentRoster)
   })
   for (const verb of ['post', 'put', 'delete']) {
     http[verb].mockImplementation(async (url, body) => {
       calls.push([verb, url, body])
       if (reply && reply.status && reply.response) throw reply
+      if (verb === 'put' && url === USER_STATUS_PATH && currentRoster) {
+        currentRoster = currentRoster.map(item => item.username === body.username ? { ...item, status: body.status } : item)
+      }
       return reply
     })
   }
@@ -170,6 +177,72 @@ async function pickTarget(bindings, username = 'baiye') {
   await flush()
 }
 
+describe('管理员重置密码', () => {
+  it('点名账号确认后 POST 临时密码，不带旧密码，并在成功后清空两格并重读名册', async () => {
+    const { bindings, stub } = await readyPanel({ roster: [row({ must_change_password: true })], reply: accepted({ message: '密码已重置，原登录已失效', must_change_password: true }) })
+    await pickTarget(bindings)
+    bindings.openDialog(USER_WRITE_RESET_PASSWORD)
+    bindings.form.resetPassword = 'temp123'
+    bindings.form.resetPasswordConfirm = 'temp123'
+    const opened = await render(bindings)
+    expect(visibleText(opened)).toContain('baiye')
+    expect(visibleText(opened)).toContain('原登录会失效')
+    await bindings.submitResetPassword()
+    await flush()
+    expect(stub.calls.filter(call => call[0] === 'post')).toEqual([
+      ['post', '/users/reset-password', { username: 'baiye', new_password: 'temp123' }],
+    ])
+    expect(stub.readCount()).toBe(2)
+    expect(bindings.form.resetPassword).toBe('')
+    expect(bindings.form.resetPasswordConfirm).toBe('')
+    expect(bindings.receipt.value.consistent).toBe(true)
+  })
+
+  it('临时密码不足六位或两次不一致时不发请求，取消也清空密码', async () => {
+    const { bindings, stub } = await readyPanel()
+    await pickTarget(bindings)
+    bindings.openDialog(USER_WRITE_RESET_PASSWORD)
+    bindings.form.resetPassword = 'short'
+    bindings.form.resetPasswordConfirm = 'short'
+    await bindings.submitResetPassword()
+    expect(stub.calls.filter(call => call[0] === 'post')).toEqual([])
+    expect(bindings.dlgResetPassword.value).toBe(true)
+    bindings.form.resetPassword = 'temp123'
+    bindings.form.resetPasswordConfirm = 'other123'
+    await bindings.submitResetPassword()
+    expect(stub.calls.filter(call => call[0] === 'post')).toEqual([])
+    bindings.closeDialogs()
+    expect(bindings.form.resetPassword).toBe('')
+    expect(bindings.form.resetPasswordConfirm).toBe('')
+  })
+})
+
+describe('管理员停用与恢复账号', () => {
+  it('确认停用只发指定 PUT，核对回执并重读状态后才显示已停用', async () => {
+    const reply = accepted({ username: 'baiye', account_status: 'disabled', changed: true, message: '账号已停用' })
+    const { bindings, stub } = await readyPanel({ roster: [row()], reply })
+    await pickTarget(bindings)
+    bindings.openDialog(USER_WRITE_STATUS)
+    expect(visibleText(await render(bindings))).toContain('已有资料、任务、成果和审计记录会保留')
+    expect(stub.calls.filter(call => call[0] === 'put')).toEqual([])
+    await bindings.submitStatus('disabled')
+    await flush()
+    expect(stub.calls.filter(call => call[0] === 'put')).toEqual([['put', USER_STATUS_PATH, { username: 'baiye', status: 'disabled' }]])
+    expect(stub.readCount()).toBe(2)
+    expect(bindings.receipt.value.consistent).toBe(true)
+    expect((await render(bindings))).toContain('已停用')
+  })
+
+  it('状态未知时明确显示未记录并隐藏停用/恢复入口', async () => {
+    const { bindings } = await readyPanel({ roster: [row({ status: '' })] })
+    await pickTarget(bindings)
+    const html = await render(bindings)
+    expect(visibleText(html)).toContain('未记录，无法停用或恢复')
+    expect(buttonLabels(html)).not.toContain('停用账号')
+    expect(buttonLabels(html)).not.toContain('恢复账号')
+  })
+})
+
 beforeEach(() => {
   for (const verb of ['get', 'post', 'put', 'delete']) http[verb].mockReset()
 })
@@ -191,7 +264,7 @@ describe('R360甲 · 四枚出口逐枚接通，每一枚只发自己那一枚',
     expect(stub.calls.filter(call => call[0] === 'delete')).toEqual([])
   })
 
-  it('改密码 = PUT /users/password：三格键名逐字等于后端模型，且这一屏没有「跳过现由密码」的那一枚按钮', async () => {
+  it('本人修改密码仍发送旧密码，管理员重置是独立动作', async () => {
     const { bindings, stub } = await readyPanel()
     await pickTarget(bindings)
     bindings.openDialog(USER_WRITE_PASSWORD)
@@ -202,10 +275,10 @@ describe('R360甲 · 四枚出口逐枚接通，每一枚只发自己那一枚',
     expect(stub.calls.filter(call => call[0] === 'put')).toEqual([
       ['put', USER_PASSWORD_PATH, { username: 'baiye', old_password: 'old666', new_password: 'fresh99' }],
     ])
-    const html = await render(bindings)
-    for (const label of buttonLabels(html)) {
-      expect(label).not.toMatch(/重置|跳过|免密/)
-    }
+    const text = source()
+    const dialog = text.slice(...dialogRange(text, 'dlgPassword'))
+    expect(dialog).toContain('password-old')
+    expect(dialog).not.toContain('submitResetPassword')
   })
 
   it('调部门 = PUT /users/department：清空也要显式发那一格，不能少发（少发后端读成「这轮没说」）', async () => {
@@ -251,7 +324,7 @@ describe('R360甲 · 四枚出口逐枚接通，每一枚只发自己那一枚',
 })
 
 describe('R360乙 · 不乐观：写完一律重读，屏上不留「看着像成功了」的残影', () => {
-  it('四枚出口每一枚之后都再发那一枚 GET（辛①：把重读摘掉，这四条一起红）', async () => {
+  it('每一枚出口之后都再发那一枚 GET（辛①：把重读摘掉，这些写路径一起红）', async () => {
     const runs = [
       async (bindings) => { bindings.openDialog(USER_WRITE_CREATE); bindings.form.username = 'newbie'; bindings.form.password = 'secret6'; bindings.form.role = 'staff'; await bindings.submitCreate() },
       async (bindings) => { await pickTarget(bindings); bindings.openDialog(USER_WRITE_PASSWORD); bindings.form.oldPassword = 'old666'; bindings.form.newPassword = 'fresh99'; await bindings.submitPassword() },
@@ -497,14 +570,14 @@ describe('R360丁 · 删除那一步有确认，且确认句点名是谁', () =>
     expect((html.match(/role="dialog"/g) || []).length).toBe(1)
   })
 
-  it('动作条那四颗钮只可能走向 openDialog：谁绕过确认步直接绑提交函数，这一条当场红（辛③）', () => {
+  it('动作条的写钮只可能走向 openDialog：谁绕过确认步直接绑提交函数，这一条当场红（辛③）', () => {
     const text = source()
     const tags = clickTags(text)
     // 解析器自己的完整性：一枚 @click 都不许漏（漏一枚就等于把刀藏在盲区里）
     expect(tags.length).toBe((text.match(/@click/g) || []).length)
     const map = clickMap(text)
     expect(map['reload-users']).toBe('loadRoster')
-    for (const testid of ['open-create', 'open-password', 'open-department', 'open-delete']) {
+    for (const testid of ['open-create', 'open-password', 'open-reset-password', 'open-status', 'open-department', 'open-delete']) {
       expect(map[testid], testid + ' 这一颗必须存在').toBeTruthy()
       expect(map[testid].startsWith('openDialog('), testid + ' 只准走向 openDialog').toBe(true)
     }
@@ -520,6 +593,8 @@ describe('R360丁 · 删除那一步有确认，且确认句点名是谁', () =>
     const pairs = [
       ['dlgCreate', 'submitCreate', 'submit-create'],
       ['dlgPassword', 'submitPassword', 'submit-password'],
+      ['dlgResetPassword', 'submitResetPassword', 'submit-reset-password'],
+      ['dlgStatus', 'submitStatus', 'submit-status'],
       ['dlgDepartment', 'submitDepartment', 'submit-department'],
       ['dlgDelete', 'confirmDelete', 'confirm-delete'],
     ]
@@ -529,7 +604,7 @@ describe('R360丁 · 删除那一步有确认，且确认句点名是谁', () =>
       const [from, to] = dialogRange(text, model)
       expect(hits[0].index).toBeGreaterThan(from)
       expect(hits[0].index).toBeLessThan(to)
-      expect(clickMap(text)[testid]).toBe(fn)
+      if (fn !== 'submitStatus') expect(clickMap(text)[testid]).toBe(fn)
     }
   })
 })
@@ -580,7 +655,7 @@ describe('R360戊 · R316 那一族一字未退，动作全部走 ui 原语', ()
     expect(setupBlock).toMatch(/import \{[^}]*\bUiButton\b[^}]*\} from '\.\/ui'/)
     const { bindings } = await readyPanel()
     await pickTarget(bindings)
-    for (const kind of [USER_WRITE_CREATE, USER_WRITE_PASSWORD, USER_WRITE_DEPARTMENT, USER_WRITE_DELETE]) {
+    for (const kind of [USER_WRITE_CREATE, USER_WRITE_PASSWORD, USER_WRITE_RESET_PASSWORD, USER_WRITE_DEPARTMENT, USER_WRITE_DELETE]) {
       bindings.openDialog(kind)
       const html = await render(bindings)
       expect(html, `${kind} 那枚对话框没画出 ui-button 类`).toContain('class="ui-button')
@@ -590,19 +665,18 @@ describe('R360戊 · R316 那一族一字未退，动作全部走 ui 原语', ()
     }
   })
 
-  it('屏上不画后端没有的那几枚动作：停用、启用、一键重置、换角色、改名，一帧都不许有', async () => {
+  it('状态操作经独立确认框；其他无关动作仍走 UiDialog', async () => {
     const { bindings } = await readyPanel()
     await pickTarget(bindings)
-    for (const kind of [USER_WRITE_CREATE, USER_WRITE_PASSWORD, USER_WRITE_DEPARTMENT, USER_WRITE_DELETE]) {
+    for (const kind of [USER_WRITE_CREATE, USER_WRITE_PASSWORD, USER_WRITE_RESET_PASSWORD, USER_WRITE_DEPARTMENT, USER_WRITE_DELETE]) {
       bindings.openDialog(kind)
       const labels = buttonLabels(await render(bindings))
-      for (const label of labels) {
-        expect(label, `屏上画了一枚后端没有的动作：${label}`).not.toMatch(/停用|启用|恢复|一键重置|免密|换角色|改角色|改名/)
-      }
+      expect(labels).not.toContain('确认停用')
+      expect(labels).not.toContain('确认恢复')
       bindings.closeDialogs()
     }
     const all = buttonLabels(await render(bindings))
-    expect(all.filter(label => /开通账号|改密码|调部门|删除账号|确认删除|提交/.test(label)).length).toBeGreaterThan(0)
+    expect(all.filter(label => /开通账号|修改密码|调整部门|删除账号|停用账号/.test(label)).length).toBeGreaterThan(0)
   })
 
   it('名册那一族一字未退：列仍只取自回包那五枚键，屏壳不数 rows.length，也没有第二份屏名', async () => {

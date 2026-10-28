@@ -34,6 +34,35 @@ from types import SimpleNamespace
 
 import pytest
 
+
+@pytest.mark.parametrize('change',[{'department':'other'}, {'role':'staff'}, {'status':'disabled'}, {'auth_version':1}])
+def test_running_principal_is_rejected_after_its_authorization_changes(monkeypatch,change):
+    from app.common import auth
+    from app.agents.contracts import Principal
+    original={'username':'running-owner','role':'manager','department':'finance'}
+    p=Principal.from_user(original)
+    monkeypatch.setattr(auth,'user_storage_state',lambda:{'storage_mode':'postgres'})
+    monkeypatch.setattr(auth,'get_user',lambda name:{**original,**change})
+    assert not auth.principal_is_current(p)
+
+
+def test_sso_cannot_trust_unverified_identity_headers_without_a_shared_secret(monkeypatch):
+    from app.common.sso import validate_sso_headers
+    monkeypatch.setenv('SSO_ENABLED','true');monkeypatch.delenv('SSO_SHARED_TOKEN',raising=False)
+    assert not validate_sso_headers({'X-SSO-User':'admin','X-SSO-Role':'admin'})
+
+
+def test_identity_database_failure_is_retryable_instead_of_a_permission_change(monkeypatch):
+    from app.common import auth
+    from app.agents.contracts import Principal
+    monkeypatch.setattr(auth, 'user_storage_state', lambda: {'storage_mode': 'postgres'})
+    def unavailable(name):
+        raise ConnectionError('synthetic unavailable user store')
+    monkeypatch.setattr(auth, 'get_user', unavailable)
+    principal = Principal.from_user({'username': 'running-owner', 'role': 'manager'})
+    assert auth.principal_current_reason(principal) == 'storage_unavailable'
+    assert not auth.principal_is_current(principal)
+
 from app.agents import tools
 from app.agents.contracts import AgentResult, Principal
 from app.common import auth
@@ -152,7 +181,7 @@ def _rewrite_stored(queue, request_id, mutate):
 
 
 def _request_id(queue):
-    raw = queue.redis.get(queue._idempotency_key(IDEM))
+    raw = queue.redis.get(queue._idempotency_key(json.dumps([USERNAME, IDEM], separators=(',', ':'))))
     return raw.decode() if isinstance(raw, bytes) else str(raw)
 
 
@@ -167,7 +196,7 @@ def _enqueue(monkeypatch, queue, principal, *, lane):
         state=SimpleNamespace(principal=principal, username=principal.username),
     )
     chat._enqueue_ask_turn(
-        request=SimpleNamespace(idempotency_key=IDEM),
+        request=chat.AskRequest(message=MESSAGE, idempotency_key=IDEM),
         http_request=http_request,
         thread_id=SESSION,
         rewritten_msg=MESSAGE,
@@ -215,7 +244,7 @@ def _install(monkeypatch, tmp_path, *, lane="report", storage_mode="postgres", r
     stream = _FakeStream([_state(ANSWER)])
     graphs = []
 
-    def fake_run(user_message, thread_id="default", user=None):
+    def fake_run(user_message, thread_id="default", user=None, *, request_id=None):
         graphs.append(user)
         return _ok_record()
 
@@ -710,6 +739,8 @@ def test_counter_evidence_trusting_the_snapshot_runs_the_old_department(monkeypa
     digest = hashlib.sha256(WORKER_SOURCE.read_bytes()).hexdigest()
     ctx = _install(monkeypatch, tmp_path, lane="report")
     _as_if_before_fix(monkeypatch)
+    # Reproduce the old implementation with both current-identity guards removed.
+    monkeypatch.setattr(auth,'principal_current_reason',lambda p:'')
     ctx.store.move_department(USERNAME, RESEARCH)
 
     assert ctx.worker.process_one() is True

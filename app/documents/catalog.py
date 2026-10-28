@@ -721,6 +721,7 @@ def record_document_version(
     visibility: str = "private",
     index_status: str = INDEX_STATUS_UNKNOWN,
     index_reason: str = "",
+    connection=None,
 ) -> dict:
     """Register one stored version on both persistence paths, owner included.
 
@@ -734,6 +735,9 @@ def record_document_version(
     paths put them back with ``_apply_index_policy``, so a listing answers the same way on
     both persistence paths.
     """
+    if connection is not None and version is None:
+        row = connection.execute('SELECT COALESCE(MAX(version),0)+1 AS next_version FROM document_versions WHERE filename=%s', (filename,)).fetchone()
+        version = int(row['next_version'] if isinstance(row, dict) else row[0])
     metadata = _version_metadata(
         filename,
         classification,
@@ -751,13 +755,16 @@ def record_document_version(
 
     # 生产而库没起：整发拒，连本地镜像都不写——只落在 sidecar 上的「已登记」缺一本真账。
     _require_ready_store("version record")
-    _record_local_version(metadata)
+    if connection is None:
+        _record_local_version(metadata)
 
-    if not _database_available():
+    if connection is None and not _database_available():
         return metadata
     try:
-        _ensure()
-        with _conn() as conn:
+        if connection is None:
+            _ensure()
+        from contextlib import nullcontext
+        with (nullcontext(connection) if connection is not None else _conn()) as conn:
             conn.execute(
                 """
                 INSERT INTO document_versions
@@ -786,8 +793,11 @@ def record_document_version(
                     metadata["parse_status"],
                 ),
             )
-            conn.commit()
+            if connection is None:
+                conn.commit()
     except Exception as exc:
+        if connection is not None:
+            raise
         logger.warning(f"[Docs] version record not written: {exc}")
         _require_ready_store("version record", migrations_missing=_schema_needs_migrations(exc),
                              write_failed=True)

@@ -193,6 +193,18 @@ afterEach(() => {
 })
 
 describe('甲 · 排队中那一轮点得动：按钮给得出、也只给还没落定的那一轮', () => {
+  it('a lost cancellation response yields to the later authoritative terminal status', async () => {
+    const turn = queuedTurn()
+    await mountPanel([turn])
+    http.post.mockRejectedValue(new Error('response lost after commit'))
+    await mounted.state.cancelQueuedTurn(turn,0)
+    http.get.mockImplementation(pollScript(statusOk({status:'cancelled'})))
+    await vi.advanceTimersByTimeAsync(QUEUE_MS)
+    await settle()
+    expect(faceOfTurn(turn).kind).toBe('cancelled')
+    expect(turn.queue.status).toBe('cancelled')
+    expect(mounted.state.streamNote).not.toContain('取消请求结果尚未确认')
+  })
   it('排队中 / 正在跑各给一枚「不排了」，还没读到位次时也不缺席', async () => {
     const turn = queuedTurn()
     await mountPanel([turn])

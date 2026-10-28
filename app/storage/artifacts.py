@@ -555,6 +555,8 @@ class ArtifactRegistry:
                 scope[key] = metadata[key]
         if metadata.get('source_alert_id') is not None:
             scope['source_alert_id'] = int(metadata['source_alert_id'])
+        if metadata.get('report_part_key'):
+            scope['report_part_key'] = str(metadata['report_part_key'])
         artifact_id = str(raw.get("artifact_id") or "")
         storage_key = str(raw.get("storage_key") or raw.get("storage_path") or "")
         try:
@@ -654,6 +656,7 @@ class ArtifactRegistry:
         source_documents: list[dict] | None = None,
         source_artifact_ids: list[str] | None = None,
         source_alert_id: int | None = None,
+        report_part_key: str = '',
     ) -> ArtifactRecord:
         """Store the bytes' row, and - when the caller knows them - the turn that made them.
 
@@ -704,6 +707,8 @@ class ArtifactRegistry:
             record.metadata["source_artifact_ids"] = list(dict.fromkeys(source_artifact_ids))
         if source_alert_id is not None:
             record.metadata['source_alert_id'] = int(source_alert_id)
+        if report_part_key:
+            record.metadata['report_part_key'] = str(report_part_key)
         with self._lock:
             return self._write(record)
 
@@ -855,6 +860,7 @@ def register_artifact(
     source_documents: list[dict] | None = None,
     source_artifact_ids: list[str] | None = None,
     source_alert_id: int | None = None,
+    report_part_key: str = '',
 ) -> ArtifactRecord:
     return artifact_registry.register(
         storage_path,
@@ -870,4 +876,5 @@ def register_artifact(
         source_documents=source_documents,
         source_artifact_ids=source_artifact_ids,
         source_alert_id=source_alert_id,
+        report_part_key=report_part_key,
     )

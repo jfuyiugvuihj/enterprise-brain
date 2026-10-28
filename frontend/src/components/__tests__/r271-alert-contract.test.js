@@ -115,12 +115,14 @@ function backendDisposalDefaults() {
 
 function memoryColumns() {
   const text = backendAlerts()
-  const hit = /_MEM_ALERTS\.append\(\s*\{([\s\S]*?)\}\s*\)/.exec(text)
+  const hit = /\n    row = \{([\s\S]*?)\n    _MEM_ALERTS\.append\(row\)/.exec(text)
   if (!hit) throw new Error('解析不到 _MEM_ALERTS.append 的那一枚字典：无库那条腿的形状变了。')
-  const literal = [...hit[1].matchAll(/"([a-z_]+)":/g)].map(name => name[1])
+  const literal = [...hit[1].matchAll(/['"]([a-z_]+)['"]:/g)].map(name => name[1])
   if (literal.length < 5) throw new Error('内存行的字面键解析不出（只拿到 ' + literal.length + ' 枚）：这里也禁止退化成空对账。')
   if (new Set(literal).size !== literal.length) throw new Error('内存行的字面键里出现了重复：解析切歪了。')
-  return literal.concat(backendDisposalDefaults())
+  // This legacy contract covers disposal fields; observation JSON is verified by
+  // alert-version tests and the PostgreSQL observation lifecycle checks.
+  return literal.concat(backendDisposalDefaults()).filter(name => ALERT_BACKEND_COLUMNS.includes(name))
 }
 
 /** 后端的三枚状态名 -> 值，以及 ALERT_STATUSES / ALERT_DISPOSAL_RULES / 写列表。 */

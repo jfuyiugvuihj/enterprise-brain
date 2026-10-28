@@ -6,6 +6,7 @@ tests/conftest.py 先把 DATABASE_URL 钉成测试专用串，TestUserCRUD 再�
 """
 import pytest
 import bcrypt
+from test_alert_scan_scope import alert_pg
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -298,8 +299,19 @@ class TestUserCRUD:
     """
 
     @pytest.fixture(autouse=True)
-    def users_table(self, monkeypatch, test_database_url):
+    def users_table(self, monkeypatch, test_database_url, request):
         from app.common import auth
+
+        # Deletion now serializes last-administrator protection in PostgreSQL;
+        # a SQL stand-in cannot verify that lock or the concurrent mutation rules.
+        if request.node.name == 'test_delete_user':
+            connect = request.getfixturevalue('alert_pg')
+            with connect() as connection:
+                connection.execute('TRUNCATE users CASCADE')
+            monkeypatch.setattr(auth, '_raw_conn', connect)
+            monkeypatch.setattr(auth, '_db_ready', True)
+            assert auth.create_user('admin', 'pass1234', role='admin', department='finance')[0]
+            return None
 
         driver = auth.psycopg
         if driver is None:

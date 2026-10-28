@@ -3,6 +3,14 @@ import { documentQuestion, documentNamesFromQuestion, normalizeDocumentNames } f
 import { activeId, activeDataFilename, backendSessionMessages, adoptBackendSession, newSession, referenceDocuments, resetSessions, restoreActive, syncActive } from './sessions'
 
 describe('selected document scope', () => {
+  it('restores a queued turn from server history without inventing or duplicating an answer', () => {
+    const question = { role: 'user', content: '排队分析', steps: [{ type: 'queue_receipt', request_id: 'queued-task' }] }
+    const pending = backendSessionMessages({ messages: [question] }).messages
+    expect(pending).toHaveLength(2)
+    expect(pending[1]).toMatchObject({ role: 'assistant', content: '', queue: { requestId: 'queued-task' } })
+    expect(backendSessionMessages({ messages: [question, { role: 'assistant', content: '实际结果' }] }).messages).toHaveLength(2)
+    expect(backendSessionMessages({ messages: [{ ...question, answer_withheld: true }] }).messages).toHaveLength(1)
+  })
   it('restores the joint selection from authorized server history in a new browser', () => {
     resetSessions()
     const read = backendSessionMessages({ messages: [{ role: 'assistant', content: '200，单位未标注',

@@ -27,10 +27,11 @@ import { routeLocationKey, routerKey } from 'vue-router'
 
 vi.mock('../../lib/http', async (importOriginal) => {
   const actual = await importOriginal()
-  return { ...actual, http: { ...actual.http, post: vi.fn() } }
+  return { ...actual, http: { ...actual.http, post: vi.fn(),
+    get: vi.fn().mockResolvedValue({ data: { username: 'baiye', role: 'staff', must_change_password: false } }) } }
 })
 
-import { ROLE_KEY, TOKEN_KEY, USER_KEY } from '../../lib/http'
+import { http, ROLE_KEY, TOKEN_KEY, USER_KEY } from '../../lib/http'
 import App from '../../App.vue'
 
 const source = readFileSync(new URL('../../App.vue', import.meta.url), 'utf8').replace(/\r\n/g, '\n')
@@ -239,9 +240,20 @@ describe('R171 C · 认不得的鉴权事件：另一张脸，同样必须有话
 })
 
 describe('R171 D · 三处既存语义不退化（R169 钉过的三条）', () => {
+  it('退出后迟到的账号核对不能重新进入工作台或覆盖退出提示', async () => {
+    let finish
+    http.get.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const { bindings: b } = await mountApp(SEED)
+    const pending = b.checkAuth()
+    b.onAuthEvent({ type: 'unauthorized' })
+    finish({ data: { username: 'baiye', role: 'staff', must_change_password: false } })
+    await pending
+    expect(b.isLoggedIn.value).toBe(false)
+    expect(b.loginError.value).toContain('失效')
+  })
   it('没有事件仍然什么都不做：会话、身份、错误条一起原样留着', async () => {
     const { bindings: b, store } = await mountApp(SEED)
-    b.checkAuth()
+    await b.checkAuth()
     b.onAuthEvent(undefined)
     b.onAuthEvent(null)
     expect(b.isLoggedIn.value).toBe(true)
@@ -252,7 +264,7 @@ describe('R171 D · 三处既存语义不退化（R169 钉过的三条）', () =
 
   it('expiring 仍然只提醒：不动会话与身份，也不亮错误条', async () => {
     const { bindings: b, store, pushed } = await mountApp(SEED)
-    b.checkAuth()
+    await b.checkAuth()
     pushed.length = 0
     b.onAuthEvent({ type: 'expiring', message: '登录状态将在约 3 分钟后过期，请提前重新登录。' })
     expect(b.isLoggedIn.value).toBe(true)

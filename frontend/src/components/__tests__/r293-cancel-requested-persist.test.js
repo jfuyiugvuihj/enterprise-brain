@@ -114,7 +114,8 @@ function attachClientTemplates() {
     const source = readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
     const { descriptor } = parse(source, { filename: file })
     if (!descriptor.template) continue
-    const script = compileScript(descriptor, { id: 'r293b', inlineTemplate: false })
+    const script = descriptor.script || descriptor.scriptSetup
+      ? compileScript(descriptor, { id: 'r293b', inlineTemplate: false }) : { bindings: {} }
     const { code, errors } = compileTemplate({
       source: descriptor.template.content,
       filename: file,
@@ -433,6 +434,11 @@ async function sendQuestion(text = QUESTION) {
  * 冷启动 push 进 shallowRef 的这一轮换不回屏上，而「换回会话」正是病灶句子点名的一半。
  */
 async function returnToThisSession(sessionTitle) {
+  const toggle = one(panel.root,'sidebar-toggle')
+  if (!sessionRows(panel.root).length && toggle) {
+    click(toggle,'历史任务')
+    await settle()
+  }
   const before = sessions.value.length
   click(one(panel.root, 'new-session'), '「新建会话」')
   await settle()

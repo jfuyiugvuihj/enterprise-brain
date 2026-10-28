@@ -39,6 +39,19 @@ def test_the_shipped_tree_passes_the_air_gap_gate() -> None:
         + "; ".join(name + " -> " + detail for state, name, detail in rows if state == "FAIL"))
 
 
+@pytest.mark.parametrize('arguments', [[], ['--allow-download']])
+def test_legacy_model_preparation_requires_explicit_download_and_endpoint(arguments):
+    import os
+    import subprocess
+    import sys
+    environment = {key: value for key, value in os.environ.items() if key != 'HF_ENDPOINT'}
+    result = subprocess.run([sys.executable, str(ROOT/'scripts/legacy/_download_model.py'), *arguments],
+                            env=environment, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 2
+    assert '--allow-download' in result.stderr or 'authorized --endpoint' in result.stderr
+    assert 'Model download complete' not in result.stdout
+
+
 @pytest.mark.parametrize("snippet", [
     'resp = requests.get(url, verify=False)',
     'ctx.options |= ssl.CERT_NONE',

@@ -818,6 +818,13 @@ def publish_formed_reply_for_call(config: Any, reply: Any, *, tap: Any = None) -
         call_id=str(getattr(tap, "call_id", "") or ""))
 
 
+def _check_turn_cancelled(config):
+    marker = ((config or {}).get('configurable') or {}).get('cancel_event')
+    if marker is not None and marker.is_set():
+        from app.agents.orchestrator import _raise_if_cancelled
+        _raise_if_cancelled(marker)
+
+
 class _AnswerPieceTap(BaseCallbackHandler):
     """把框架在 ``invoke`` 内部走的那一路流，接回 R31 的片段出口。
 
@@ -843,6 +850,8 @@ class _AnswerPieceTap(BaseCallbackHandler):
     尺寸闸与空档闸一个字不改：这里用的就是 R31 那枚 ``StreamPieceMerger``——判据③ 的两把
     尺由它钉着，本单不动它，动它就是动契约。
     """
+
+    raise_error = True
 
     def __init__(self, config: Any, sink, *, worker: str, call_id: str) -> None:
         self.config = config
@@ -871,6 +880,7 @@ class _AnswerPieceTap(BaseCallbackHandler):
         return self._abandoned
 
     def on_llm_new_token(self, token, **kwargs) -> None:
+        _check_turn_cancelled(self.config)
         if self._abandoned:
             return
         message = getattr(kwargs.get("chunk"), "message", None)
@@ -1132,6 +1142,7 @@ class _ResilientModel(Runnable):
     def invoke(self, messages, config=None, **kwargs):
         from app.common.model_budget import ModelBudgetExhausted, default_model_budget
 
+        _check_turn_cancelled(config)
         try:
             slot = default_model_budget().acquire(wait_seconds=self.capacity_wait_seconds)
         except ModelBudgetExhausted as exc:
@@ -1170,7 +1181,15 @@ class _ResilientModel(Runnable):
             response = self.primary.invoke(
                 messages, config=leg_config, **{**call_kwargs, **leg_kwargs}
             )
+            _check_turn_cancelled(config)
         except Exception as exc:
+            marker = ((config or {}).get('configurable') or {}).get('cancel_event')
+            if marker is not None and marker.is_set():
+                if tap is not None:
+                    tap.abandon('cancelled')
+                span.finish('cancelled', record_evidence=False)
+                slot.release()
+                _check_turn_cancelled(config)
             if tap is not None:
                 # 离线回复顶上来了，而那一句话不是刚才流出去的半截字：整发放弃，剩下的
                 # 片一片不发（T3）。已经发出去的那几片是判据④ 的残余风险，如实记在交回单。
@@ -1336,6 +1355,7 @@ class _ResilientModel(Runnable):
         from app.common.model_budget import ModelBudgetExhausted, default_model_budget
 
         config = kwargs.get("config")
+        _check_turn_cancelled(config)
         # A stream may be started positionally (LangGraph) or by keyword, so the prompt is
         # read either way: sizing it only when it arrived positionally would leave every
         # keyword-started stream unsized, which is the same blind spot as no budget at all.
@@ -1377,12 +1397,14 @@ class _ResilientModel(Runnable):
             piece_merger = StreamPieceMerger()
             try:
                 for chunk in self.primary.stream(*args, **kwargs):
+                    _check_turn_cancelled(config)
                     span.mark_first_token()
                     visible_total += len(answer_text(chunk))
                     saw_tool_call = saw_tool_call or produced_a_tool_call(chunk)
                     publish_stream_pieces(config, piece_merger.feed(visible_chunk_text(chunk)))
                     yield chunk
             except Exception as exc:
+                _check_turn_cancelled(config)
                 provider_code = context_error_code(exc)
                 if provider_code and self.budget is not None:
                     logger.warning(
@@ -1714,6 +1736,8 @@ def classify_route(question: str) -> RouteDecision:
 
 def _route_rules(text: str) -> RouteDecision:
     """classify_route 的规则本体：只做字符串比对，一个字符都不碰模型。"""
+    from app.agents.task_review import output_constraints
+    text, _ = output_constraints(text)
     if not text:
         return RouteDecision(LANE_QA, LANE_TIERS[LANE_QA], "empty")
     lowered = text.lower()
@@ -2149,7 +2173,8 @@ def reflect_node(state, config=None) -> dict:
     """检查最终回答质量，决定重派(redo)或放行"""
     # R688（判据①·生产发点）：复审是纯规则过：五段里 reflect 今天全线不产账（真窗 105/105 缺这一段），因为这条腿根本没有插桩点。写入口见 app/trace/spans.py::record_stage_event。
     with _stage_account(config, stage="reflect", summary={"node": "reflect_node"}):
-        q = _last_user(state)
+        from app.agents.task_review import output_constraints
+        q, _ = output_constraints(_last_user(state))
         review_result = None
         retry_count = state.get("retry_count", 0)
         raw_results = state.get("agent_results") or {}
@@ -2181,6 +2206,13 @@ def reflect_node(state, config=None) -> dict:
                 if type(m).__name__ == "AIMessage" and getattr(m, "content", "") and not getattr(m, "tool_calls", None):
                     final = m.content
                     break
+
+        # A declined side effect is a settled decision, not a missing deliverable.
+        if any(worker in ('chart', 'export') and isinstance(result, dict)
+               and result.get('status') == 'rejected' for worker, result in raw_results.items()):
+            return {'redo': False, 'reflect_count': state.get('reflect_count', 0),
+                    'retry_count': retry_count,
+                    **({'review_result': review_result} if review_result is not None else {})}
 
         redo = False
         if review_result and not review_result["passed"] and retry_count < 1:

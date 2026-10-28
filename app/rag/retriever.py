@@ -1350,7 +1350,7 @@ class DocumentRetriever:
             mirror.rollback()
 
     def add_document(self, filename: str, content: str, classification: int = 1,
-                     department: str = "", visibility: str = "private") -> tuple[bool, str]:
+                     department: str = "", visibility: str = "private", *, before_commit=None) -> tuple[bool, str]:
         from app.rag import pg_store
         new_hash = self._file_hash(content)
         old_rows = pg_store.document_vector_rows(filename=filename)
@@ -1374,6 +1374,8 @@ class DocumentRetriever:
             for start, end in self._batch_ranges(len(chunks), 2000):
                 self._write_batch(ids[start:end], chunks[start:end], metadatas[start:end],
                                   embeddings[start:end], mirror=transaction)
+            if before_commit is not None:
+                before_commit(transaction.connection)
             transaction.commit()
         except Exception:
             transaction.rollback()

@@ -476,6 +476,7 @@ export function stepOutcomeFace(step) {
     running: { icon: '🔄', text: '处理中' },
     completed: { icon: '✅', text: '执行成功' },
     success: { icon: '✅', text: '执行成功' },
+    partial: { icon: '◐', text: '部分结果待核对' },
     failed: { icon: '⚠', text: '执行失败' },
     rejected: { icon: '✕', text: '已拒绝，未执行' },
     refused: { icon: '✕', text: '已拒绝，未执行' },
@@ -858,7 +859,17 @@ export function backendSessionMessages(payload) {
       mid: `backend-${index}`,
     }
   })
-  return { ok: true, messages, turnIds }
+  // The receipt belongs to the question. Restore the existing queue face only
+  // while that turn has no saved answer; polling supplies its current status.
+  const restored = messages.flatMap((message, index) => {
+    const receipt = message.role === 'user' && !message.answer_withheld
+      ? message.steps.find(step => step?.type === 'queue_receipt' && textOf(step.request_id)) : null
+    if (!receipt || messages[index + 1]?.role === 'assistant') return [message]
+    return [message, { role: 'assistant', content: '', steps: [],
+      mid: `backend-queue-${receipt.request_id}`,
+      queue: { requestId: textOf(receipt.request_id), status: 'queued' } }]
+  })
+  return { ok: true, messages: restored, turnIds }
 }
 
 /**

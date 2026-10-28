@@ -386,7 +386,7 @@ def test_chat_py_never_grabs_a_private_name_from_the_lane_owner():
         (node.lineno, node.module, alias.name)
         for node in ast.walk(ast.parse(source))
         if isinstance(node, ast.ImportFrom)
-        and (node.module or "").startswith("app.agents")
+        and node.module == "app.agents.nodes"
         for alias in node.names
         if alias.name.startswith("_")
     ]

@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+from test_alert_scan_scope import alert_pg, calculation_postgres
 
 
 def _headers(username: str) -> dict[str, str]:
@@ -142,7 +143,7 @@ def test_upload_excel_refuses_a_departmentless_owner_with_a_stable_code(
     assert not (tmp_path / "solo.csv").exists()
 
 
-def test_reupload_keeps_the_original_dataset_bytes_and_lists_the_new_version(monkeypatch, tmp_path):
+def test_reupload_without_a_completed_index_keeps_the_original_version(monkeypatch, tmp_path):
     import hashlib
     from app.api.v1 import data
     from app.common import auth
@@ -172,8 +173,8 @@ def test_reupload_keeps_the_original_dataset_bytes_and_lists_the_new_version(mon
         data={"new_version": "true"},
         files={"file": ("finance.csv", second_bytes, "text/csv")},
     )
-    assert second.status_code == 200, second.text
-    assert first.json()["classification"] == second.json()["classification"]
+    assert second.status_code == 503, second.text
+    assert second.json()['detail'] == 'dataset_update_not_published'
     downgrade = client.post(
         "/api/v1/upload-excel", headers=headers,
         data={"new_version": "true", "classification": "1"},
@@ -184,10 +185,10 @@ def test_reupload_keeps_the_original_dataset_bytes_and_lists_the_new_version(mon
     dataset_id = first.json()["dataset_id"]
     versions = registry.versions(dataset_id)
     assert [version.dataset_version_id for version in versions] == [
-        first.json()["version_id"], second.json()["version_id"]
+        first.json()["version_id"]
     ]
-    assert len({version.storage_key for version in versions}) == 2
-    for version, expected in zip(versions, (first_bytes, second_bytes)):
+    assert len({version.storage_key for version in versions}) == 1
+    for version, expected in zip(versions, (first_bytes,)):
         from pathlib import Path
 
         assert Path(version.storage_key).read_bytes() == expected
@@ -196,11 +197,11 @@ def test_reupload_keeps_the_original_dataset_bytes_and_lists_the_new_version(mon
     listed = client.get("/api/v1/data-files", headers=headers)
     assert listed.status_code == 200
     assert [(item["filename"], item["size"], item["version_id"]) for item in listed.json()["files"]] == [
-        ("finance.csv", len(second_bytes), second.json()["version_id"])
+        ("finance.csv", len(first_bytes), first.json()["version_id"])
     ]
     current = client.get("/api/v1/data-files/finance.csv/file", headers=headers)
     assert current.status_code == 200
-    assert current.content == second_bytes
+    assert current.content == first_bytes
 
 
 def test_first_upload_refuses_classification_above_clearance_without_storing_bytes(monkeypatch, tmp_path):
@@ -253,7 +254,7 @@ def test_staff_upload_without_classification_uses_the_accessible_default(monkeyp
 def test_data_agent_tools_only_read_authorized_registered_datasets(monkeypatch, tmp_path):
     from app.agents.contracts import Principal
     from app.agents.tools import analyze_data, query_data
-    from app.storage import datasets
+    from app.storage import datasets, calculations
     from app.storage.datasets import DatasetRegistry
 
     registry = DatasetRegistry(
@@ -267,6 +268,7 @@ def test_data_agent_tools_only_read_authorized_registered_datasets(monkeypatch, 
         principal=Principal.from_user(_user("finance-manager", "finance")),
     )
     monkeypatch.setattr(datasets, "dataset_registry", registry)
+    monkeypatch.setattr(calculations, "dataset_registry", registry)
     monkeypatch.setattr(
         "app.agents.tools._llm_pandas_code",
         lambda df, query: "df['revenue'].max()",

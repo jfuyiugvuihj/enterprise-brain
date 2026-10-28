@@ -525,6 +525,10 @@ def _authorized_source_rows(rows: dict, principal) -> tuple[list[dict], str]:
     ``search_for_principal`` 已经把 ``scope.allows`` 当作 pred 过滤过一次，这里是新出口上
     的第二道防线：来源事件是本单新开的泄露面，不能默认上游永远没漏。
     """
+    from app.common.auth import principal_current_reason
+    identity_reason = principal_current_reason(principal)
+    if identity_reason:
+        return [], identity_reason
     try:
         scope = resolve_document_retrieval_scope(principal)
     except RetrievalScopeError as scope_error:
@@ -1136,12 +1140,12 @@ def _save_message(session_id: str, role: str, content: str, steps: list | None =
         if role == "user" and not session["title"]:
             session["title"] = content[:30]
         session["updated_at"] = now
-        return
+        return len(_MEM_SESSION_MESSAGES[session_id]) - 1
     with _sess_conn() as conn:
-        conn.execute(
-            "INSERT INTO session_messages (session_id, role, content, steps, created_at) VALUES (%s, %s, %s, %s, %s)",
+        row = conn.execute(
+            "INSERT INTO session_messages (session_id, role, content, steps, created_at) VALUES (%s, %s, %s, %s, %s) RETURNING id",
             (session_id, role, content, json.dumps(steps or [], ensure_ascii=False), now),
-        )
+        ).fetchone()
         if role == "user":
             title = content[:30]
             conn.execute(
@@ -1149,6 +1153,29 @@ def _save_message(session_id: str, role: str, content: str, steps: list | None =
                 (title, now, session_id),
             )
         conn.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (now, session_id))
+        conn.commit()
+        return row['id']
+
+
+def _save_queue_receipt(session_id: str, message_id, request_id: str, lane: str):
+    """Attach the durable queue handle to its exact question, never a concurrent turn."""
+    if message_id is None:
+        return
+    receipt = {'type': 'queue_receipt', 'request_id': request_id, 'lane': lane}
+    if not _session_database_available():
+        row = _MEM_SESSION_MESSAGES[session_id][message_id]
+        row['steps'] = [*(row.get('steps') or []), receipt]
+        return
+    with _sess_conn() as conn:
+        row = conn.execute(
+            "SELECT steps FROM session_messages WHERE session_id = %s AND id = %s AND role = 'user' FOR UPDATE",
+            (session_id, message_id),
+        ).fetchone()
+        if not row:
+            raise RuntimeError('queued question is no longer available')
+        steps = json.loads(row['steps'] or '[]')
+        conn.execute("UPDATE session_messages SET steps = %s WHERE id = %s",
+                     (json.dumps([*steps, receipt], ensure_ascii=False), message_id))
         conn.commit()
 
 
@@ -1485,7 +1512,9 @@ class AskRequest(BaseModel):
     document_filenames: list[str] | None = None
     alert_id: int | None = None
     alert_version_id: str | None = None
+    expected_data_version_id: str | None = None
     _alert_context: dict = PrivateAttr(default_factory=dict)
+    _data_context: dict = PrivateAttr(default_factory=dict)
     idempotency_key: str = ""
     lane: str = ""
 
@@ -2876,6 +2905,7 @@ def _enqueue_ask_turn(
     # R724 改口：载荷从此多一格 data_filename（被点名的表），两枚契约件已随账改口；
     # 响应头那一格一字未动。
     lane_readout: dict | None = None,
+    user_message_id=None,
 ) -> StreamingResponse:
     """把一轮问答收进可靠队列，回一条只含回执的 SSE。
 
@@ -2919,6 +2949,8 @@ def _enqueue_ask_turn(
         payload['task_question'] = request.message
     if request._alert_context:
         payload['data_context'] = request._alert_context
+    elif request._data_context:
+        payload['data_context'] = request._data_context
     try:
         queue = connect_reliable_queue()
         scoped_key = json.dumps([str(principal.user_id) if principal is not None else username,
@@ -2929,6 +2961,7 @@ def _enqueue_ask_turn(
             status_code=503,
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
+    _save_queue_receipt(thread_id, user_message_id, message.request_id, lane)
     queued = {
         "type": "queued",
         "request_id": message.request_id,
@@ -2986,6 +3019,14 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     # R32：先验取值再动手。这一行必须在建表、绑会话、落库、入队、模型之前，
     # 非法档位留下的是零副作用，而不是"跑了一半再告诉调用方字段写错了"。
     _require_valid_lane(request)
+    if request.expected_data_version_id is not None:
+        from app.api.v1.data import _authorized_dataset
+        from app.common.permissions import ACTION_ANALYZE
+        record = _authorized_dataset(http_request, request.data_filename, ACTION_ANALYZE)
+        if record.version_id != request.expected_data_version_id:
+            raise HTTPException(status_code=409, detail='dataset_version_changed')
+        request._data_context = {'filename': record.filename, 'version_id': record.version_id,
+            'sha256': record.content_sha256, 'query': request.message}
     try:
         _ensure_sessions_table()
     except ChatSchemaNotMigratedError as exc:
@@ -3011,10 +3052,16 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         if not evidence or not evidence.get('version_id'):
             raise HTTPException(status_code=400, detail='validation_error')
         from app.storage.datasets import dataset_registry
-        dataset = dataset_registry.get_active_by_filename(evidence['filename'])
+        dataset = (dataset_registry.resolve_version(evidence['filename'], evidence['version_id'])
+                   if evidence.get('version_policy') == 'fixed'
+                   else dataset_registry.get_active_by_filename(evidence['filename']))
         if (not dataset or dataset.version_id != evidence['version_id']
                 or request.alert_version_id != evidence['version_id']):
             raise HTTPException(status_code=409, detail='validation_error')
+        from app.common.permissions import ACTION_ANALYZE
+        if not authorization_decision(request_principal, dataset.resource_scope,
+                action=ACTION_ANALYZE, require_resource_scope=True).allowed:
+            raise HTTPException(status_code=403, detail='permission_denied')
         if request.data_filename and request.data_filename != evidence['filename']:
             raise HTTPException(status_code=400, detail='validation_error')
         request.data_filename = evidence['filename']
@@ -3073,7 +3120,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         rewritten_msg = _rewrite_followup(thread_id, orchestration_msg)
     finally:
         reset_turn_identity(turn_identity_token)
-    _save_message(thread_id, "user", request.message)
+    user_message_id = _save_message(thread_id, "user", request.message)
 
     # R141 判据①：本轮声明的档位与它的读数。取 rewritten_msg 而不是原始 message —— 图里的
     # plan()/route_main 读的就是这一枚文本，读数与生效路径必须同源，否则在追问改写过的轮次上
@@ -3111,6 +3158,9 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         if alert_context:
             user_ctx = user_ctx or {'username': username}
             user_ctx['data_context'] = alert_context
+        elif request._data_context:
+            user_ctx = user_ctx or {'username': username}
+            user_ctx['data_context'] = request._data_context
     except Exception:
         user_ctx = None
     if not allowed:
@@ -3124,6 +3174,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             username=username,
             principal=request_principal,
             lane="",
+            user_message_id=user_message_id,
             lane_readout=_turn_lane_readout(rewritten_msg, declared, routed=False),
         )
 
@@ -3141,6 +3192,7 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             username=username,
             principal=request_principal,
             lane=lane,
+            user_message_id=user_message_id,
             lane_readout=_turn_lane_readout(rewritten_msg, declared, routed=False),
         )
 
@@ -3349,8 +3401,11 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             await asyncio.sleep(0.05)
         try:
             loop = asyncio.get_running_loop()
-            agent_future = loop.run_in_executor(_executor, _run)
-            agent_future.add_done_callback(lambda _future: _ASK_TURN_GATE.release())
+            # The real worker owns admission. An asyncio wrapper can be cancelled
+            # or its loop closed while the thread is still running.
+            worker_future = _executor.submit(_run)
+            worker_future.add_done_callback(lambda _future: _ASK_TURN_GATE.release())
+            agent_future = asyncio.wrap_future(worker_future,loop=loop)
         except BaseException:
             _ASK_TURN_GATE.release()
             raise
@@ -3423,10 +3478,11 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         )
         sequence += 1
 
+        authorization_checked_at = 0.0
         while True:
             # 每步按**本代**比对，而不是"这个会话有没有被停过"：同会话并存的另一代
             # 被停，不该让这一轮误判已取消。
-            if is_request_cancelled(thread_id, epoch=cancel_event.epoch):
+            if cancel_event.is_set() or is_request_cancelled(thread_id, epoch=cancel_event.epoch):
                 # 还没开工的 _run 直接取消；已经在跑的 cancel() 返回 False，由编排里的
                 # 检查点协同退出——线程不能强杀，这里不假装能。
                 agent_future.cancel()
@@ -3457,6 +3513,17 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 sequence += 1
                 yield sse_event("error", {"type": "error", "content": "请求超过系统处理时限"})
                 break
+            from app.common.auth import principal_current_reason
+            if time.monotonic() - authorization_checked_at >= .5:
+                authorization_checked_at = time.monotonic()
+                identity_reason = principal_current_reason(request_principal)
+                if identity_reason:
+                    cancel_event.set(); agent_future.cancel()
+                    record_audit(request_principal,ACTION_VIEW,'denied',thread_id,identity_reason)
+                    yield canonical_sse_event('request.failed',request_id=request_id,trace_id=trace_id,
+                        task_id=task_id,sequence=sequence,status='failed',data={'error_code':identity_reason})
+                    yield sse_event('error',{'type':'error','content':('身份服务暂时不可用，本次任务已停止，请稍后重试。' if identity_reason == 'storage_unavailable' else '账号状态或权限已变化，本次任务已停止，请重新登录后发起新任务。')})
+                    break
             try:
                 kind, data = result_queue.get_nowait()
             except qmod.Empty:
@@ -3466,6 +3533,13 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
                 await asyncio.sleep(0.05)
                 continue
 
+            identity_reason = principal_current_reason(request_principal)
+            if identity_reason:
+                cancel_event.set(); agent_future.cancel()
+                yield canonical_sse_event('request.failed',request_id=request_id,trace_id=trace_id,
+                    task_id=task_id,sequence=sequence,status='failed',data={'error_code':identity_reason})
+                yield sse_event('error',{'type':'error','content':('身份服务暂时不可用，本次任务已停止，请稍后重试。' if identity_reason == 'storage_unavailable' else '账号状态或权限已变化，本次任务已停止。')})
+                break
             if kind == "piece":
                 # 判据①②：片一到就发一帧，不攒、不切、不等下一枚。这里唯一的 await 是
                 # sleep(0)（把控制权交回事件循环，零延时），判据⑤ 由 AST 面闸钉住这一支
@@ -4271,6 +4345,7 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
         )
         sequence += 1
 
+        authorization_checked_at = 0.0
         while True:
             # 与 /ask 同口径：按本代比对。上一代留下的取消判不到这一轮头上。
             if cancel_event.is_set():
@@ -4324,6 +4399,17 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 sequence += 1
                 yield sse_event("error", {"type": "error", "content": "请求超过系统处理时限"})
                 break
+            from app.common.auth import principal_current_reason
+            if time.monotonic() - authorization_checked_at >= .5:
+                authorization_checked_at = time.monotonic()
+                identity_reason = principal_current_reason(principal)
+                if identity_reason:
+                    cancel_event.set(); agent_future.cancel()
+                    finish_trace('request.failed','failed')
+                    yield canonical_sse_event('request.failed',request_id=request_id,trace_id=trace_id,
+                        task_id=task_id,sequence=sequence,status='failed',data={'error_code':identity_reason})
+                    yield sse_event('error',{'type':'error','content':('身份服务暂时不可用，本次任务已停止，请稍后重试。' if identity_reason == 'storage_unavailable' else '账号状态或权限已变化，本次任务已停止。')})
+                    break
             try:
                 kind, data = result_queue.get_nowait()
             except qmod.Empty:
@@ -4333,6 +4419,14 @@ async def approve(request: ApproveRequest, http_request: FastAPIRequest):
                 await asyncio.sleep(0.05)
                 continue
 
+            identity_reason = principal_current_reason(principal)
+            if identity_reason:
+                cancel_event.set(); agent_future.cancel()
+                finish_trace('request.failed','failed')
+                yield canonical_sse_event('request.failed',request_id=request_id,trace_id=trace_id,
+                    task_id=task_id,sequence=sequence,status='failed',data={'error_code':identity_reason})
+                yield sse_event('error',{'type':'error','content':('身份服务暂时不可用，本次任务已停止，请稍后重试。' if identity_reason == 'storage_unavailable' else '账号状态或权限已变化，本次任务已停止。')})
+                break
             if kind == "piece":
                 # R31 差格 a 的收端那一支：片一到就折帧，不攒、不切、不等下一枚（与 /ask
                 # 同一条纪律）。折帧用同一枚 ``_AnswerPieceStream``，出门用同一道 R464 闸门，
@@ -4738,6 +4832,24 @@ async def list_sessions(request: FastAPIRequest):
     }
 
 
+def _attach_current_request(messages: list[dict], saved: dict, principal, *, pending_request_id: str = '') -> list[dict]:
+    """Correlate an owned settled answer, or its independently verified pending calculation."""
+    from app.agents.orchestrator import _owner_id_from
+    if (not messages or messages[-1].get('role') != 'assistant'
+            or _owner_id_from({'principal': saved.get('principal')}) != principal.user_id
+            or not saved.get('request_id')):
+        return messages
+    content = messages[-1].get('content')
+    settled = bool(saved.get('final_answer') and content == saved['final_answer'])
+    data = (saved.get('agent_results') or {}).get('data') or {}
+    pending = bool(pending_request_id and pending_request_id == saved['request_id']
+                   and data.get('request_id') == pending_request_id
+                   and data.get('answer') and content == data['answer'])
+    if not settled and not pending:
+        return messages
+    return [*messages[:-1], {**messages[-1], 'request_id': saved['request_id']}]
+
+
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str, request: FastAPIRequest):
     principal = _authorize_session_request(request, session_id)
@@ -4751,8 +4863,18 @@ async def get_session(session_id: str, request: FastAPIRequest):
             _get_session_messages(session_id), principal, session_id
         )
         if msgs and not withheld:
-            from app.agents.orchestrator import multi_agent_graph, _owner_id_from
+            from app.agents.orchestrator import multi_agent_graph, _owner_id_from, check_interrupt
             saved = multi_agent_graph.get_state({'configurable': {'thread_id': session_id}}).values or {}
+            pending_request_id = ''
+            if not saved.get('final_answer') and check_interrupt(session_id):
+                try:
+                    pending_row = pending_approvals.get_row(session_id)
+                except pending_approvals.PendingApprovalStoreMissing:
+                    pending_row = None
+                if (pending_row and pending_row.status == pending_approvals.AWAITING
+                        and str(pending_row.owner_user_id) == str(principal.user_id)):
+                    pending_request_id = pending_row.request_id
+            msgs = _attach_current_request(msgs, saved, principal, pending_request_id=pending_request_id)
             task = saved.get('task_context') or saved.get('document_selection') or saved.get('data_context') or {}
             if task and _owner_id_from({'principal': saved.get('principal')}) == principal.user_id:
                 scope = resolve_document_retrieval_scope(principal)
@@ -6114,6 +6236,10 @@ async def queue_status(request_id: str, request: FastAPIRequest):
     # 门的次序一个字没改：先过这道门，才谈得上读下面任何一格。R295 改的是门里的归属读数——
     # 不再信载荷快照，与 R294 同源现取（见 queue_task_owner_user_id）。
     payload = _authorize_queue_task(request, queue, request_id, ACTION_VIEW)
+    from app.common.auth import principal_current_reason
+    identity_reason = principal_current_reason(payload.get('principal') or {})
+    if identity_reason:
+        raise HTTPException(status_code=503 if identity_reason == 'storage_unavailable' else 403, detail=identity_reason)
     # 门已经证明「调用方 == 现取出来的归属人」，下面批准台账那一格就用这份现取读数，
     # 不回头抄载荷里冻着的那一枚（抄回去，快照就又成权威了）。
     caller = principal_from_request(request)

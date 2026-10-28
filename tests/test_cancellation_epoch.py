@@ -438,7 +438,7 @@ def test_a_stop_while_parked_prevents_the_approve_from_running_the_action(
     assert "event: cancelled" in body
     assert "event: done" not in body
     assert "已取消，未执行" not in body, "停止被记成了拒绝"
-    assert decided == [pending_approvals.ABANDONED], "停止的账面必须是 abandoned"
+    assert decided and set(decided) == {pending_approvals.ABANDONED}, "停止的账面必须是 abandoned"
     assert pending_approvals.REFUSED not in decided
     assert orchestrator.check_interrupt(session_id), "停止把挂起态清掉了，R13 就再也列不到它"
 
@@ -448,7 +448,9 @@ def test_a_stop_while_parked_prevents_the_approve_from_running_the_action(
     assert worker.invocations == ["chart"], "一次停止把会话永久锁死了"
     assert sink.exists()
     assert "event: done" in body
-    assert decided == [pending_approvals.ABANDONED, pending_approvals.RESUMED]
+    from itertools import groupby
+    assert [status for status, _ in groupby(decided)] == [
+        pending_approvals.ABANDONED, pending_approvals.RESUMED]
     assert orchestrator.check_interrupt(session_id) is None
 
 

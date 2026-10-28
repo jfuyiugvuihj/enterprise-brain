@@ -10,7 +10,16 @@ from app.tools.excel import filter_explicit_categories
 
 
 def additive_metric(name):
+    if str(name).strip() in {'月份', '年月', '统计月份', '日期', '发生日期'}:
+        return False
     return not re.search(r'率|比例|占比|百分|单价|均价|平均|编号|编码|序号|ID$|id$', str(name))
+
+
+def metric_unit(name):
+    for annotation in re.findall(r'[（(]([^()（）]+)[）)]', str(name)):
+        if re.fullmatch(r'(?:人民币)?(?:元|万元|亿元|千元|美元|万元人民币|人|人次|个|件|台|套|吨|千克|公斤|克|升|米|平方米|小时|天|次|%|％|百分比)', annotation.strip()):
+            return annotation.strip()
+    return '单位未标注'
 
 
 def calculate_finding(frame, rule, *, filename, dataset_id, version_id, sha256, principal, system_department=''):
@@ -56,7 +65,7 @@ def calculate_finding(frame, rule, *, filename, dataset_id, version_id, sha256, 
         'finding_key': hashlib.sha256(json.dumps(key, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
         'metric': metric, 'current': current, 'threshold': threshold, 'op': op, 'breached': breached,
         'rows': len(selected), 'missing': int(selected[metric].isna().sum()),
-        'unit': unit.group(1) if unit else '单位未标注', 'period': period,
+        'unit': metric_unit(metric), 'period': period,
         'query': query, 'filter': selected.attrs.get('filter_note') or '未指定分类筛选',
         'dimension': group, 'contributions': contributions,
         'records': json.loads(selected.head(20).to_json(orient='records', date_format='iso')),

@@ -43,6 +43,9 @@ export const USERS_ROWS_KEY = 'users'
  * 后端加一列而这里没跟上、或这里多一列而后端没有，都当场红。
  */
 export const USER_BACKEND_COLUMNS = ['id', 'username', 'role', 'department', 'created_at']
+/** 状态由 GET /users 的服务端扩展字段提供；未知/缺席值保留为未记录。 */
+export const USER_STATUS_VALUES = ['active', 'disabled']
+export const USER_STATUS_UNKNOWN = '未记录'
 
 /** 角色词表：封闭集合，与 app/common/permissions.py:12-17 的 ROLE_PERMISSIONS 键同集。 */
 export const USER_ROLES = ['staff', 'manager', 'admin', 'auditor']
@@ -93,6 +96,7 @@ export const USER_COLUMNS = [
   { key: 'role', label: '角色', formatter: value => userRoleLabel(value) },
   { key: 'department', label: '部门', formatter: value => departmentText(value) },
   { key: 'created_at', label: '创建时间', formatter: value => createdAtText(value) },
+  { key: 'status', label: '账号状态', formatter: value => value === 'active' ? '启用' : value === 'disabled' ? '已停用' : USER_STATUS_UNKNOWN },
 ]
 
 function textOf(value) {
@@ -129,6 +133,8 @@ export function mapUserRow(row) {
     role: textOf(source.role),
     department: textOf(source.department),
     created_at: textOf(source.created_at),
+    status: USER_STATUS_VALUES.includes(source.status) ? source.status : '',
+    ...(typeof source.must_change_password === 'boolean' ? { must_change_password: source.must_change_password } : {}),
   }
 }
 /** 还没有回包时的起点：每一次重新取数都从这里起步，上一份名册不许挂在屏上冒充这一份的结果。 */
@@ -244,7 +250,7 @@ export async function loadUsers(client = http) {
  *   PUT    /users/department       :139-204  改部门归属，回 status/username/department/changed/message
  *
  * 后端零改动是本单前提：这里不新增第五枚出口、不改任何一枚的语义、状态码或请求体，
- * 后端做不到的事（「停用」这一档它没有；管理员替人重置密码它要 old_password）一律只报不造。
+ * 后端做不到的事（「停用」这一档它没有）一律只报不造；管理员重置与本人修改密码是两条独立出口。
  * 四枚出口各自真会回哪些码，逐条写在 r360-user-writes.test.js 那张取证表里，本文件不重述一遍
  * —— 一处叙述就是两本账，那张表才是唯一说法。
  *
@@ -273,12 +279,16 @@ export const USER_WRITE_DELETE = 'delete'
 export const USER_WRITE_PASSWORD = 'password'
 export const USER_WRITE_DEPARTMENT = 'department'
 export const USER_WRITE_ROLE = 'role'
+export const USER_WRITE_RESET_PASSWORD = 'reset-password'
+export const USER_WRITE_STATUS = 'status'
 
 /** 四条路径，与上面那四枚出口一一对号。读路径仍然只有 USERS_PATH 一枚，没有第二条。 */
 export const USER_CREATE_PATH = USERS_PATH
 export const USER_PASSWORD_PATH = '/users/password'
 export const USER_DEPARTMENT_PATH = '/users/department'
 export const USER_ROLE_PATH = '/users/role'
+export const USER_RESET_PASSWORD_PATH = '/users/reset-password'
+export const USER_STATUS_PATH = '/users/status'
 /** DELETE 的路径带编号（app/api/v1/auth.py:131 声明的是 user_id: int），所以这里是一个构造函数而不是常量。 */
 export const USER_DELETE_PATH_PREFIX = `${USERS_PATH}/`
 
@@ -304,6 +314,8 @@ export const USER_FORM_FIELDS = {
   department: 'department',
   oldPassword: 'oldPassword',
   newPassword: 'newPassword',
+  resetPassword: 'resetPassword',
+  resetPasswordConfirm: 'resetPasswordConfirm',
 }
 
 /**
@@ -362,6 +374,13 @@ export function passwordBody(form = {}) {
   }
 }
 
+export function resetPasswordBody(form = {}) {
+  return {
+    [USER_BODY_KEYS.username]: String(form[USER_FORM_FIELDS.username] ?? ''),
+    [USER_BODY_KEYS.newPassword]: String(form[USER_FORM_FIELDS.resetPassword] ?? ''),
+  }
+}
+
 /**
  * department 这一枚键每次都必须出现：后端把「缺席 / null」读成「这轮没说」（app/api/v1/auth.py:171-180 那半条
  * 分支一个字都不写，回 changed: false），显式空串才读成「清空归属」。少发一枚键就是把「没改」
@@ -397,6 +416,8 @@ export function userFormRuleViolations(kind, form = {}) {
   const username = String(form[USER_FORM_FIELDS.username] ?? '')
   const password = String(form[USER_FORM_FIELDS.password] ?? '')
   const newPassword = String(form[USER_FORM_FIELDS.newPassword] ?? '')
+  const resetPassword = String(form[USER_FORM_FIELDS.resetPassword] ?? '')
+  const resetPasswordConfirm = String(form[USER_FORM_FIELDS.resetPasswordConfirm] ?? '')
   const role = String(form[USER_FORM_FIELDS.role] ?? '')
   if (kind === USER_WRITE_CREATE) {
     if (USER_FORM_RULES.usernameRequired && !username) errors[USER_FORM_FIELDS.username] = USER_RULE_HINTS.usernameRequired
@@ -411,6 +432,12 @@ export function userFormRuleViolations(kind, form = {}) {
   }
   if (kind === USER_WRITE_PASSWORD && newPassword.length < USER_FORM_RULES.newPasswordMinLength) {
     errors[USER_FORM_FIELDS.newPassword] = USER_RULE_HINTS.newPasswordTooShort
+  }
+  if (kind === USER_WRITE_RESET_PASSWORD) {
+    if (resetPassword.length < USER_FORM_RULES.newPasswordMinLength) {
+      errors[USER_FORM_FIELDS.resetPassword] = USER_RULE_HINTS.newPasswordTooShort
+    }
+    if (resetPassword !== resetPasswordConfirm) errors[USER_FORM_FIELDS.resetPasswordConfirm] = '两次输入的临时密码不一致。'
   }
   if (kind === USER_WRITE_ROLE) {
     if (USER_FORM_RULES.usernameRequired && !username) errors[USER_FORM_FIELDS.username] = USER_RULE_HINTS.usernameRequired
@@ -535,7 +562,7 @@ export function userWriteErrorView(err) {
 }
 
 /** 成功回包 -> 回执。target 是这一发点名的人，回执与确认句都靠它，绝不写「确定吗」那种空话。 */
-export function userWriteReceiptView(kind, target, payload) {
+export function userWriteReceiptView(kind, target, payload, expected = {}) {
   const envelope = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null
   if (!envelope || textOf(envelope[USER_WRITE_OK_KEY]) !== USER_WRITE_OK_VALUE) {
     return userWriteMalformedReceipt(kind, target)
@@ -591,10 +618,39 @@ export function userWriteReceiptView(kind, target, payload) {
       changed: true,
     }
   }
+  if (kind === USER_WRITE_STATUS) {
+    if (typeof envelope.changed !== 'boolean' || !USER_STATUS_VALUES.includes(envelope.account_status)
+      || envelope.account_status !== expected.status || textOf(envelope.username) !== textOf(target)) {
+      return userWriteMalformedReceipt(kind, target)
+    }
+    return {
+      face: USERS_FACE_WRITE_OK,
+      kind,
+      target,
+      title: envelope.account_status === 'disabled' ? '账号已停用' : '账号已恢复',
+      description: textOf(envelope.message),
+      codeLabel: '',
+      retryable: false,
+      changed: envelope.changed,
+      accountStatus: envelope.account_status,
+    }
+  }
   const COPY = {
     [USER_WRITE_CREATE]: { title: '账号已开通', description: `后端这一发回的是 200：${target} 已按这一发的角色与归属写进名册。` },
     [USER_WRITE_DELETE]: { title: '账号已删除', description: `后端这一发回的是 200：${target} 那一行已删除。这一步不可逆。` },
     [USER_WRITE_PASSWORD]: { title: '密码已改写', description: `后端这一发回的是 200：${target} 的登录密码已按这一发提交的新密码改写。` },
+  }
+  if (kind === USER_WRITE_RESET_PASSWORD) {
+    return {
+      face: USERS_FACE_WRITE_OK,
+      kind,
+      target,
+      title: '密码已重置',
+      description: textOf(envelope.message),
+      codeLabel: '',
+      retryable: false,
+      changed: true,
+    }
   }
   const copy = COPY[kind] || { title: '这一步已成交', description: `后端这一发回的是 200：${target}。` }
   return {
@@ -620,7 +676,14 @@ export function userWriteReadback(kind, target, roster, sent = {}) {
   const NO_ROSTER = '名册这一次没读回来，所以上面那句只说后端对这一发的回话，不代表屏上此刻有几行。'
   const rows = roster && Array.isArray(roster.rows) ? roster.rows : []
   // 空名册是一次【读回来了的】结果（删掉最后一枚账号就该是它），只有真没读回来才对表说不了。
-  if (usersFailureFace(roster)) return { consistent: false, note: NO_ROSTER }
+  if (usersFailureFace(roster)) {
+    return {
+      consistent: false,
+      note: kind === USER_WRITE_STATUS
+        ? '状态写入已返回，但名册读取失败，账号状态尚未核实。'
+        : NO_ROSTER,
+    }
+  }
   const found = rows.some(row => textOf(row.username) === textOf(target))
   if (kind === USER_WRITE_CREATE && !found) {
     return { consistent: false, note: `后端这一发回的是 200，但重新读回的名册里没有 ${target} 这一枚账号。` }
@@ -628,8 +691,19 @@ export function userWriteReadback(kind, target, roster, sent = {}) {
   if (kind === USER_WRITE_DELETE && found) {
     return { consistent: false, note: `后端这一发回的是 200，但重新读回的名册里 ${target} 还在。` }
   }
-  if ((kind === USER_WRITE_PASSWORD || kind === USER_WRITE_DEPARTMENT || kind === USER_WRITE_ROLE) && !found) {
+  if ((kind === USER_WRITE_PASSWORD || kind === USER_WRITE_RESET_PASSWORD || kind === USER_WRITE_DEPARTMENT || kind === USER_WRITE_ROLE) && !found) {
     return { consistent: false, note: `后端这一发回的是 200，但重新读回的名册里已经找不到 ${target} 这一枚账号。` }
+  }
+  if (kind === USER_WRITE_STATUS) {
+    if (!found) return { consistent: false, note: `状态写入已返回，但重新读回的名册里已经找不到 ${target}。` }
+    const expected = sent.status
+    if (!USER_STATUS_VALUES.includes(expected) || sent.accountStatus !== expected
+      || roster.rows.find(row => textOf(row.username) === textOf(target))?.status !== expected) {
+      return { consistent: false, note: '状态写入已返回，但重新读回的账号状态与请求不一致，尚未核实。' }
+    }
+  }
+  if (kind === USER_WRITE_RESET_PASSWORD && rows.find(row => textOf(row.username) === textOf(target))?.must_change_password !== true) {
+    return { consistent: false, note: '重置请求已返回，但名册尚未确认需要更改临时密码，请重新加载核对。' }
   }
   if (kind === USER_WRITE_DEPARTMENT && found) {
     const after = textOf(sent[USER_FORM_FIELDS.department])
@@ -652,7 +726,7 @@ export function userWriteReadback(kind, target, roster, sent = {}) {
  * 四枚出口的调用层：返回的永远是回执（成功脸 / 失败脸 / 读不出结论脸），不抛给面板 ——
  * 与 loadUsers 同一条纪律，这一屏没有第二块内容可以被一次失败拖走。
  */
-async function submitWrite(kind, target, send) {
+async function submitWrite(kind, target, send, expected = {}) {
   let response
   try {
     response = await send()
@@ -661,7 +735,7 @@ async function submitWrite(kind, target, send) {
   }
   const status = Number(response && response.status ? response.status : 0) || 0
   if (status !== 200) return { ...userWriteErrorView({ response, status }), kind, target }
-  return userWriteReceiptView(kind, target, response && response.data)
+  return userWriteReceiptView(kind, target, response && response.data, expected)
 }
 
 export function submitCreateUser(form, client = http) {
@@ -672,6 +746,16 @@ export function submitCreateUser(form, client = http) {
 export function submitPasswordChange(form, client = http) {
   const body = passwordBody(form)
   return submitWrite(USER_WRITE_PASSWORD, body[USER_BODY_KEYS.username], () => client.put(USER_PASSWORD_PATH, body))
+}
+
+export function submitPasswordReset(form, client = http) {
+  const body = resetPasswordBody(form)
+  return submitWrite(USER_WRITE_RESET_PASSWORD, body[USER_BODY_KEYS.username], () => client.post(USER_RESET_PASSWORD_PATH, body))
+}
+
+export function submitUserStatus(username, status, client = http) {
+  const body = { username: String(username ?? ''), status }
+  return submitWrite(USER_WRITE_STATUS, body.username, () => client.put(USER_STATUS_PATH, body), body)
 }
 
 export function submitDepartmentChange(form, client = http) {

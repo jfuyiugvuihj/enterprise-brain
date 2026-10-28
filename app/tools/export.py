@@ -136,6 +136,22 @@ class PDFReport(FPDF):
         headers = section.get("headers") or []
         if not headers:
             return
+        if len(headers) > 8:
+            # Keep the printed table readable without losing columns or joining
+            # distinct rows whose first-column labels happen to be the same.
+            starts = list(range(1, len(headers), 4))
+            for number, start in enumerate(starts, 1):
+                end = min(start + 4, len(headers))
+                self.heading(f'宽表第{number}/{len(starts)}组 · 各组按表内行序对应', level=3)
+                band = {**section, 'headers':['表内行序', headers[0], *headers[start:end]],
+                    'rows':[[index, row[0], *row[start:end]]
+                            for index, row in enumerate(section.get('rows') or [], 1)],
+                    'col_widths':[0.65, 1.5] + [1] * (end-start)}
+                alignment = section.get('align')
+                if isinstance(alignment, (list, tuple)):
+                    band['align'] = ['RIGHT', alignment[0], *alignment[start:end]]
+                self.data_table(band)
+            return
         self._font()
         self.set_font_size(section.get("font_size", 10))
         self.set_fill_color(255, 255, 255)
@@ -215,7 +231,7 @@ class PDFReport(FPDF):
         else:
             raise FileNotFoundError("报告图表文件缺失，无法生成完整报告。")
 
-    def _chart_geometry(self, path: str, caption: str, w: int = 160):
+    def _chart_geometry(self, path: str, caption: str, w: int = 160, *, top: float | None = None):
         self._font()
         self.set_font_size(10)
         caption_height = self._text_height(caption, 6) if caption else 0
@@ -224,6 +240,11 @@ class PDFReport(FPDF):
         width = min(float(w), self.epw)
         maximum_height = self.page_break_trigger - max(self.t_margin, 26) - caption_height - 8
         width = min(width, max(10, maximum_height) / aspect)
+        available = self.page_break_trigger - (self.get_y() if top is None else top) - caption_height - 8
+        # Fit below a short introduction when this costs at most 20% of the
+        # chart's size. Otherwise preserve readability on the following page.
+        if width * aspect * 0.8 <= available < width * aspect:
+            width = available / aspect
         return width, width * aspect, caption_height
 
     def footer(self):
@@ -253,13 +274,14 @@ def generate_pdf_report(title: str, sections: list[dict], chart_paths: list[str]
         pdf.cover(date=datetime.now().strftime("%Y年%m月%d日"))
         pdf.add_page()
     embedded = set()
+    chart_width = 140 if any(section.get('type') == 'summary' for section in sections) else 160
 
     def embed_chart(path: str, caption: str = ""):
         key = os.path.normcase(os.path.realpath(path))
         if key in embedded:
             return
         caption = caption.strip() or f"图{len(embedded) + 1}：{title}"
-        pdf.chart_image(path, caption=caption)
+        pdf.chart_image(path, caption=caption, w=chart_width)
         embedded.add(key)
 
     last_section_type = None
@@ -267,14 +289,38 @@ def generate_pdf_report(title: str, sections: list[dict], chart_paths: list[str]
         t = sec.get("type", "text")
 
         if t == "heading":
+            keep = int(sec.get('keep_with_next') or 0)
+            if keep:
+                before_page, before_y = pdf.page_no(), pdf.get_y()
+                with pdf.offset_rendering() as probe:
+                    for item in sections[index:index + keep + 1]:
+                        kind = item.get('type')
+                        if kind == 'heading':
+                            probe.heading(item['content'], item.get('level', 2))
+                        elif kind == 'text':
+                            probe.paragraph(item['content'], item.get('font_size', 11), item.get('line_height', 7))
+                        elif kind == 'table':
+                            probe.data_table(item)
+                    block_height = probe.y - before_y + (probe.page - before_page) * probe.eph
+                if probe.page_break_triggered and block_height <= pdf.eph:
+                    pdf.add_page()
             following = sections[index + 1] if index + 1 < len(sections) else {}
+            if following.get('type') == 'table' and len(following.get('rows') or []) <= 8:
+                before_page, before_y = pdf.page_no(), pdf.get_y()
+                with pdf.offset_rendering() as probe:
+                    probe.heading(sec['content'], sec.get('level', 2))
+                    probe.data_table(following)
+                    block_height = probe.y - before_y + (probe.page - before_page) * probe.eph
+                if probe.page_break_triggered and block_height <= pdf.eph:
+                    pdf.add_page()
             if following.get("type") == "chart" and os.path.exists(following.get("path", "")):
                 pdf._font(bold=True)
                 level = sec.get("level", 2)
                 pdf.set_font_size({1: 18, 2: 14, 3: 12}.get(level, 12))
                 line_height = 7 if level == 3 else 10
                 heading_height = 3 + pdf._text_height(sec["content"], line_height) + 2
-                _, chart_height, caption_height = pdf._chart_geometry(following["path"], following.get("caption", ""))
+                _, chart_height, caption_height = pdf._chart_geometry(following["path"], following.get("caption", ""), chart_width,
+                    top=pdf.get_y() + heading_height)
                 if pdf.get_y() + heading_height + chart_height + caption_height + 6 > pdf.page_break_trigger:
                     pdf.add_page()
             pdf.heading(sec["content"], sec.get("level", 2))

@@ -46,10 +46,61 @@ from app.documents.file_security import (
 )
 from app.documents.knowledge_ingest import index_dataset_copy
 from app.storage import artifacts as artifact_storage
-from app.storage.datasets import DatasetOwnerScopeMissing, dataset_registry
+from app.storage.datasets import DatasetOwnerScopeMissing, DatasetRowConflict, dataset_registry
 
 router = APIRouter()
 DATA_DIR = os.getenv("DATA_DIR", "./data")
+
+
+async def _publish_dataset_update(principal, record, file_path, df, department, visibility):
+    """Publish vectors, data lineage and knowledge catalogue in one PG transaction."""
+    from app.storage.datasets import DatasetRegistry, PostgresDatasetTableStore
+    from app.documents.catalog import record_document_version
+    from app.documents.knowledge_ingest import classification_level_for
+    from app.common.auth import get_user
+    from app.agents.contracts import Principal
+    published = {}
+
+    def publish(connection):
+        current_user = get_user(principal.user_id)
+        if (not current_user or current_user.get('status', 'active') != 'active'
+                or current_user.get('must_change_password')
+                or int(current_user.get('auth_version', 0)) != principal.auth_version):
+            raise PermissionError('account_changed')
+        current = Principal.from_user(current_user)
+        registry = DatasetRegistry(root=dataset_registry.root,
+            metadata_path=dataset_registry.metadata_path,
+            store=PostgresDatasetTableStore(connection=connection))
+        connection.execute('SELECT dataset_id FROM datasets WHERE dataset_id=%s FOR UPDATE', (record.dataset_id,)).fetchone()
+        actual = registry.get(record.dataset_id)
+        if (actual is None or not authorization_decision(current, actual.resource_scope,
+                action=ACTION_UPLOAD, require_resource_scope=True).allowed
+                or (current.role == 'staff' and actual.owner_id != current.user_id)):
+            raise PermissionError('permission_denied')
+        updated = registry.register(file_path, principal=current, filename=record.filename,
+            expected_version_id=record.version_id,
+            schema_snapshot={'columns': list(map(str, df.columns)), 'rows': int(len(df))})
+        metadata = record_document_version(record.filename, classification_level_for(updated.classification),
+            department, str(file_path), owner_id=updated.owner_id, size_bytes=file_path.stat().st_size,
+            parse_status='ready', index_status='indexed', visibility=visibility, connection=connection)
+        published.update(dataset=updated, metadata=metadata)
+
+    receipt = await index_dataset_copy(display_filename=record.filename, storage_path=file_path,
+        department=department, classification=record.classification,
+        retriever=_knowledge_base_retriever(), owner_id=record.owner_id, publish=publish, visibility=visibility)
+    if receipt.get('status') != 'indexed' or 'dataset' not in published:
+        record_audit(principal, ACTION_UPLOAD, 'failed', record.dataset_id, 'dataset_version_not_published',
+            before_summary={'version_id': record.version_id})
+        current = dataset_registry.get(record.dataset_id)
+        if current is None or current.version_id != record.version_id:
+            raise HTTPException(status_code=409, detail='dataset_version_changed')
+        raise HTTPException(status_code=503, detail='dataset_update_not_published')
+    from app.documents.catalog import _record_local_version
+    _record_local_version(published['metadata'])
+    record_audit(principal, ACTION_UPLOAD, 'succeeded', record.dataset_id, 'dataset_version_published',
+        before_summary={'version_id': record.version_id},
+        after_summary={'version_id': published['dataset'].version_id})
+    return published['dataset'], receipt
 os.makedirs(DATA_DIR, exist_ok=True)
 #: 收口名单不是另一份手抄：它就是 app/tools/excel.py 那张「扩展名 -> 读引擎」的声明表
 #: （`DATA_READ_ENGINES`）现算出来的键。上一版这里写着 {".xlsx", ".xls", ".csv"}，而 .xls 的
@@ -336,6 +387,7 @@ async def upload_excel(
     file: UploadFile = File(...),
     classification: Annotated[str | None, Form()] = None,
     new_version: Annotated[bool, Form()] = False,
+    expected_version_id: Annotated[str | None, Form()] = None,
 ):
     """上传 Excel/CSV → 解析 → 返回数据画像，并把同一份表格并进知识库（R700）。"""
     filename = _safe_data_filename(file.filename)
@@ -348,6 +400,18 @@ async def upload_excel(
         if existing is None:
             raise HTTPException(status_code=404, detail="resource_not_found")
         record = _authorized_dataset(request, filename, ACTION_UPLOAD)
+        if expected_version_id is not None and expected_version_id != record.version_id:
+            raise HTTPException(status_code=409, detail='dataset_version_changed')
+        expected_version_id = record.version_id
+        from app.documents.catalog import latest_document_version
+        knowledge = latest_document_version(filename) or {}
+        knowledge_department = str(knowledge.get('department') or '')
+        knowledge_visibility = str(knowledge.get('visibility') or 'private')
+        if not knowledge_department and len(record.department_ids) == 1:
+            knowledge_department = str(record.department_ids[0])
+        from app.common.departments import canonical_department
+        if canonical_department(knowledge_department) not in {canonical_department(v) for v in record.department_ids}:
+            raise HTTPException(status_code=409, detail='dataset_scope_requires_management')
         if principal.role == "staff" and str(record.owner_id) != str(principal.user_id):
             raise HTTPException(status_code=403, detail="owner_mismatch")
         if classification is not None and _classification_level(classification) != _classification_level(record.classification):
@@ -393,13 +457,25 @@ async def upload_excel(
 
     try:
         df = await asyncio.to_thread(load_excel, str(file_path))
-        dataset = dataset_registry.register(file_path, principal=principal, filename=filename, classification=classification)
+        if new_version:
+            original_frame = await asyncio.to_thread(load_excel, record.storage_path)
+            import hashlib
+            if hashlib.sha256(content).hexdigest() == record.content_sha256:
+                dataset, receipt = record, {'status': 'unchanged'}
+            else:
+                dataset, receipt = await _publish_dataset_update(principal, record, file_path, df, knowledge_department, knowledge_visibility)
+        else:
+            dataset = dataset_registry.register(file_path, principal=principal, filename=filename, classification=classification)
     except Exception as exc:
         if file_path.exists():
             file_path.unlink()
         if isinstance(exc, DatasetOwnerScopeMissing):
             raise HTTPException(status_code=403, detail=OWNER_SCOPE_REQUIRED) from exc
+        if isinstance(exc, DatasetRowConflict):
+            raise HTTPException(status_code=409, detail='dataset_version_changed') from exc
         raise
+    if Path(dataset.storage_path).resolve() != file_path.resolve():
+        file_path.unlink()
     preview = build_dataframe_preview(df, filename)
     # R337: 上传回执也是资源出口，owner 只能走目录列表那一枚同源 helper。取值用一枚局部名，是为了让
     # 「读的就是手上这枚 dataset」在形状上也是一眼可读的一件事；不开第二次查询，也不长第二条权限链。
@@ -410,6 +486,7 @@ async def upload_excel(
             "version_id": dataset.version_id,
             "classification": dataset.classification,
             "owner_id": owner_id,
+            **({'version_unchanged': dataset.version_id == expected_version_id} if new_version else {}),
         }
     )
 
@@ -418,13 +495,20 @@ async def upload_excel(
     # 关键词=tools.rebuild_bm25），本路由不另起第二套入库腿，也不新增任何 Chroma 写点。
     # 读数只进日志：数据集那一半的字段与状态码一个字不许改（判据②），所以知识库这一腿
     # 无论成功、被策略排除、还是模型没在，都不许把一次已注册成功的上传回报成故障。
+    if new_version:
+        old_columns, new_columns = set(map(str, original_frame.columns)), set(map(str, df.columns))
+        preview['version_change'] = {'previous_version_id': record.version_id, 'version_id': dataset.version_id,
+            'previous_rows': len(original_frame), 'rows': len(df),
+            'added_columns': sorted(new_columns - old_columns), 'removed_columns': sorted(old_columns - new_columns)}
+        preview['knowledge_index'] = receipt
+        return preview
     await index_dataset_copy(
         display_filename=filename,
         storage_path=dataset.storage_path,
-        department=str(getattr(principal, "department", "") or ""),
+        department=str(knowledge_department if new_version else getattr(principal, "department", "") or ""),
         classification=dataset.classification,
         retriever=_knowledge_base_retriever(),
-        owner_id=str(principal.user_id),
+        owner_id=str(dataset.owner_id),
     )
 
     return preview

@@ -37,6 +37,7 @@ import InsightPanel from '../components/InsightPanel.vue'
 import ProfilePanel from '../components/ProfilePanel.vue'
 import SloPanel from '../components/SloPanel.vue'
 import TracePanel from '../components/TracePanel.vue'
+const HelpPanel = () => import('../components/HelpPanel.vue')
 
 // 「喂料」的标签清单与它名下的老地址是同一条记录的两张脸，只写在 feed-tabs.js 一遍；
 // 这一枚文件是消费方。DocPanel / DataPanel 的 import 随之搬去那张表里。
@@ -206,6 +207,7 @@ export const routes = [
     redirect: legacyFeedRedirect(tab.id),
     meta: { legacyScreenOf: FEED_SCREEN },
   })),
+  { path: '/help/:page(.*)*', name: 'help', component: HelpPanel, meta: { title: '使用帮助' } },
   // 未认识的地址回默认落点，而不是留一片空白的工作台：地址栏写错一个字母不该看起来像系统坏了。
   // 这里刻意用 path 形式而不是 { name: DEFAULT_SCREEN }：通配记录自带 pathMatch 参数，
   // 按名字回落实例会把那个参数一起带过去再丢掉，于是每一次认错地址都在控制台刷一条

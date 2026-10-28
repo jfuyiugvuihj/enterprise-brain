@@ -90,6 +90,9 @@ body { background: var(--surface-0); }
 .workspace-journey .is-current { color: var(--accent); background: var(--surface-3); }
 .workspace-journey__arrow { color: var(--text-3); }
 .sidebar-note { margin: auto 0 0; padding: 24px 8px 4px; color: var(--text-3); font-size: 11px; line-height: 1.8; }
+.sidebar-note a, .workspace-help-link { color: var(--accent); font-weight: 600; text-decoration: none; }
+.workspace-help-link { margin-right: 10px; font-size: 13px; white-space: nowrap; }
+.sidebar-note a:hover, .workspace-help-link:hover { text-decoration: underline; }
 .app-root .login-v2 { background: #ffffff; min-height: 100dvh; }
 .app-root .login-bg__base { background: radial-gradient(ellipse at 38% 68%, #edf5ff, transparent 68%), #ffffff; }
 .app-root .login-bg__art, .app-root .login-bg__grid, .app-root .login-bg__noise, .app-root .login-bg__scrim { display: none; }
@@ -97,7 +100,8 @@ body { background: var(--surface-0); }
 .login-brand__copy { display: grid; gap: 2px; }
 .app-root .login-brand__name { font-size: 24px; }
 .login-brand__subtitle { font-size: 13px; color: var(--text-3); }
-.login-network-note { margin-left: auto; color: var(--text-3); font-size: 13px; }
+.login-network-note { margin-left: auto; color: var(--accent); font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.login-network-note:hover { text-decoration: underline; }
 .app-root .login-stage { grid-template-columns: minmax(0, 1.45fr) minmax(360px, 1fr); max-width: 1440px; gap: 54px; padding: 36px 7% 24px; }
 .app-root .login-pitch { max-width: 680px; }
 .login-eyebrow { margin: 0 0 18px; color: var(--text-3); font-size: 16px; letter-spacing: .08em; }
@@ -500,6 +504,8 @@ body { background: var(--surface-0); }
 .mobile-profile-menu { display: none; }
 
 @media (max-width: 760px) {
+  .app-root .login-v2 { grid-template-columns: minmax(0, 1fr); }
+  .app-root .login-brand, .app-root .login-stage, .app-root .login-foot { min-width: 0; }
   .app-root .reference-workbench { padding-bottom: calc(68px + env(safe-area-inset-bottom)); }
   .app-root .reference-workbench .sidebar { padding: 6px 8px 4px; }
   .app-root .reference-workbench .sidebar-brand { display: flex; align-items: center; padding-bottom: 0; }
@@ -511,10 +517,12 @@ body { background: var(--surface-0); }
   .app-root .reference-workbench .sidebar-brand small { display: none; }
   .app-root .reference-workbench .workspace-tools .user-avatar,
   .app-root .reference-workbench .workspace-tools .identity,
-  .app-root .reference-workbench .workspace-tools .logout-link { display: none; }
+  .app-root .reference-workbench .workspace-tools .logout-link,
+  .app-root .reference-workbench .workspace-help-link { display: none; }
   .app-root .reference-workbench .workspace-tools > .mobile-profile-trigger { display: inline-flex; align-items: center; justify-content: center; width: auto; height: 44px; min-width: 48px; padding: 0 10px; border: 1px solid var(--border-1); border-radius: 8px; background: var(--surface-1); color: var(--text-1); font: inherit; white-space: nowrap; }
   .mobile-profile-menu { position: absolute; z-index: 90; top: calc(100% + 8px); right: 0; display: grid; min-width: 156px; padding: 6px; border: 1px solid var(--border-1); border-radius: 10px; background: var(--surface-1); box-shadow: 0 8px 24px rgba(0, 0, 0, .15); }
   .mobile-profile-menu button { min-height: 44px; border: 0; border-radius: 6px; background: transparent; color: var(--text-1); text-align: left; font: inherit; }
+  .mobile-profile-menu a { display: flex; align-items: center; min-height: 44px; padding: 0 2px; border-radius: 6px; color: var(--text-1); text-decoration: none; }
   .mobile-profile-menu button:hover { background: var(--surface-3); }
   .app-root .reference-workbench .workspace-tools { position: relative; }
   .mobile-menu-toggle { display: inline-flex; align-items: center; justify-content: center; margin-left: auto; min-width: 56px; min-height: 44px; border: 1px solid var(--border-1); border-radius: 8px; background: var(--surface-1); color: var(--text-1); }
@@ -527,6 +535,7 @@ body { background: var(--surface-0); }
   .mobile-menu-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .mobile-profile-trigger:focus-visible,
   .mobile-profile-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mobile-profile-menu a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .app-root .reference-workbench .notif__panel { position: fixed; top: 70px; right: 12px; left: 12px; width: auto; max-width: none; max-height: calc(100dvh - 146px); overflow-y: auto; }
   .reference-workbench:has(.chat-input-bar:focus-within) .mobile-bottom-nav { display: none; }
 }

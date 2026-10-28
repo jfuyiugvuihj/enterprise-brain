@@ -26,6 +26,7 @@ import pandas as pd
 import pytest
 
 from app.agents import tools
+from test_alert_scan_scope import alert_pg
 
 #: 与 report-11 同形的最小表：两级 groupby 与 agg 多聚合都出得了 tuple 键。
 FRAME = pd.DataFrame(
@@ -59,40 +60,46 @@ def _tool_config():
     return {"configurable": conf}
 
 
-def _run_query_leg(monkeypatch, code):
-    """把数据腿的读文件与行级过滤钉成一张真表，其余（safe_query、装箱、json 序列化）全真跑。"""
-    import app.common.rbac as rbac
-    import app.tools.excel as excel
-    from app.storage import datasets as dataset_storage
+@pytest.fixture
+def query_files(monkeypatch, tmp_path, alert_pg):
+    from app.storage import datasets, calculations, artifacts
+    from app.storage.persistence import PostgresPersistenceAdapter
+    config = _tool_config()
+    config['configurable'].update(request_id='r462-query', data_filename='费用明细.xlsx')
+    registry = datasets.DatasetRegistry(root=tmp_path/'inputs',
+        store=datasets.PostgresDatasetTableStore(connection_factory=alert_pg))
+    path = registry.new_version_path('费用明细.xlsx')
+    FRAME.to_excel(path, index=False)
+    registry.register(path, filename='费用明细.xlsx', principal=config['configurable']['principal'])
+    persistence = PostgresPersistenceAdapter(alert_pg)
+    monkeypatch.setattr(datasets, 'dataset_registry', registry)
+    monkeypatch.setattr(calculations, 'dataset_registry', registry)
+    monkeypatch.setattr(calculations, 'calculation_storage', calculations.CalculationStorage(persistence))
+    monkeypatch.setattr(artifacts, 'artifact_registry', artifacts.ArtifactRegistry(root=tmp_path/'artifacts', persistence=persistence))
+    return config
 
+
+def _run_query_leg(monkeypatch, code, config):
+    """读取真实XLSX、登记PG计算并执行沙箱；仅固定本地模型的表达式。"""
     monkeypatch.setenv("MODEL_CONTEXT_TOKENS", "8192")
-    monkeypatch.setattr(tools, "_authorized_dataset_files", lambda config: ([("费用明细.xlsx", "p")], None))
-    monkeypatch.setattr(dataset_storage.DatasetRegistry, "get_active_by_filename", lambda self, filename: None)
-    monkeypatch.setattr(tools, "_record_dataset_evidence", lambda config, filename, df: None)
-    monkeypatch.setattr(excel, "load_excel", lambda path: FRAME)
-    monkeypatch.setattr(
-        rbac,
-        "filter_dataframe_rows_with_scope",
-        lambda df, role=None, department=None: (df, {"rows_in": int(df.shape[0]), "rows_out": int(df.shape[0])}),
-    )
     monkeypatch.setattr(tools, "_llm_pandas_code", lambda df, query: code)
-    return tools._query_data("各区域各季度销售额", _tool_config())
+    return tools._query_data("各区域各季度销售额", config)
 
 
 def _payload_text(out):
     """从「📊 x.xlsx 查询结果:」那一整块里取出模型实际读到的 JSON 文本。"""
-    assert out.startswith("📊 费用明细.xlsx 查询结果:"), out
+    assert out.startswith("📊 费用明细.xlsx 工作表「Sheet1」 查询结果:"), out
     assert tools.PACK_TRUNCATION_MARK not in out, out
     return out.split("查询结果:", 1)[1].strip()
 
 
-def test_two_level_groupby_hands_the_model_string_keys(monkeypatch):
+def test_two_level_groupby_hands_the_model_string_keys(monkeypatch, query_files):
     """判据① 之一：两级 groupby 的 Series 不再把元组键送进 json.dumps。
 
     摘掉 app/agents/tools.py 那次 dumps 之前的 _flatten_query_tuple_keys，这一发当场红在
     TypeError: keys must be str, int, float, bool or None, not tuple（本单复现的原文）。
     """
-    payload = json.loads(_payload_text(_run_query_leg(monkeypatch, GROUP_TWO_LEVEL)))
+    payload = json.loads(_payload_text(_run_query_leg(monkeypatch, GROUP_TWO_LEVEL, query_files)))
 
     assert all(isinstance(key, str) for key in payload), payload
     assert payload == {
@@ -103,12 +110,12 @@ def test_two_level_groupby_hands_the_model_string_keys(monkeypatch):
     }, "四行数值必须逐枚在位：缺一行是丢数据，并两行是造假"
 
 
-def test_multiindex_columns_records_hands_the_model_string_keys(monkeypatch):
+def test_multiindex_columns_records_hands_the_model_string_keys(monkeypatch, query_files):
     """判据① 之二：agg 多聚合落进 records 的列级元组键，同一把尺治。
 
     这一族改前交回的是 [{('销售额', 'sum'): 70.0, ...}] ——键是元组，dumps 一样炸。
     """
-    payload = json.loads(_payload_text(_run_query_leg(monkeypatch, AGG_MULTI)))
+    payload = json.loads(_payload_text(_run_query_leg(monkeypatch, AGG_MULTI, query_files)))
 
     assert isinstance(payload, list) and len(payload) == 2, payload
     assert all(isinstance(key, str) for row in payload for key in row), payload
@@ -119,7 +126,7 @@ def test_multiindex_columns_records_hands_the_model_string_keys(monkeypatch):
 
 
 @pytest.mark.parametrize("code", [SINGLE_LEVEL, INT_KEY])
-def test_key_shapes_without_tuples_are_untouched(monkeypatch, code):
+def test_key_shapes_without_tuples_are_untouched(monkeypatch, code, query_files):
     """判据②：本来就能序列化的负载，交出去的 JSON 与改前逐字节相同。
 
     期望值不抄字符串，而是拿同一张表真跑一遍 safe_query、按改前那一行 dumps 原样序列化。
@@ -127,12 +134,13 @@ def test_key_shapes_without_tuples_are_untouched(monkeypatch, code):
     两种键出来的 JSON 逐字节相同，实测 刀5 里这一发仍是绿的）；那一格由
     tests/test_r462_tuple_key_flattening.py 的键型钉守着。本单治的是元组，不是"所有奇怪的键"。
     """
-    from app.tools.excel import safe_query
+    from app.tools.excel import safe_query, load_excel
+    from app.storage.datasets import dataset_registry
 
-    raw = safe_query(FRAME.copy(), code)["result"]
+    raw = safe_query(load_excel(dataset_registry.get_active_by_filename('费用明细.xlsx').storage_path), code)["result"]
     assert all(not isinstance(key, tuple) for key in raw), raw
 
-    out = _run_query_leg(monkeypatch, code)
+    out = _run_query_leg(monkeypatch, code, query_files)
 
     assert _payload_text(out) == json.dumps(raw, ensure_ascii=False, default=str)
 

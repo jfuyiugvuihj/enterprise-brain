@@ -3,6 +3,7 @@ import os
 import re
 import secrets  # 只为一件事留在这儿：给 SSO 新建用户铸造不可猜的本地占位口令（见 upsert_sso_user）
 import time
+from threading import RLock
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -64,6 +65,7 @@ _EXPIRE_HOURS = _auth_cfg.get("token_expire_hours", 24)
 
 PUBLIC_PATHS = {"/", "/docs", "/openapi.json", "/redoc", "/api/v1/login", "/api/v1/health", "/api/v1/sso/login"}
 _MEM_USERS: dict[str, dict] = {}
+_MEM_ACCOUNT_LOCK = RLock()
 _PRODUCTION_ENVIRONMENTS = {"production", "prod"}
 
 
@@ -427,6 +429,10 @@ def _create_schema(conn):
     )
     conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS department TEXT")
     conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'staff'")
+    conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE")
+    conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active' "
+                 "CONSTRAINT users_account_status CHECK (status IN ('active', 'disabled'))")
     conn.commit()
     _seed_bootstrap_admin(conn)
 
@@ -508,9 +514,11 @@ def verify_password(username: str, password: str) -> bool:
     return bcrypt.checkpw(password.encode(), row["password_hash"].encode())
 
 
-def create_token(username: str) -> str:
+def create_token(username: str, *, user: dict | None = None) -> str:
+    user = get_user(username) if user is None else user
     payload = {
         "sub": username,
+        "auth_version": int((user or {}).get("auth_version") or 0),
         "iat": datetime.now(_tz),
         "exp": datetime.now(_tz) + timedelta(hours=_EXPIRE_HOURS),
     }
@@ -590,11 +598,12 @@ def list_users(*, denial: str = DENIAL_LEGACY_EMPTY_ROSTER) -> list[dict]:
         return []
     if _using_memory_store():
         return [
-            {"id": user["id"], "username": user["username"], "role": user["role"], "department": user["department"], "created_at": ""}
+            {"id": user["id"], "username": user["username"], "role": user["role"], "department": user["department"], "created_at": "",
+             "must_change_password": bool(user.get('must_change_password')), "status": user.get('status', 'active')}
             for user in sorted(_MEM_USERS.values(), key=lambda item: item["id"])
         ]
     with _get_conn() as conn:
-        rows = conn.execute("SELECT id, username, role, department, created_at FROM users ORDER BY id").fetchall()
+        rows = conn.execute("SELECT id, username, role, department, created_at, must_change_password, status FROM users ORDER BY id").fetchall()
         return [dict(r) for r in rows]
 
 
@@ -642,7 +651,7 @@ def create_user(username: str, password: str, role: str = "staff", department: s
 #: 200 + `[]`，所以这条对账由 `tests/test_r495_session_owner_namespace_is_declared.py`
 #: 拿这里的真源现读着盯：要补 `id`，必须与台账迁移、`SESSION_OWNER_NAMESPACE` 改值
 #: 同单进行，否则写腿当场抛 `SessionOwnerNamespaceError`、常驻钉当场红。
-USER_LOOKUP_COLUMNS: tuple[str, ...] = ("username", "role", "department")
+USER_LOOKUP_COLUMNS: tuple[str, ...] = ("username", "role", "department", "auth_version", "must_change_password", "status")
 USER_LOOKUP_SQL = (
     "SELECT " + ", ".join(USER_LOOKUP_COLUMNS) + " FROM users WHERE username = %s"
 )
@@ -658,7 +667,8 @@ def _project_user_row(row) -> dict | None:
     if row is None:
         return None
     record = dict(row)
-    return {column: record[column] for column in USER_LOOKUP_COLUMNS if column in record}
+    defaults = {'auth_version': 0, 'must_change_password': False, 'status': 'active'}
+    return {column: record.get(column, defaults.get(column)) for column in USER_LOOKUP_COLUMNS}
 
 
 def get_user(username: str) -> dict | None:
@@ -684,8 +694,13 @@ def upsert_sso_user(username: str, role: str = "staff", department: str | None =
         return False, "production_user_store_unavailable"
     if _using_memory_store():
         if username in _MEM_USERS:
-            _MEM_USERS[username]["role"] = role
-            _MEM_USERS[username]["department"] = department or ""
+            try:
+                with _MEM_ACCOUNT_LOCK:
+                    _guard_last_administrator(_MEM_USERS[username], role=role)
+                    _MEM_USERS[username]["role"] = role
+                    _MEM_USERS[username]["department"] = department or ""
+            except LastAdministratorError as exc:
+                return False, str(exc)
         else:
             _MEM_USERS[username] = {
                 "id": max((u["id"] for u in _MEM_USERS.values()), default=0) + 1,
@@ -698,8 +713,10 @@ def upsert_sso_user(username: str, role: str = "staff", department: str | None =
 
     try:
         with _get_conn() as conn:
-            row = conn.execute("SELECT id FROM users WHERE username = %s", (username,)).fetchone()
+            conn.execute('LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE')
+            row = conn.execute("SELECT username, role, status FROM users WHERE username = %s", (username,)).fetchone()
             if row:
+                _guard_last_administrator(row, conn, role=role)
                 conn.execute(
                     "UPDATE users SET role = %s, department = %s WHERE username = %s",
                     (role, department, username),
@@ -720,35 +737,193 @@ def delete_user(user_id: int) -> bool:
     if _memory_store_denied("user deletion"):
         return False
     if _using_memory_store():
-        for key, user in list(_MEM_USERS.items()):
-            if user["id"] == user_id:
-                _MEM_USERS.pop(key, None)
-                return True
+        with _MEM_ACCOUNT_LOCK:
+            for key, user in list(_MEM_USERS.items()):
+                if user["id"] == user_id:
+                    _guard_last_administrator(user, status='disabled')
+                    _MEM_USERS.pop(key, None)
+                    return True
         return False
     with _get_conn() as conn:
+        conn.execute('LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE')
+        row = conn.execute('SELECT username, role, status FROM users WHERE id=%s', (user_id,)).fetchone()
+        _guard_last_administrator(row, conn, status='disabled')
         cur = conn.execute("DELETE FROM users WHERE id = %s", (user_id,))
         conn.commit()
         return cur.rowcount > 0
 
 
+def authenticate_user(username: str, password: str) -> dict | None:
+    """Bind the issued credential version to the same row whose password was checked."""
+    if _memory_store_denied("password verification"):
+        return None
+    if _using_memory_store():
+        row = dict(_MEM_USERS.get(username) or {})
+    else:
+        with _get_conn() as conn:
+            row = conn.execute("SELECT " + ', '.join(USER_LOOKUP_COLUMNS) +
+                ", password_hash FROM users WHERE username=%s", (username,)).fetchone()
+    if not row:
+        return None
+    try:
+        valid = bcrypt.checkpw(password.encode(), row['password_hash'].encode())
+    except ValueError:
+        return None
+    return _project_user_row(row) if valid else None
+
+
+def token_matches_user(payload: dict, user: dict) -> bool:
+    # Tokens predating the migration belong to version zero only.
+    version = payload.get('auth_version', 0)
+    return type(version) is int and version == int(user.get('auth_version') or 0)
+
+
+def principal_current_reason(principal) -> str:
+    """Fail closed while distinguishing an authorization change from a store outage."""
+    storage_mode = user_storage_state().get('storage_mode')
+    if storage_mode == 'memory':
+        return ''  # Explicit development fallback; production refuses this mode.
+    if storage_mode != 'postgres':
+        return 'storage_unavailable'
+    try:
+        from app.agents.contracts import Principal
+        if isinstance(principal, dict):
+            principal = Principal.model_validate(principal)
+        if not isinstance(principal, Principal) or not principal.username:
+            return 'permission_denied'
+    except Exception:
+        return 'permission_denied'
+    try:
+        user = get_user(principal.username)
+    except Exception:
+        return 'storage_unavailable'
+    if not user:
+        return 'permission_denied'
+    try:
+        fresh = Principal.from_user(user)
+        fields = ('user_id','username','roles','permissions','department','department_ids',
+                  'clearance','status','auth_version','is_system')
+        if fresh.status == 'active' and all(getattr(principal,k) == getattr(fresh,k) for k in fields):
+            return ''
+    except Exception:
+        pass
+    return 'permission_denied'
+
+
+def principal_is_current(principal) -> bool:
+    """An in-flight task may continue only with the same current authorization."""
+    return not principal_current_reason(principal)
+
+
+def _password_error(password: str) -> str:
+    if len(password) < 6:
+        return "新密码至少 6 位"
+    if len(password.encode('utf-8')) > 72:
+        return "密码不能超过72个UTF-8字节"
+    return ''
+
+
+def reset_password(username: str, new_password: str) -> tuple[bool, str]:
+    error = _password_error(new_password)
+    if error:
+        return False, error
+    if _memory_store_denied("password reset"):
+        raise UserStoreUnavailable("password reset")
+    hsh = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
+    if _using_memory_store():
+        row = _MEM_USERS.get(username)
+        if row is None:
+            return False, USER_NOT_FOUND
+        row.update(password_hash=hsh, must_change_password=True,
+                   auth_version=int(row.get('auth_version') or 0) + 1)
+    else:
+        with _get_conn() as conn:
+            changed = conn.execute("UPDATE users SET password_hash=%s, must_change_password=TRUE, "
+                "auth_version=auth_version+1 WHERE username=%s", (hsh, username))
+            if not changed.rowcount:
+                return False, USER_NOT_FOUND
+    return True, "密码已重置，原登录已失效"
+
+
 def change_password(username: str, old_password: str, new_password: str) -> tuple[bool, str]:
-    if not verify_password(username, old_password):
-        return False, "原密码错误"
-    if len(new_password) < 6:
-        return False, "新密码至少 6 位"
+    error = _password_error(new_password)
+    if error:
+        return False, error
+    if old_password == new_password:
+        return False, "新密码不能与当前密码相同"
     if _memory_store_denied("password change"):
         return False, "production_user_store_unavailable"
     if _using_memory_store():
-        _MEM_USERS[username]["password_hash"] = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
-        return True, "密码已更新"
+        if not verify_password(username, old_password):
+            return False, "原密码错误"
+        row = _MEM_USERS[username]
+        row.update(password_hash=bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode(),
+                   must_change_password=False, auth_version=int(row.get('auth_version') or 0) + 1)
+        return True, "密码已更新，请重新登录"
     with _get_conn() as conn:
+        row = conn.execute("SELECT password_hash FROM users WHERE username=%s FOR UPDATE", (username,)).fetchone()
+        try:
+            valid = bool(row and bcrypt.checkpw(old_password.encode(), row['password_hash'].encode()))
+        except ValueError:
+            valid = False
+        if not valid:
+            return False, "原密码错误"
         hsh = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt()).decode()
-        conn.execute("UPDATE users SET password_hash = %s WHERE username = %s", (hsh, username))
+        conn.execute("UPDATE users SET password_hash=%s, must_change_password=FALSE, "
+                     "auth_version=auth_version+1 WHERE username=%s", (hsh, username))
         conn.commit()
-    return True, "密码已更新"
+    return True, "密码已更新，请重新登录"
 
 
 USER_NOT_FOUND = "用户不存在"
+
+
+class LastAdministratorError(ValueError):
+    def __init__(self):
+        super().__init__('至少保留一个可用管理员，不能停用、删除或降低其角色。')
+
+
+def _guard_last_administrator(row, connection=None, *, role=None, status=None):
+    """Call under the account table lock, also shared by delete and role changes."""
+    if not row or row.get('role') != 'admin' or row.get('status', 'active') != 'active':
+        return
+    if (role or row['role']) == 'admin' and (status or row.get('status', 'active')) == 'active':
+        return
+    if connection is None:
+        others = any(user['username'] != row['username'] and user.get('role') == 'admin'
+            and user.get('status', 'active') == 'active' for user in _MEM_USERS.values())
+    else:
+        others = connection.execute("SELECT COUNT(*) AS c FROM users WHERE role='admin' "
+            "AND status='active' AND username<>%s", (row['username'],)).fetchone()['c'] > 0
+    if not others:
+        raise LastAdministratorError()
+
+
+def update_account_status(username: str, status: str) -> dict | None:
+    if status not in {'active', 'disabled'}:
+        raise ValueError('账号状态无效')
+    if _memory_store_denied('account status change'):
+        raise UserStoreUnavailable('account status change')
+    if _using_memory_store():
+        with _MEM_ACCOUNT_LOCK:
+            row = _MEM_USERS.get(username)
+            if row is None:
+                return None
+            _guard_last_administrator(row, status=status)
+            changed = row.get('status', 'active') != status
+            if changed:
+                row.update(status=status, auth_version=int(row.get('auth_version') or 0) + 1)
+    else:
+        with _get_conn() as conn:
+            conn.execute('LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE')
+            row = conn.execute('SELECT username, role, status FROM users WHERE username=%s', (username,)).fetchone()
+            if row is None:
+                return None
+            _guard_last_administrator(row, conn, status=status)
+            changed = row['status'] != status
+            if changed:
+                conn.execute('UPDATE users SET status=%s, auth_version=auth_version+1 WHERE username=%s', (status, username))
+    return {'username': username, 'account_status': status, 'changed': changed}
 
 
 def update_department(username: str, department: str | None) -> tuple[bool, str]:
@@ -801,12 +976,17 @@ def update_role(username: str, role: str) -> tuple[bool, str]:
     if _memory_store_denied("role change"):
         return False, "production_user_store_unavailable"
     if _using_memory_store():
-        row = _MEM_USERS.get(username)
-        if row is None:
-            return False, USER_NOT_FOUND
-        row["role"] = role
+        with _MEM_ACCOUNT_LOCK:
+            row = _MEM_USERS.get(username)
+            if row is None:
+                return False, USER_NOT_FOUND
+            _guard_last_administrator(row, role=role)
+            row["role"] = role
         return True, "角色已更新"
     with _get_conn() as conn:
+        conn.execute('LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE')
+        row = conn.execute('SELECT username, role, status FROM users WHERE username=%s', (username,)).fetchone()
+        _guard_last_administrator(row, conn, role=role)
         cur = conn.execute(
             "UPDATE users SET role = %s WHERE username = %s",
             (role, username),

@@ -1,0 +1,143 @@
+{
+  "notice": "Sanitized extraction of dated local evidence, not a fresh replay and not a production-wide certification. Synthetic materials only.",
+  "date": "2026-10-28",
+  "models": {
+    "provider": "local Ollama",
+    "model": "qwen3.5:9b",
+    "vector_backend": "PGVector",
+    "remote_fallback_used": false
+  },
+  "deployments": {
+    "main_and_review_backend": "enterprise-brain:live-final-20261028e",
+    "main_and_review_frontend": "enterprise-brain-frontend:query-chart-20261028a",
+    "vm_fault_backend": "enterprise-brain:live-final-20261028d",
+    "python_files_matched_per_backend_service": 127,
+    "main_page_checks": 10,
+    "viewports_px": [
+      1440,
+      377
+    ]
+  },
+  "policy": {
+    "periods": [
+      "2026-01",
+      "2026-02"
+    ],
+    "amounts": [
+      400,
+      800
+    ],
+    "unit": "元",
+    "policy_workdays": [
+      5,
+      10
+    ],
+    "report_pages": 2,
+    "separate_policy_versions_per_period": true,
+    "limitations": "Missing receipt/submission/approval records remain unknown; not full compliance. Mobile viewport is not handset acceptance."
+  },
+  "disable": {
+    "old_token_status": 401,
+    "fresh_login_after_restore": 200,
+    "no_new_artifact": true,
+    "nonempty_assistant_messages": 0
+  },
+  "cancel": {
+    "no_new_artifact_before_followup": true,
+    "nonempty_assistant_messages_before_followup": 0,
+    "followup_completed": true,
+    "limitation": "Cooperative cancellation; synchronous tools already entered and completed effects are not forcibly rolled back."
+  },
+  "vm": {
+    "completed": true,
+    "default_lease_seconds": 300,
+    "worker_restart": {
+      "worker_killed_while_model_span_open": true,
+      "attempts_final": 2,
+      "old_lease_fenced": true,
+      "requeued_after_failure": true,
+      "approval_decision": "approved"
+    },
+    "vm_restart": {
+      "attempts_final": 2,
+      "old_lease_fenced": true,
+      "approval_decision": "approved",
+      "fault_boundary": "real queue processing, before completion; no claim of an active GPU token at power loss",
+      "session_after_boot_status": 200,
+      "session_receipt_restored": true
+    },
+    "pre_crash_pdf_bytes_preserved": true,
+    "report_values": [
+      600,
+      1200
+    ],
+    "worker_report_caveat": "Original recovered request reached confirmation but its query failed; a distinct repaired report task produced a checked PDF.",
+    "scope": "Existing Ubuntu VM with isolated fresh data volumes; local host GPU via loopback SSH tunnel; not GPU-host power loss, clean OS delivery, or 72-hour endurance."
+  },
+  "cloudisk": {
+    "cloudisk_running": [
+      "cloudisk-consul",
+      "cloudisk-fcm",
+      "cloudisk-fmm",
+      "cloudisk-mysql",
+      "cloudisk-rabbitmq",
+      "cloudisk-redis"
+    ],
+    "restart_policies_restored": true,
+    "enterprise_brain_test_stack_stopped": true,
+    "test_volumes_preserved": true,
+    "vm_memory_mib": 4096,
+    "vm_virtual_disk_gib": 80,
+    "temporary_model_proxy_removed": true,
+    "cloudisk_business_readiness": "Consul not ready: pre-existing offline-age protection",
+    "consul_error_before_pause_utc": "2026-10-28T01:37:08.774Z",
+    "pause_preparation_snapshot_utc": "2026-10-28T01:45:48.953510+00:00",
+    "consul_data_deleted": false,
+    "consul_config_changed": false
+  },
+  "targeted_tests": {
+    "initial_group": {
+      "passed": 96,
+      "failed": 1
+    },
+    "remaining_failed_case_after_fixture_correction": {
+      "passed": 1
+    },
+    "whole_group_repeated": false,
+    "full_C18_completed": false
+  },
+  "not_published": [
+    "credentials and environment files",
+    "raw SSE and enterprise question text",
+    "browser sessions",
+    "raw runtime logs and images",
+    "database files and VM images"
+  ],
+  "source_evidence_basenames": [
+    "live-policy-lineage.json",
+    "live-policy-layout.json",
+    "live-policy-preview-1440.json",
+    "live-policy-preview-377.json",
+    "live-inflight-result.json",
+    "vm-fault-run.json",
+    "vm-browser-preview-1440.json",
+    "vm-browser-preview-377.json",
+    "vm-pdf-quality.json",
+    "live-final-query.json",
+    "live-final-main-browser.json",
+    "live-final-main-home-ready.json",
+    "query-chart-deployment-final.json"
+  ],
+  "publication_checks": {
+    "frontend_build": "passed 2026-10-28",
+    "mobile_shortcut_real_login_pages": {
+      "main_and_review": true,
+      "cases": 6,
+      "viewport_width": 377,
+      "browser_engine": "desktop Chromium",
+      "guide_manifest_icons_and_no_overflow": true,
+      "physical_installation_or_launch_tested": false
+    },
+    "raw_screenshot_retained_locally": "github-mobile-shortcut-377.png"
+  }
+}

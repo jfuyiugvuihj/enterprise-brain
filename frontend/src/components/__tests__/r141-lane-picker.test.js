@@ -43,26 +43,32 @@ function assistantTurn(over = {}) {
 }
 
 describe('P1 · 控件上屏（SSR 真产物）', () => {
+  it('部分问题失败后显示未完成，不倒退为等待分析', async () => {
+    const html = await bare([assistantTurn({content: '前四项已有结果，第五项缺预算字段。',
+      steps: [{tool: 'data', label: '分析数据', status: 'failed'}]})])
+    expect(html).toContain('本轮未完成，请查看结果')
+    expect(html).not.toContain('等待分析')
+  })
   it('四枚取值都在下拉里，且默认落在「系统判断」', async () => {
     const html = await bare([assistantTurn()])
     expect(html).toContain('data-testid="chat-lane-picker"')
     for (const value of ['', 'qa', 'analysis', 'report']) {
       expect(html, `档位 ${value} 没进下拉`).toContain(`value="${value}"`)
     }
-    expect(html).toContain('按问题内容自动挑一条最省的路')
+    expect(html).toContain('按问题内容选择合适的处理方式')
   })
 
   it('控件有 label 且绑到同一个 id（读屏要能说出这是什么）', async () => {
     const html = await bare([assistantTurn()])
-    expect(html).toMatch(/<label[^>]*for="chat-lane-select"[^>]*>\s*本轮档位/)
+    expect(html).toMatch(/<label[^>]*for="chat-lane-select"[^>]*>\s*任务方式/)
     expect(html).toMatch(/<select[^>]*id="chat-lane-select"/)
   })
 
   it('换档要说得出代价：三档各自的承诺不同句', async () => {
     const promises = {
-      qa: '只用文字回答，不算数、不出图、不产文件',
-      analysis: '允许进数据分析与图表，但不产文件',
-      report: '一定走导出这一腿（会先请你确认）',
+      qa: '根据资料回答，不生成图表或报告',
+      analysis: '可分析数据、生成图表，不导出报告',
+      report: '生成报告，导出前需要你确认',
     }
     for (const [lane, copy] of Object.entries(promises)) {
       const html = await bareWithQuery(`/chat?lane=${lane}`)
@@ -81,7 +87,7 @@ describe('P2 · 地址是真相（刷新与深链留得住）', () => {
 
   it('地址里写了一个认不得的档位，落回「系统判断」而不是原样发出去', async () => {
     const html = await bareWithQuery('/chat?lane=REPORT')
-    expect(html).toContain('按问题内容自动挑一条最省的路')
+    expect(html).toContain('按问题内容选择合适的处理方式')
     expect(html).toContain('class="lane-picker" value=""')
   })
 
@@ -105,7 +111,7 @@ describe('P3 · 每一轮画回的是读数，不是选择框（判据③ 的自
   it('你选的：句子里写着"你选的"，并点名是哪一档', async () => {
     const html = await bare([assistantTurn({ lane: { lane: 'analysis', source: 'explicit', declared: 'analysis' } })])
     expect(html).toContain('data-testid="lane-readout"')
-    expect(html).toContain('本轮档位：分析档（你选的）')
+    expect(html).toContain('本轮档位：数据分析（你选的）')
   })
 
   it('系统判的：没人选就要说得出口"没人在选"', async () => {
@@ -116,7 +122,7 @@ describe('P3 · 每一轮画回的是读数，不是选择框（判据③ 的自
   it('没走图：缓存命中/排队这一轮档位没参与，且把你选过的 say 回来', async () => {
     const html = await bare([assistantTurn({ lane: { lane: '', source: 'not_routed', declared: 'report' } })])
     expect(html).toContain('本轮没有走进分析图')
-    expect(html).toContain('「报告档」没参与这一轮的路径')
+    expect(html).toContain('档位「生成报告」没参与这一轮的路径')
     // 与"没走图"不同的另一格：批准后续跑，原始声明掉在确认门外
     const resumed = await bare([assistantTurn({ lane: { lane: '', source: 'resumed', declared: '' } })])
     expect(resumed).toContain('确认门')

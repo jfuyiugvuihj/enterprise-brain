@@ -50,16 +50,21 @@ import {
   USER_WRITE_DEPARTMENT,
   USER_WRITE_PASSWORD,
   USER_WRITE_ROLE,
+  USER_WRITE_RESET_PASSWORD,
+  USER_WRITE_STATUS,
   createBody,
   departmentBody,
   departmentText,
   loadUsers,
   passwordBody,
+  resetPasswordBody,
   roleBody,
   submitCreateUser,
   submitDeleteUser,
   submitDepartmentChange,
   submitPasswordChange,
+  submitPasswordReset,
+  submitUserStatus,
   submitRoleChange,
   userDeletePath,
   userFormRuleViolations,
@@ -106,6 +111,8 @@ onUnmounted(invalidateRoster)
 // ── 写：对话框与表单状态 ────────────────────────────────────────────────────
 const dlgCreate = ref(false)
 const dlgPassword = ref(false)
+const dlgResetPassword = ref(false)
+const dlgStatus = ref(false)
 const dlgDepartment = ref(false)
 const dlgRole = ref(false)
 const dlgDelete = ref(false)
@@ -121,6 +128,8 @@ const form = reactive({
   [USER_FORM_FIELDS.department]: '',
   [USER_FORM_FIELDS.oldPassword]: '',
   [USER_FORM_FIELDS.newPassword]: '',
+  [USER_FORM_FIELDS.resetPassword]: '',
+  [USER_FORM_FIELDS.resetPasswordConfirm]: '',
 })
 
 /** 能创建的角色只有后端那三枚（lib 的账对 app/common/auth.py:606 的 CREATABLE_ROLES 闸）；标签仍走 userRoleLabel 这一处。 */
@@ -132,6 +141,7 @@ const targetOptions = computed(() => rows.value.map(row => ({
 })))
 const chosenRow = computed(() => rows.value.find(row => row.username === targetName.value) || null)
 const hasTarget = computed(() => Boolean(chosenRow.value))
+const knownTargetStatus = computed(() => chosenRow.value?.status === 'active' || chosenRow.value?.status === 'disabled')
 /** 删除按编号走（app/api/v1/auth.py:131 的路径参数就是编号）；这一行没编号就如实说删不了，不替它猜一个。 */
 const deletePath = computed(() => (chosenRow.value ? userDeletePath(chosenRow.value) : ''))
 const busy = computed(() => busyKind.value !== '')
@@ -139,10 +149,14 @@ const busy = computed(() => busyKind.value !== '')
 function closeDialogs() {
   dlgCreate.value = false
   dlgPassword.value = false
+  dlgResetPassword.value = false
+  dlgStatus.value = false
   dlgDepartment.value = false
   dlgRole.value = false
   dlgDelete.value = false
   fieldErrors.value = {}
+  form[USER_FORM_FIELDS.resetPassword] = ''
+  form[USER_FORM_FIELDS.resetPasswordConfirm] = ''
 }
 
 /**
@@ -158,6 +172,8 @@ function openDialog(kind) {
   form[USER_FORM_FIELDS.password] = ''
   form[USER_FORM_FIELDS.newPassword] = ''
   form[USER_FORM_FIELDS.oldPassword] = ''
+  form[USER_FORM_FIELDS.resetPassword] = ''
+  form[USER_FORM_FIELDS.resetPasswordConfirm] = ''
   if (kind === USER_WRITE_CREATE) {
     form[USER_FORM_FIELDS.username] = ''
     form[USER_FORM_FIELDS.department] = USER_CREATE_DEFAULTS.department
@@ -168,13 +184,23 @@ function openDialog(kind) {
   form[USER_FORM_FIELDS.department] = row && kind === USER_WRITE_DEPARTMENT ? row.department : ''
   form[USER_FORM_FIELDS.role] = row && kind === USER_WRITE_ROLE ? row.role : USER_CREATE_DEFAULTS.role
   if (kind === USER_WRITE_PASSWORD) dlgPassword.value = true
+  else if (kind === USER_WRITE_RESET_PASSWORD) dlgResetPassword.value = true
+  else if (kind === USER_WRITE_STATUS) dlgStatus.value = true
   else if (kind === USER_WRITE_DEPARTMENT) dlgDepartment.value = true
   else if (kind === USER_WRITE_ROLE) dlgRole.value = true
   else dlgDelete.value = true
 }
 
+watch(dlgResetPassword, (open) => {
+  if (!open) {
+    form[USER_FORM_FIELDS.resetPassword] = ''
+    form[USER_FORM_FIELDS.resetPasswordConfirm] = ''
+  }
+})
+
 /** 名册换了就清一次：账号不在了就把操作对象收回空，绝不让屏上留一个名册里没有的「选中的人」。 */
 watch(rows, (next) => {
+  if (loading.value) return
   if (targetName.value && !next.some(row => row.username === targetName.value)) targetName.value = ''
 })
 
@@ -194,9 +220,9 @@ async function runWrite(kind, body, send) {
   fieldErrors.value = {}
   busyKind.value = kind
   const out = await send()
-  busyKind.value = ''
   await loadRoster()
-  const back = userWriteReadback(out.kind, out.target, view.value, body)
+  busyKind.value = ''
+  const back = userWriteReadback(out.kind, out.target, view.value, { ...body, accountStatus: out.accountStatus })
   receipt.value = { ...out, consistent: back.consistent, note: back.note }
   if (out.face === USERS_FACE_WRITE_OK) closeDialogs()
 }
@@ -208,6 +234,16 @@ function submitCreate() {
 
 function submitPassword() {
   return runWrite(USER_WRITE_PASSWORD, passwordBody(form), () => submitPasswordChange(form))
+}
+
+function submitResetPassword() {
+  const body = resetPasswordBody(form)
+  return runWrite(USER_WRITE_RESET_PASSWORD, body, () => submitPasswordReset(form))
+}
+
+function submitStatus(status) {
+  if (!knownTargetStatus.value || !['active', 'disabled'].includes(status)) return
+  return runWrite(USER_WRITE_STATUS, { status }, () => submitUserStatus(targetName.value, status))
 }
 
 function submitDepartment() {
@@ -231,7 +267,7 @@ function confirmDelete() {
       <div>
         <span class="eyebrow">账号管理</span>
         <p>
-          查看账号及角色，开通账号、修改密码、调整部门或删除账号。操作完成后，列表会自动更新。
+          查看账号及状态，开通账号、重置密码、调整部门或停用/恢复账号。操作完成后，列表会自动更新。
         </p>
       </div>
       <div>
@@ -255,7 +291,7 @@ function confirmDelete() {
     <section v-if="canAct" class="panel-card" data-testid="admin-user-actions">
       <div class="section-head">
         <span class="eyebrow">账号操作</span>
-        <span class="demo-note">目前支持开通、修改密码、调整部门、调整角色和删除账号。暂不支持停用或改名。角色调整后的访问范围从下一次受保护请求起生效。</span>
+        <span class="demo-note">忘记密码时使用“重置密码”，无需知道原密码。状态未记录的账号不能停用或恢复。</span>
       </div>
 
       <div class="section-head">
@@ -277,12 +313,28 @@ function confirmDelete() {
       </div>
 
       <div v-if="hasTarget" class="section-head" data-testid="target-actions">
+        <p class="demo-note" data-testid="target-status-note">当前账号状态：{{ chosenRow.status === 'active' ? '启用' : chosenRow.status === 'disabled' ? '已停用' : '未记录，无法停用或恢复' }}</p>
+        <UiButton
+          v-if="knownTargetStatus"
+          size="sm"
+          :loading="busyKind === USER_WRITE_STATUS"
+          :label="chosenRow.status === 'active' ? '停用账号' : '恢复账号'"
+          data-testid="open-status"
+          @click="openDialog(USER_WRITE_STATUS)"
+        />
         <UiButton
           size="sm"
           :loading="busyKind === USER_WRITE_PASSWORD"
           label="修改密码"
           data-testid="open-password"
           @click="openDialog(USER_WRITE_PASSWORD)"
+        />
+        <UiButton
+          size="sm"
+          :loading="busyKind === USER_WRITE_RESET_PASSWORD"
+          label="重置密码"
+          data-testid="open-reset-password"
+          @click="openDialog(USER_WRITE_RESET_PASSWORD)"
         />
         <UiButton
           size="sm"
@@ -308,8 +360,9 @@ function confirmDelete() {
         />
       </div>
       <p v-else-if="!isEmpty" class="demo-note">
-        请先选择账号，再修改密码、调整部门或删除。
+        请先选择账号，再修改密码、重置密码、调整部门或删除。
       </p>
+      <p v-if="chosenRow?.must_change_password" class="demo-note">此账号下次登录后必须先更改临时密码。</p>
 
       <!-- 回执：成功那一支是名册旁边一句话，失败那一支是一张独立的脸（判据丙），都不挂重试。 -->
       <div v-if="receipt && receipt.face !== USERS_FACE_WRITE_OK" data-testid="write-failure">
@@ -406,6 +459,70 @@ function confirmDelete() {
           label="开通账号"
           data-testid="submit-create"
           @click="submitCreate"
+        />
+      </template>
+    </UiDialog>
+
+    <UiDialog
+      v-model="dlgResetPassword"
+      title="重置密码"
+      :description="`确认重置账号 ${targetName} 的密码。原登录会失效，员工需先更改临时密码。`"
+      :busy="busyKind === USER_WRITE_RESET_PASSWORD"
+    >
+      <div class="panel-shell">
+        <UiField :model-value="targetName" label="账号名" readonly data-testid="reset-password-username" />
+        <p>重置后，该账号的原登录会失效；员工需先更改临时密码。</p>
+        <UiField
+          v-model="form[USER_FORM_FIELDS.resetPassword]"
+          type="password"
+          label="临时密码"
+          required
+          :error="fieldErrors[USER_FORM_FIELDS.resetPassword]"
+          :hint="USER_RULE_HINTS.newPasswordTooShort"
+          data-testid="reset-password-value"
+        />
+        <UiField
+          v-model="form[USER_FORM_FIELDS.resetPasswordConfirm]"
+          type="password"
+          label="重复临时密码"
+          required
+          :error="fieldErrors[USER_FORM_FIELDS.resetPasswordConfirm]"
+          data-testid="reset-password-confirm"
+        />
+      </div>
+      <template #footer="{ close }">
+        <UiButton variant="ghost" label="取消" data-testid="cancel-reset-password" @click="close" />
+        <UiButton
+          variant="primary"
+          :loading="busyKind === USER_WRITE_RESET_PASSWORD"
+          label="确认重置"
+          data-testid="submit-reset-password"
+          @click="submitResetPassword"
+        />
+      </template>
+    </UiDialog>
+
+    <UiDialog
+      v-model="dlgStatus"
+      :title="chosenRow?.status === 'active' ? '停用账号' : '恢复账号'"
+      :description="chosenRow?.status === 'active'
+        ? `确认停用账号 ${targetName}。停用会立即使原登录失效并阻止后续访问，已有资料、任务、成果和审计记录会保留。`
+        : `确认恢复账号 ${targetName}。恢复后按当前角色与部门生效；旧登录仍需重新登录，任务不会自动重启。`"
+      :busy="busyKind === USER_WRITE_STATUS"
+    >
+      <div class="panel-shell">
+        <UiField :model-value="targetName" label="操作账号" readonly data-testid="status-username" />
+        <p v-if="chosenRow?.status === 'active'">停用会立即使原登录失效，阻止后续访问；已有资料、任务、成果和审计记录会保留。</p>
+        <p v-else>恢复后按当前角色与部门生效；旧登录仍需重新登录，已有任务不会自动重启。</p>
+      </div>
+      <template #footer="{ close }">
+        <UiButton variant="ghost" label="取消" data-testid="cancel-status" @click="close" />
+        <UiButton
+          variant="primary"
+          :loading="busyKind === USER_WRITE_STATUS"
+          :label="chosenRow?.status === 'active' ? '确认停用' : '确认恢复'"
+          data-testid="submit-status"
+          @click="submitStatus(chosenRow?.status === 'active' ? 'disabled' : 'active')"
         />
       </template>
     </UiDialog>

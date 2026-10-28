@@ -35,7 +35,7 @@ def test_queue_worker_acknowledges_success_and_stores_result(monkeypatch):
     monkeypatch.setattr(queue_worker, "_queue", queue)
     monkeypatch.setattr(
         "app.agents.orchestrator.run_orchestrator_result",
-        lambda user_message, thread_id="default", user=None: _result(
+        lambda user_message, thread_id="default", user=None, request_id=None: _result(
             answer=f"answer:{user_message}:{thread_id}", request_id=message.request_id
         ),
     )
@@ -108,12 +108,9 @@ def test_queue_worker_refuses_a_task_without_an_owning_principal(monkeypatch):
     monkeypatch.setattr("app.agents.orchestrator.run_orchestrator_result", forbidden)
 
     assert queue_worker.process_one() is True
-    assert queue.status(message.request_id) == "queued"
-    assert queue.result(message.request_id) is None
-
-    assert queue_worker.process_one() is True
     assert queue.status(message.request_id) == "dead"
     assert queue.result(message.request_id) is None
+    assert queue_worker.process_one() is False
 
 
 def test_queue_worker_uses_a_request_scoped_thread_when_the_session_is_missing(monkeypatch):
@@ -125,7 +122,7 @@ def test_queue_worker_uses_a_request_scoped_thread_when_the_session_is_missing(m
     monkeypatch.setattr(queue_worker, "_queue", queue)
     seen = {}
 
-    def fake_run(user_message, thread_id="default", user=None):
+    def fake_run(user_message, thread_id="default", user=None, request_id=None):
         seen["thread_id"] = thread_id
         return _result(answer="ok", request_id=message.request_id)
 

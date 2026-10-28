@@ -4,6 +4,22 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+
+def test_independent_session_registries_see_new_bindings_without_losing_other_owners(tmp_path):
+    from app.storage.sessions import SessionRegistry
+    from app.common.identity import Principal
+    path = tmp_path / 'shared-sessions.json'
+    first, second = SessionRegistry(path), SessionRegistry(path)
+    owner = Principal.from_user({'username':'first-owner','role':'manager','department':'finance'})
+    other = Principal.from_user({'username':'other-owner','role':'manager','department':'finance'})
+    first.bind('first-task', owner)
+    assert second.is_owned_by('first-task', owner)
+    assert not second.is_owned_by('first-task', other)
+    second.bind('other-task', other)
+    assert first.is_owned_by('other-task', other)
+    reopened = SessionRegistry(path)
+    assert reopened.is_owned_by('first-task', owner) and reopened.is_owned_by('other-task', other)
+
 SESSION_ID = "e2e-owned-session"
 
 

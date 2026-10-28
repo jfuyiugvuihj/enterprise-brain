@@ -1,7 +1,8 @@
 <script setup>
+import { computed } from 'vue'
 import { UiButton } from './ui'
 
-defineProps({
+const props = defineProps({
   selectedData: { type: String, default: '' },
   referenceDocuments: { type: Array, default: () => [] },
   usedData: { type: String, default: '' },
@@ -10,10 +11,26 @@ defineProps({
   sources: { type: Array, default: () => [] },
   sourceFace: { type: Object, default: null },
   scope: { type: Object, default: () => ({}) },
+  calculations: { type: Array, default: () => [] },
+  calculationStatus: { type: String, default: 'idle' },
   loading: { type: Boolean, default: false },
   hasAnswer: { type: Boolean, default: false },
+  hasRecordedRequest: { type: Boolean, default: false },
+  reuseDisabled: { type: Boolean, default: false },
+  reuseStatus: { type: String, default: '' },
 })
-const emit = defineEmits(['preview', 'goto', 'focus', 'report', 'remove-reference', 'clear-references'])
+const emit = defineEmits(['preview', 'goto', 'focus', 'report', 'remove-reference', 'clear-references', 'reuse'])
+const isQueryInput = row => row.parameters?.operation === 'query_data'
+  || row.result?.analysis_scope?.kind === 'query_input'
+const calculationRows = computed(() => {
+  const seen = new Set()
+  return props.calculations.filter(row => {
+    const key = JSON.stringify([row.parameters?.query, row.dataset_version_id, row.status, row.result?.analysis_scope])
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+})
 </script>
 
 <template>
@@ -46,7 +63,32 @@ const emit = defineEmits(['preview', 'goto', 'focus', 'report', 'remove-referenc
     </section>
     <section class="analysis-context__card">
       <h3>分析范围</h3>
-      <dl class="analysis-context__scope"><dt>期间</dt><dd>{{ scope.period || '结果中未单独记录' }}</dd><dt>筛选</dt><dd>{{ scope.filter || '以计算范围说明为准' }}</dd><dt>单位</dt><dd>{{ scope.unit || '以来源资料标注为准' }}</dd><dt>可见范围</dt><dd>当前账号授权范围</dd></dl>
+      <p v-if="calculationStatus === 'loading'">正在读取本轮计算记录……</p>
+      <p v-else-if="calculationStatus === 'unavailable'" role="status">本轮计算记录暂时无法读取，分析范围尚未核实。请稍后重新打开任务。</p>
+      <template v-if="calculationRows.length">
+        <details v-for="(row, index) in calculationRows" :key="row.calculation_run_id" :open="calculationRows.length === 1" data-testid="calculation-scope">
+          <summary>{{ calculationRows.length > 1 ? `第 ${index + 1} 项 · ` : '' }}{{ row.parameters?.filename || '计算记录' }} · {{ row.status === 'completed' ? '已计算' : '未完成' }}</summary>
+          <p>{{ row.parameters?.query }}</p>
+          <p v-if="isQueryInput(row)" class="analysis-context__note">以下是查询前的输入范围。查询可能继续筛选或汇总，输入记录数和字段单位不代表查询结果的行数或单位。</p>
+          <dl class="analysis-context__scope">
+            <dt>数据版本</dt><dd>{{ row.dataset_version_id }}</dd>
+            <dt>{{ isQueryInput(row) ? '输入期间' : '期间' }}</dt><dd>{{ row.result?.analysis_scope?.period || '此记录未单独保存期间，请核对原分析；未从正文推断' }}</dd>
+            <dt>{{ isQueryInput(row) ? '输入筛选' : '筛选' }}</dt><dd>{{ row.result?.analysis_scope?.filter || row.result?.filter_note || '未单独保存' }}</dd>
+            <dt>{{ isQueryInput(row) ? '输入字段单位' : '单位' }}</dt><dd><template v-if="row.result?.analysis_scope?.units?.length"><span v-for="metric in row.result.analysis_scope.units" :key="metric.column" style="display:block">{{ metric.column }}：{{ metric.unit }}</span></template><template v-else>未单独保存</template></dd>
+            <dt>{{ isQueryInput(row) ? '输入记录数' : '记录数' }}</dt><dd>{{ row.result?.rows ?? '未得到结果' }}</dd>
+            <dt>工作表</dt><dd>{{ row.result?.analysis_scope?.sheet || row.result?.sheet_name || '未单独保存' }}</dd>
+          </dl>
+          <small>计算记录：{{ row.calculation_run_id }}</small>
+          <UiButton v-if="row.status === 'completed'" variant="secondary" size="sm" data-testid="analysis-reuse"
+            :disabled="loading || reuseDisabled" @click="emit('reuse', row)">按这次条件再分析</UiButton>
+        </details>
+      </template>
+      <template v-else-if="calculationStatus !== 'unavailable' && calculationStatus !== 'loading'">
+        <p v-if="hasAnswer">{{ hasRecordedRequest ? '本轮尚无独立计算范围可核对，未从回答正文推断。请核对原始资料。' : '旧正文摘录，尚未核实；不能替代独立计算记录。' }}</p>
+        <dl v-if="hasAnswer && !hasRecordedRequest" class="analysis-context__scope"><dt>期间</dt><dd>{{ scope.period || '未单独记录' }}</dd><dt>筛选</dt><dd>{{ scope.filter || '未单独记录' }}</dd><dt>单位</dt><dd>{{ scope.unit || '未单独记录' }}</dd></dl>
+        <p v-if="!hasAnswer">完成分析后，在这里查看实际计算范围。</p>
+      </template>
+      <p v-if="reuseStatus" role="status" data-testid="analysis-reuse-status">{{ reuseStatus }}</p>
     </section>
     <section class="analysis-context__card" data-testid="analysis-evidence">
       <h3>依据与后续操作</h3>

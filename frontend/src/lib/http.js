@@ -86,13 +86,13 @@ function isLoginRequest(target) {
   return String(target || '').includes('/login')
 }
 
-function handleUnauthorized() {
+function handleUnauthorized(message = '登录状态已失效，请重新登录。') {
   if (!hasSession()) return
   const now = Date.now()
   if (now - lastUnauthorizedAt < 3000) return // 并发请求只提示一次
   lastUnauthorizedAt = now
   clearSession()
-  emit({ type: 'unauthorized', message: '登录状态已失效，请重新登录。' })
+  emit({ type: 'unauthorized', message })
 }
 
 http.interceptors.request.use(config => {
@@ -106,6 +106,12 @@ http.interceptors.response.use(
   error => {
     const status = error?.response?.status
     if (status === 401 && !isLoginRequest(error?.config?.url)) handleUnauthorized()
+    if (status === 403 && error?.response?.data?.detail === 'account_unavailable') {
+      handleUnauthorized('账号已停用，请联系管理员。')
+    }
+    if (status === 403 && error?.response?.data?.detail === 'password_change_required') {
+      emit({ type: 'password_change_required' })
+    }
     return Promise.reject(error)
   },
 )
@@ -139,6 +145,11 @@ export async function authedFetch(path, { headers, ...options } = {}) {
   const url = String(path).startsWith('http') ? path : `${API_BASE}${path}`
   const response = await fetch(url, { ...options, headers: merged })
   if (response.status === 401 && !isLoginRequest(path)) handleUnauthorized()
+  if (response.status === 403) {
+    const body = await response.clone().json().catch(() => null)
+    if (body?.detail === 'account_unavailable') handleUnauthorized('账号已停用，请联系管理员。')
+    if (body?.detail === 'password_change_required') emit({ type: 'password_change_required' })
+  }
   return response
 }
 

@@ -540,8 +540,8 @@ def KNIFE_ONE():
         REPO / AUTH_REL,
         edits=[
             (
-                ('USER_LOOKUP_COLUMNS: tuple[str, ...] = ("username", "role", "department")',),
-                ('USER_LOOKUP_COLUMNS: tuple[str, ...] = ("id", "username", "role", "department")',),
+                ('USER_LOOKUP_COLUMNS: tuple[str, ...] = ("username", "role", "department", "auth_version", "must_change_password", "status")',),
+                ('USER_LOOKUP_COLUMNS: tuple[str, ...] = ("id", "username", "role", "department", "auth_version", "must_change_password", "status")',),
             )
         ],
     )
@@ -714,6 +714,9 @@ def test_counter_evidence_knife_two_a_true_owner_comparison_is_caught(tmp_path, 
 
 def test_counter_evidence_knife_three_removing_the_source_is_caught(tmp_path, monkeypatch):
     """刀三（摘掉显式真源，退回靠 SELECT 形状）：行为一格没变，但承重必须当场可见地红。"""
+    from threading import Lock
+    # This historical class is compiled into today's module globals by the knife.
+    monkeypatch.setattr(sessions_module, 'Lock', Lock, raising=False)
     _require_no_global_knife()
     red, green = _replay(
         KNIFE_THREE,

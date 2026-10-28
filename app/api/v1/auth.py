@@ -1,6 +1,7 @@
 """Day 19: 登录 + 用户管理 API"""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from typing import Literal
 from app.common import audit as audit_log
 from app.common import auth
 from app.common.authorization import DEPARTMENT_SELF_REPORT_DENIED, authorize_request, principal_from_request
@@ -33,6 +34,16 @@ class ChangePasswordRequest(BaseModel):
     username: str
     old_password: str
     new_password: str
+
+
+class ResetPasswordRequest(BaseModel):
+    username: str
+    new_password: str
+
+
+class AccountStatusRequest(BaseModel):
+    username: str
+    status: Literal['active', 'disabled']
 
 
 class UpdateDepartmentRequest(BaseModel):
@@ -80,22 +91,70 @@ async def health_details():
 
 
 @router.post("/login")
-async def login(data: LoginRequest):
+def login(data: LoginRequest):
     """登录，返回 JWT"""
-    if not auth.verify_password(data.username, data.password):
+    u = auth.authenticate_user(data.username, data.password)
+    if not u:
         raise HTTPException(status_code=401, detail="用户名或密码错误")
-    token = auth.create_token(data.username)
-    u = auth.get_user(data.username) or {}
+    if u.get('status', 'active') != 'active':
+        raise HTTPException(status_code=403, detail="account_unavailable")
+    token = auth.create_token(data.username, user=u)
     return {
         "token": token,
         "username": data.username,
         "role": u.get("role") or "staff",          # 阶段 2
         "department": u.get("department") or "",   # 阶段 2
+        "must_change_password": bool(u.get('must_change_password')),
         "expires_in": auth._EXPIRE_HOURS * 3600,
     }
 
 
 # ==================== 用户管理 ====================
+
+
+@router.get('/account')
+async def get_account(request: Request):
+    principal = principal_from_request(request)
+    return {'username': principal.username, 'role': principal.role,
+            'department': principal.department,
+            'must_change_password': principal.status == 'password_change_required'}
+
+
+@router.post('/users/reset-password')
+def reset_user_password(data: ResetPasswordRequest, request: Request):
+    authorize_request(request, ACTION_MANAGE_USERS, resource_name='users')
+    principal = principal_from_request(request)
+    try:
+        ok, message = auth.reset_password(data.username, data.new_password)
+    except auth.UserStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail='storage_unavailable') from exc
+    audit_log.record_audit(principal, ACTION_MANAGE_USERS, 'allowed' if ok else 'failure',
+        f'users:{data.username}', 'password_reset' if ok else 'password_reset_failed')
+    if not ok:
+        raise HTTPException(status_code=404 if message == auth.USER_NOT_FOUND else 400, detail=message)
+    return {'status': 'ok', 'message': message, 'must_change_password': True}
+
+
+@router.put('/users/status')
+def update_account_status(data: AccountStatusRequest, request: Request):
+    authorize_request(request, ACTION_MANAGE_USERS, resource_name='users')
+    principal = principal_from_request(request)
+    try:
+        result = auth.update_account_status(data.username, data.status)
+    except auth.LastAdministratorError as exc:
+        audit_log.record_audit(principal, ACTION_MANAGE_USERS, 'failure',
+            f'users:{data.username}', 'last_administrator_protected')
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except auth.UserStoreUnavailable as exc:
+        raise HTTPException(status_code=503, detail='storage_unavailable') from exc
+    if result is None:
+        audit_log.record_audit(principal, ACTION_MANAGE_USERS, 'failure',
+            f'users:{data.username}', 'user_not_found')
+        raise HTTPException(status_code=404, detail='用户不存在')
+    audit_log.record_audit(principal, ACTION_MANAGE_USERS, 'allowed',
+        f'users:{data.username}', 'account_status_changed' if result['changed'] else 'account_status_unchanged',
+        after_summary={'status': data.status, 'changed': result['changed']})
+    return {'status': 'ok', **result, 'message': '账号已停用，原登录已失效' if data.status == 'disabled' else '账号已恢复，请重新登录'}
 
 
 @router.get("/users")
@@ -118,7 +177,7 @@ async def list_users(request: Request):
 
 
 @router.post("/users")
-async def create_user(data: CreateUserRequest, request: Request):
+def create_user(data: CreateUserRequest, request: Request):
     """创建新用户"""
     authorize_request(request, ACTION_MANAGE_USERS, resource_name="users")
     ok, msg = auth.create_user(
@@ -133,24 +192,34 @@ async def create_user(data: CreateUserRequest, request: Request):
 
 
 @router.delete("/users/{user_id}")
-async def delete_user(user_id: int, request: Request):
+def delete_user(user_id: int, request: Request):
     """删除用户"""
     authorize_request(request, ACTION_MANAGE_USERS, resource_name="users")
-    ok = auth.delete_user(user_id)
+    try:
+        ok = auth.delete_user(user_id)
+    except auth.LastAdministratorError as exc:
+        audit_log.record_audit(principal_from_request(request), ACTION_MANAGE_USERS, 'failure',
+            f'users:{user_id}', 'last_administrator_protected')
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not ok:
         raise HTTPException(status_code=404, detail="用户不存在")
     return {"status": "ok"}
 
 
 @router.put("/users/password")
-async def change_password(data: ChangePasswordRequest, request: Request):
+def change_password(data: ChangePasswordRequest, request: Request):
     """修改密码"""
     principal = principal_from_request(request)
     if principal is None:
         raise HTTPException(status_code=401, detail="authentication_required")
+    if principal.status == 'password_change_required' and data.username != principal.username:
+        raise HTTPException(status_code=403, detail='permission_denied')
     if data.username != principal.username and ACTION_MANAGE_USERS not in principal.permissions:
         raise HTTPException(status_code=403, detail="权限不足: users:manage")
     ok, msg = auth.change_password(data.username, data.old_password, data.new_password)
+    audit_log.record_audit(principal, ACTION_MANAGE_USERS if data.username != principal.username else 'password:change',
+        'allowed' if ok else 'failure', f'users:{data.username}',
+        'password_changed' if ok else 'password_change_failed')
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"status": "ok", "message": msg}
@@ -159,7 +228,7 @@ async def change_password(data: ChangePasswordRequest, request: Request):
 # R290: 部门归属的写入口。形状照上一支（PUT /users/password，body 里带 username），
 # 闸**不**照它抄 —— 见下面的 docstring，这一格差别就是本单存在的理由。
 @router.put("/users/department")
-async def update_user_department(data: UpdateDepartmentRequest, request: Request):
+def update_user_department(data: UpdateDepartmentRequest, request: Request):
     """改一名员工的部门归属；只有 ``users:manage`` 改得动，本人改自己也一样拒。
 
     为什么不能自助（本单最重要的判据）：``app/common/authorization.py:47`` 造 Principal
@@ -227,7 +296,7 @@ async def update_user_department(data: UpdateDepartmentRequest, request: Request
 
 
 @router.put("/users/role")
-async def update_user_role(data: UpdateRoleRequest, request: Request):
+def update_user_role(data: UpdateRoleRequest, request: Request):
     """Adjust one account between the four existing roles.
 
     The response states the resulting clearance so the administrator sees the
@@ -253,7 +322,12 @@ async def update_user_role(data: UpdateRoleRequest, request: Request):
         raise HTTPException(status_code=404, detail="用户不存在")
 
     before = str(target.get("role") or "staff")
-    ok, msg = auth.update_role(data.username, role)
+    try:
+        ok, msg = auth.update_role(data.username, role)
+    except auth.LastAdministratorError as exc:
+        audit_log.record_audit(principal, ACTION_MANAGE_USERS, 'failure',
+            f'users:{data.username}', 'last_administrator_protected')
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not ok:
         if msg == auth.USER_NOT_FOUND:
             raise HTTPException(status_code=404, detail=msg)
@@ -294,12 +368,16 @@ async def sso_login(request: Request):
     if not ok:
         raise HTTPException(status_code=500, detail=msg)
     token = auth.create_token(identity["username"])
+    user = auth.get_user(identity['username']) or {}
+    if user.get('status', 'active') != 'active':
+        raise HTTPException(status_code=403, detail='account_unavailable')
     return {
         "token": token,
         "username": identity["username"],
         "role": identity["role"],
         "department": identity["department"],
         "display_name": identity["display_name"],
+        "must_change_password": bool(user.get('must_change_password')),
         "expires_in": auth._EXPIRE_HOURS * 3600,
     }
 

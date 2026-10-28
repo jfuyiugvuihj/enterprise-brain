@@ -71,12 +71,15 @@ def test_many_long_chinese_labels_remain_visible_without_overlap(rendered):
     labels = [f"跨区域企业费用试用部门第{index:02d}组及其业务支持中心" for index in range(21)]
     chart.bar_chart(labels, list(range(21)), title="完整部门费用", ylabel="元")
     ax, renderer = rendered["axes"], rendered["renderer"]
-    ticks = ax.get_xticklabels()
+    assert rendered['figure'].get_size_inches()[0] <= 12, 'A very wide figure becomes unreadable in a PDF'
+    ticks = ax.get_yticklabels()
     assert len(ticks) == len(labels)
     assert all(tick.get_visible() for tick in ticks)
     assert [tick.get_text().replace("\n", "") for tick in ticks] == labels
     boxes = [tick.get_window_extent(renderer) for tick in ticks]
-    assert all(left.x1 <= right.x0 for left, right in zip(boxes, boxes[1:]))
+    boxes.sort(key=lambda box: box.y0)
+    assert all(low.y1 <= high.y0 for low, high in zip(boxes, boxes[1:]))
+    assert ax.get_xlabel() == '元'
 
 
 @pytest.mark.parametrize("values", [[], [float("nan")], [float("inf")]])
@@ -84,3 +87,30 @@ def test_empty_or_nonfinite_values_do_not_write_chart(rendered, values):
     with pytest.raises(ValueError):
         chart.bar_chart(["未知"] if values else [], values)
     assert "path" not in rendered
+
+@pytest.mark.parametrize("labels,values", [
+    ([], []), (["甲"], []), (["甲", "乙"], [1]),
+    (["甲"], [float("nan")]), (["甲"], [float("inf")]), (["甲"], [float("-inf")]),
+    (["甲"], [-1]), (["甲", "乙"], [0, 0]), (["甲", "乙"], [1e308, 1e308]),
+    ([f"分类{i}" for i in range(11)], [0] * 10 + [-1]),
+])
+def test_pie_rejects_invalid_inputs_before_plotting_or_writing(rendered, monkeypatch, labels, values):
+    def unexpected_plot(*args, **kwargs):
+        raise AssertionError("must validate before plotting")
+    monkeypatch.setattr(chart.plt, "subplots", unexpected_plot)
+    monkeypatch.setattr(chart, "bar_chart", unexpected_plot)
+    with pytest.raises(ValueError, match="饼图") as exc:
+        chart.pie_chart(labels, values)
+    if any(value < 0 and value != float("-inf") for value in values):
+        assert "柱状图" in str(exc.value)
+    assert "path" not in rendered
+
+
+@pytest.mark.parametrize("values", [[1, 2], [0, 3], [2, 0, 4]])
+def test_pie_accepts_positive_total_and_preserves_proportions(rendered, values):
+    labels = [f"分类{i}" for i in range(len(values))]
+    chart.pie_chart(labels, values)
+    assert len(rendered["axes"].patches) == len(values)
+    percentages = [text.get_text() for text in rendered["axes"].texts if text.get_text().endswith("%")]
+    expected = [f"{value / sum(values) * 100:.1f}%" for value in values]
+    assert percentages == expected

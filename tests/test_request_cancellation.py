@@ -415,8 +415,10 @@ def test_a_declined_action_is_still_recorded_as_declined(monkeypatch):
     captured = {}
 
     class FakeGraph:
-        def update_state(self, config, values):
+        def update_state(self, config, values, *, as_node=None):
             captured["update"] = values
+            captured["as_node"] = as_node
+            return config
 
         def stream(self, payload, config, **kwargs):
             captured["payload"] = payload
@@ -434,8 +436,9 @@ def test_a_declined_action_is_still_recorded_as_declined(monkeypatch):
 
     update = captured["update"]
     assert "chart" in update["worker_results"]
-    assert update["worker_results"]["chart"].startswith("已取消，未执行")
-    assert captured["payload"].goto == "supervisor"
+    assert update["worker_results"]["chart"].startswith("已拒绝，未执行")
+    assert captured["as_node"] == "chart"
+    assert captured["payload"] is None
 
 
 def test_a_resume_config_always_carries_the_marker_slot(monkeypatch):

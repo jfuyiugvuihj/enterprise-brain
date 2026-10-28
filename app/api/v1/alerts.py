@@ -12,7 +12,6 @@
 """
 import os
 import json
-import sys
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from itertools import islice
@@ -56,8 +55,8 @@ def _conn():
 
 
 def _database_available() -> bool:
-    auth_module = sys.modules.get("app.common.auth")
-    return bool(auth_module and getattr(auth_module, "_db_ready", False))
+    from app.common import auth
+    return bool(auth._db_ready)
 
 
 def _is_production_environment() -> bool:
@@ -252,6 +251,8 @@ class RuleCreate(BaseModel):
     data_filename: str = ''
     query: str = ''
     group_by: str = ''
+    version_policy: str | None = None
+    expected_version_id: str | None = None
 
 
 class CheckSelection(BaseModel):
@@ -895,7 +896,7 @@ def _directory_data_files(root: Path) -> list[Path]:
 
 
 def _permitted_dataset_files(principal, root: Path) -> list[Path]:
-    """带 Principal 的巡检：限定在该 Principal 有权 analyze 的 Dataset 集合内。"""
+    """Use registered uploads; scheduled rules recheck their current owner below."""
     from app.common.permissions import ACTION_ANALYZE
     from app.storage.datasets import dataset_registry
 
@@ -913,7 +914,7 @@ def _permitted_dataset_files(principal, root: Path) -> list[Path]:
             action=ACTION_ANALYZE,
             require_resource_scope=True,
         )
-        if not decision.allowed:
+        if principal is not None and not decision.allowed:
             continue
         try:
             path = Path(str(record.storage_path)).expanduser().resolve()
@@ -942,20 +943,50 @@ def _scan_data_files(principal) -> tuple[list[Path], dict]:
         logger.warning("[Alert] 无可用租户 DATA_DIR，本次巡检按无数据处理（不回落仓库 data/）")
         return [], summary
     summary["data_dir_configured"] = True
-    paths = (
-        _directory_data_files(root)
-        if principal is None
-        else _permitted_dataset_files(principal, root)
-    )
+    paths = _permitted_dataset_files(principal, root)
     summary["evaluated_files"] = [path.name for path in paths]
     if not paths:
         summary["reason"] = "no_data_files" if principal is None else "no_permitted_datasets"
     return paths, summary
 
 
+def _current_owner(owner_id, username=''):
+    """Resolve retained owner IDs through the current account store, never an old role."""
+    from app.common import auth
+    try:
+        user = auth.get_user(username or str(owner_id))
+        if user is None and not username:
+            row = next((row for row in auth.list_users(denial=auth.DENIAL_RAISES)
+                        if str(row['id']) == str(owner_id)), None)
+            user = auth.get_user(row['username']) if row else None
+        return user if user and str(user.get('id') or user.get('username')) == str(owner_id) else None
+    except Exception as exc:
+        logger.warning('[Alert] 负责人身份无法核对 error=%s', type(exc).__name__)
+        return None
+
+
 def _rule_visible(rule, principal):
-    owner = (rule.get('options') or {}).get('owner_id')
-    return not owner or principal is None or is_administrator(principal) or owner == principal.user_id
+    options = rule.get('options') or {}
+    owner = options.get('owner_id')
+    if principal is None or is_administrator(principal):
+        return True
+    if owner and owner != principal.user_id:
+        return False
+    if options.get('data_filename'):
+        from app.storage.datasets import dataset_registry
+        from app.common.permissions import ACTION_ANALYZE
+        # Visibility follows recorded scope even when bytes are missing, so the
+        # owner can see the rule's failure instead of losing the rule altogether.
+        dataset = next((item for item in dataset_registry.list()
+                        if item.filename == options['data_filename']), None)
+        scope = dataset.resource_scope if dataset else None
+        if options.get('version_policy') == 'fixed':
+            version = dataset_registry.version_row(options.get('version_id') or '')
+            scope = (dataset_registry.scope_for_version(version)
+                     if dataset and version and version.dataset_id == dataset.dataset_id else None)
+        return bool(scope and authorization_decision(principal, scope,
+            action=ACTION_ANALYZE, require_resource_scope=True).allowed)
+    return True
 
 
 def _with_linked_artifacts(rows, principal):
@@ -1014,6 +1045,7 @@ def _record_finding(rule, evidence, department):
 def evaluate_all(principal=None, scan_summary: dict | None = None, rule_ids: list[int] | None = None) -> list[dict]:
     """读数据逐规则判定，触发则写告警+AI归因。返回本次触发的告警。"""
     from app.tools.excel import load_excel
+    _require_ready_store('evaluate_all')
     if _database_available():
         try:
             _ensure()
@@ -1026,7 +1058,16 @@ def evaluate_all(principal=None, scan_summary: dict | None = None, rule_ids: lis
     # 落章用的部门：每份数据自己登记的归属（登记表不可用时为空表）。
     dataset_departments = _dataset_department_index()
     from app.storage.datasets import dataset_registry
-    registered_paths = {str(Path(item.storage_path).resolve()): item.filename for item in dataset_registry.active_records()}
+    try:
+        registered_paths = {str(Path(item.storage_path).resolve()): item.filename
+                            for item in dataset_registry.active_records()}
+    except Exception as exc:
+        logger.warning('[Alert] 数据版本登记无法读取，本次巡检未判断 error=%s', type(exc).__name__)
+        if scan_summary is not None:
+            scan_summary.update(reason='dataset_registry_unavailable', evaluated_files=[],
+                evaluation_failures=[{'filename': '资料目录', 'reason': '数据版本登记无法读取，请联系管理员核对数据目录配置。'}],
+                ongoing=0, recovered=0)
+        return []
     dfs: list[tuple[str, object]] = []
     unreadable: list[dict[str, str]] = []
     for data_path in data_paths:
@@ -1073,15 +1114,27 @@ def evaluate_all(principal=None, scan_summary: dict | None = None, rule_ids: lis
         if not _rule_visible(rule, principal):
             continue
         options = rule.get('options') or {}
+        if options.get('version_policy', 'follow_latest') not in {'fixed', 'follow_latest'}:
+            failures.append({'rule_id': rule['id'], 'reason': '版本策略无法识别，未判断'})
+            continue
         metric_found = False
         actor = principal
         if actor is None and options.get('owner_id'):
             from app.common import auth
             from app.common.identity import Principal
-            user = auth.get_user(options['owner_id'])
-            if not user or user.get('status') == 'disabled':
+            user = _current_owner(options['owner_id'], options.get('owner_username') or '')
+            if not user or user.get('status') == 'disabled' or user.get('must_change_password'):
+                failures.append({'rule_id': rule['id'], 'reason': '规则负责人当前不可用，未判断'})
                 continue
             actor = Principal.from_user(user)
+            if not authorization_decision(actor, None, action=ACTION_MANAGE_ALERTS).allowed:
+                failures.append({'rule_id': rule['id'], 'reason': '规则负责人当前没有告警管理权限，未判断'})
+                continue
+        if options.get('data_filename') and not any(name == options['data_filename'] for name, _ in dfs):
+            failures.append({'rule_id': rule['id'], 'filename': options['data_filename'],
+                'reason': '固定版本的来源文件当前无法读取或无权访问，未判断'
+                    if options.get('version_policy') == 'fixed' else '来源文件当前无法读取或无权访问，未判断'})
+            continue
         for dataset_name, df in dfs:
             dataset = dataset_registry.get_active_by_filename(dataset_name)
             if not dataset or not dataset.version_id:
@@ -1089,10 +1142,16 @@ def evaluate_all(principal=None, scan_summary: dict | None = None, rule_ids: lis
                 continue
             if options.get('data_filename') and options['data_filename'] != dataset_name:
                 continue
+            if options.get('version_policy') == 'fixed':
+                dataset = dataset_registry.resolve_version(dataset_name, options.get('version_id') or '')
+                if dataset is None or dataset.content_sha256 != options.get('sha256'):
+                    failures.append({'filename': dataset_name, 'reason': '固定版本缺失或登记依据不一致，未判断'})
+                    continue
             try:
                 df = load_excel(dataset.storage_path, query=options.get('query') or '')
             except Exception:
-                failures.append({'filename': dataset_name, 'reason': '工作表或输入无法读取，未判断'})
+                failures.append({'filename': dataset_name, 'reason': '固定版本工作表或输入无法读取，未判断'
+                    if options.get('version_policy') == 'fixed' else '工作表或输入无法读取，未判断'})
                 continue
             if actor and not authorization_decision(actor, dataset.resource_scope, action=ACTION_ANALYZE, require_resource_scope=True).allowed:
                 continue
@@ -1100,11 +1159,14 @@ def evaluate_all(principal=None, scan_summary: dict | None = None, rule_ids: lis
             if effective_actor is None:
                 from app.common import auth
                 from app.common.identity import Principal
-                owner = auth.get_user(dataset.owner_id)
-                if not owner or owner.get('status') == 'disabled':
+                owner = _current_owner(dataset.owner_id)
+                if not owner or owner.get('status') == 'disabled' or owner.get('must_change_password'):
                     failures.append({'filename': dataset_name, 'reason': '无可用负责人授权，系统巡检未判断'})
                     continue
                 effective_actor = Principal.from_user(owner)
+                if not authorization_decision(effective_actor, None, action=ACTION_MANAGE_ALERTS).allowed:
+                    failures.append({'filename': dataset_name, 'reason': '负责人当前没有告警管理权限，未判断'})
+                    continue
                 if not authorization_decision(effective_actor, dataset.resource_scope, action=ACTION_ANALYZE, require_resource_scope=True).allowed:
                     continue
             if rule['metric'] not in df:
@@ -1123,6 +1185,7 @@ def evaluate_all(principal=None, scan_summary: dict | None = None, rule_ids: lis
                     evidence = calculate_finding(frame, rule, filename=dataset_name, dataset_id=dataset.dataset_id,
                         version_id=dataset.version_id, sha256=dataset.content_sha256, principal=effective_actor,
                         system_department=system_department)
+                    evidence['version_policy'] = options.get('version_policy', 'follow_latest')
                     if effective_actor:
                         from app.storage.calculations import calculation_storage
                         from app.storage.artifacts import owner_department_scope
@@ -1202,14 +1265,23 @@ async def create_rule(data: RuleCreate, request: Request = None):
     import math
     if not data.name.strip() or not data.metric.strip() or not math.isfinite(data.threshold):
         raise HTTPException(status_code=400, detail='validation_error')
+    policy = data.version_policy or ('fixed' if data.data_filename else 'follow_latest')
+    if policy not in {'fixed', 'follow_latest'} or policy == 'fixed' and not data.data_filename:
+        raise HTTPException(status_code=400, detail='validation_error')
+    dataset = None
     if data.data_filename:
         from app.storage.datasets import dataset_registry
         from app.common.permissions import ACTION_ANALYZE
         dataset = dataset_registry.get_active_by_filename(data.data_filename)
         if not dataset or not authorization_decision(principal, dataset.resource_scope, action=ACTION_ANALYZE, require_resource_scope=True).allowed:
             raise HTTPException(status_code=403, detail='permission_denied')
+        if data.expected_version_id is not None and data.expected_version_id != dataset.version_id:
+            raise HTTPException(status_code=409, detail='dataset_version_changed')
     options = {'owner_id': principal.user_id, 'data_filename': data.data_filename,
-               'query': data.query, 'group_by': data.group_by} if principal else {}
+               'owner_username': principal.username, 'query': data.query, 'group_by': data.group_by,
+               'version_policy': policy} if principal else {}
+    if policy == 'fixed':
+        options.update(version_id=dataset.version_id, sha256=dataset.content_sha256)
     _require_ready_store("create_rule")
     if not _database_available():
         global _MEM_NEXT_RULE_ID

@@ -35,6 +35,18 @@ def test_short_report_has_no_disclaimer_only_ending_page(report_output):
     assert len(pages) <= 2
 
 
+def test_summary_explains_mean_denominator_and_unconfirmed_unit(report_output):
+    import pandas as pd
+    from app.agents.tools import _report_data_facts, _verified_report_sections
+    frame = pd.DataFrame({'部门': ['财务'] * 3, '金额': [100, None, 300]})
+    facts = _report_data_facts('合成-缺失金额.csv', frame, '按部门汇总金额')
+    reader = PdfReader(export.generate_pdf_report('费用分析简报', _verified_report_sections([facts], '')))
+    text = ''.join(page.extract_text() for page in reader.pages).replace('\n', '')
+    assert '参与平均：2条有数值记录' in text
+    assert '单位待确认' in text
+    assert '400.00' in text and '200.00' in text
+
+
 def test_management_template_starts_with_metrics_and_renders_numeric_table(report_output):
     path = export.generate_pdf_report("费用管理简报", [
         {"type": "summary", "period": "2026-10-01 至 2026-10-09", "cards": [
@@ -113,6 +125,22 @@ def test_expense_brief_without_chart_uses_first_page_for_details(report_output):
     assert "本图" not in ''.join(page.extract_text() for page in reader.pages)
 
 
+def test_monthly_brief_does_not_leave_one_appendix_row_on_a_third_page(report_output):
+    import pandas as pd
+    from app.agents.tools import _report_data_facts, _verified_report_sections
+    frame = pd.DataFrame({'月份': [f'2026-{i:02}' for i in range(1, 7)],
+        '部门': ['财务部'] * 6, '金额（元）': [100, 200, 300, 400, 500, 600]})
+    facts = _report_data_facts('qa-query-96edd2be84.csv', frame, '按月份汇总金额（元）与记录数',
+        version_id='d05e6dbb39674e63800a9741547978b0:v1', sha256='8' * 64)
+    sections = _verified_report_sections([facts], '')
+    slot = next(i for i, section in enumerate(sections) if section['type'] == 'chart_slot')
+    sections[slot] = {'type': 'chart', 'path': chart_file(report_output, (1043, 791)),
+        'caption': '图1：当前授权与筛选范围内的分组构成；单位以坐标轴标注为准；来源与版本详见编制口径。'}
+    reader = PdfReader(export.generate_pdf_report('经营分析简报', sections))
+    assert len(reader.pages) == 2
+    assert '2026-06 财务部 600' in reader.pages[-1].extract_text()
+
+
 def test_legacy_chart_caption_never_exposes_random_filename(report_output):
     chart = chart_file(report_output)
     path = export.generate_pdf_report("部门费用分析", [], [chart])
@@ -166,6 +194,18 @@ def test_tall_chart_keeps_caption_on_same_page(report_output):
     assert caption in chart_pages[0].extract_text().replace("\n", "")
 
 
+def test_brief_fits_tall_chart_below_title_without_a_title_only_page(report_output):
+    path = export.generate_pdf_report('合成验收长标签图', [
+        {'type':'summary', 'cards':[]},
+        {'type':'heading', 'content':'完整类别分布'},
+        {'type':'chart', 'path':chart_file(report_output, (1000, 1900)), 'caption':'21个类别全部列示。'},
+    ])
+    reader = PdfReader(path)
+    assert len(reader.pages) == 1
+    assert b' Do' in reader.pages[0].get_contents().get_data()
+    assert '完整类别分布' in reader.pages[0].extract_text()
+
+
 def test_review_brief_does_not_strand_limitations_on_nearly_empty_third_page(report_output):
     import pandas as pd
     from app.agents.task_review import policy_review_text
@@ -206,3 +246,17 @@ def test_empty_brief_explains_absent_groups_and_does_not_invent_review_target(re
     text = ''.join(p.extract_text() for p in reader.pages)
     assert '没有可列示的分组明细' in text and '确认0条' in text
     assert '核对金额较高分组' not in text and '以授权范围内的分组表格为依据' not in text
+
+
+def test_wide_table_keeps_readable_column_groups_and_unambiguous_row_order(report_output):
+    import copy
+    section = {'type':'table', 'headers':['部门']+[f'经营指标{i:02}（单位待确认）' for i in range(1,12)],
+        'rows':[['同名业务支持中心']+[f'R{row}-C{col:02}' for col in range(1,12)] for row in range(1,4)]}
+    original = copy.deepcopy(section)
+    path = export.generate_pdf_report('合成验收宽表', [{'type':'summary','cards':[]}, section])
+    text = ''.join(p.extract_text() for p in PdfReader(path).pages)
+    compact = ''.join(text.split())
+    assert all(f'宽表第{i}/3组' in compact for i in range(1,4))
+    assert compact.count('表内行序') == 6 and compact.count('同名业务支持中心') == 9
+    assert all(f'R{row}-C{col:02}' in compact for row in range(1,4) for col in range(1,12))
+    assert section == original

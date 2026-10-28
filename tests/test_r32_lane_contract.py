@@ -506,12 +506,16 @@ def test_the_three_end_to_end_slots_are_still_gated_on_lane_labels():
     assert _contract_text().count(GATED_CELL) == 3, "全文件里这五个字只许出现在那三行"
 
 
-def test_this_ticket_left_no_lane_on_the_trace_layer():
-    """④ 的实证面：全仓 trace 里 "lane" 出现 0 次，spans 的那条 record_stage_sample 也不带 lane=。"""
-    sources = sorted(TRACE_DIR.rglob("*.py"))
-    assert sources, "app/trace 不见了，这条钉要先改指向"
-    hits = [path.relative_to(REPO).as_posix() for path in sources if "lane" in path.read_text(encoding="utf-8")]
-    assert hits == [], "trace 层出现了 lane：那是 §28.5 的跟进单该做的事，本单不许顺手做，但 gated 三行仍不许撤"
+def test_trace_retains_execution_lane_without_inventing_an_owner():
+    """R141/R172 已提供档位归属；保留真实读数，匿名执行仍不能获得身份。"""
+    from app.trace.spans import arm_turn_identity, span_identity
+    config = {'configurable': {'lane': 'analysis', 'tier': 'analysis', 'rule': 'analysis_marker',
+                              'lane_source': 'r42', 'trace_id': 'trace-lane'}}
+    identity = span_identity(config)
+    assert identity['lane'] == 'analysis' and identity['lane_source'] == 'r42'
+    assert identity['owner_id'] == '' and arm_turn_identity(config) is None
+    config['configurable']['principal'] = {'user_id': 'lane-owner'}
+    assert span_identity(config)['owner_id'] == 'lane-owner'
 
     tree = ast.parse((TRACE_DIR / "spans.py").read_text(encoding="utf-8"))
     stage_calls = [
@@ -519,7 +523,7 @@ def test_this_ticket_left_no_lane_on_the_trace_layer():
         if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "record_stage_sample"
     ]
     assert stage_calls, "spans.py 不再调 record_stage_sample：契约里那条 blocker 的指向要先改"
-    assert all("lane" not in {keyword.arg for keyword in call.keywords} for call in stage_calls)
+    assert all("lane" in {keyword.arg for keyword in call.keywords} for call in stage_calls)
 
 
 def test_the_contract_still_names_the_lane_attribution_blocker():
@@ -687,7 +691,9 @@ def test_the_tier_selector_is_only_real_while_the_tiers_really_diverge():
     assert re.search(r"from\s+[^;]*lane-choice\.js", panel), (
         "ChatPanel 不再引用 lane-choice.js：取值表要被抄出第二份了"
     )
-    bodies = re.findall(r"JSON\.stringify\(\{(.*?)\}\)", panel, re.DOTALL)
+    # The closing brace of an inline conditional spread is not the body end.
+    # Actual request bodies are also exercised by r169-chat-panel.test.js.
+    bodies = re.findall(r"JSON\.stringify\(\{(.*?)\n\s*\}\)", panel, re.DOTALL)
     assert bodies, "ChatPanel 里再没有序列化请求体，这条钉要先改指向"
     assert any(re.search(r"\blane:\s*selectedLane\.value\b", body) for body in bodies), (
         "档位只存在前端本地、没写进请求体 —— 这正是 R32 拒交选择器的那张假控件脸"

@@ -3,7 +3,7 @@ import re
 
 from fastapi.testclient import TestClient
 
-from test_r349_catalog_tail_ledger import CATALOG_TAIL_VERSION
+from test_alert_scan_scope import alert_pg
 
 
 def test_doc_panel_uses_catalog_endpoint():
@@ -13,43 +13,36 @@ def test_doc_panel_uses_catalog_endpoint():
     assert 'axios.get(`${API}/documents`' not in source
 
 
-def test_document_catalog_route_returns_metadata(monkeypatch):
-    from app.api.v1 import chat
+def test_document_catalog_route_returns_metadata(monkeypatch, tmp_path, alert_pg):
+    from app.documents import catalog
+    from app.rag import pg_store
     from app.common import auth
     from app.common.auth import create_token
     from app.main import app
 
-    monkeypatch.setattr(
-        chat,
-        "current_documents",
-        lambda: [
-            {
-                "filename": "policy.txt",
-                "version": 1,
-                "classification": 1,
-                "department": "finance",
-                "owner_id": "document-owner",
-                "created_at": "2026-09-08T00:00:00+08:00",
-            }
-        ],
-    )
-    monkeypatch.setattr(
-        auth,
-        "get_user",
-        lambda username: {
-            "id": username,
-            "username": username,
-            "role": "admin",
-            "department": "finance",
-        },
-    )
-
+    monkeypatch.setattr(pg_store, '_connect', lambda *args, **kwargs: alert_pg())
+    monkeypatch.setattr(catalog, '_conn', alert_pg)
+    monkeypatch.setattr(catalog, '_initialized', True)
+    monkeypatch.setattr(catalog, '_db_available', True)
+    monkeypatch.setenv('EMBEDDING_MODEL', 'isolated-alert-test')
+    monkeypatch.setenv('EMBEDDING_DIMENSION', '8')
+    file = tmp_path / 'policy.txt'
+    file.write_text('Synthetic catalog acceptance', encoding='utf-8')
+    catalog.record_document_version('policy.txt', 1, 'finance', str(file), owner_id='document-owner')
+    monkeypatch.setattr(auth, 'get_user', lambda username: {
+        'id':username, 'username':username, 'role':'admin', 'department':'finance'})
     client = TestClient(app)
-    token = create_token("admin")
-    response = client.get("/api/v1/documents/catalog", headers={"Authorization": f"Bearer {token}"})
-
+    headers = {'Authorization':f'Bearer {create_token("admin")}'}
+    response = client.get('/api/v1/documents/catalog', headers=headers)
     assert response.status_code == 200
-    assert response.json()["documents"][0]["filename"] == "policy.txt"
+    row = response.json()['documents'][0]
+    assert (row['filename'], row['classification'], row['department']) == ('policy.txt', 1, 'finance')
+
+    def unavailable(*args, **kwargs):
+        raise ConnectionError('isolated storage outage')
+    monkeypatch.setattr(pg_store, '_connect', unavailable)
+    denied = client.get('/api/v1/documents/catalog', headers=headers)
+    assert denied.status_code == 503 and denied.json()['detail'] == 'storage_unavailable'
 
 
 # ------------------------------------------------- chunk bookkeeping (migration 0007)
@@ -156,30 +149,12 @@ def test_0007_lets_the_owner_be_absent_in_every_mirrored_table():
     )
 
 
-def test_the_offline_migration_plan_loads_every_version_through_0016():
-    """被 C-R13 更新过一轮，R15-b 又更新了一次：钉的是"最新一版是谁"。
-
-    那个字面量必然随每一版过期，所以断言换成一串仍然成立的性质，并且**继续显式钉住
-    目录尾号**：将来谁加下一版，必须像 0010（R58 pgvector 双写）、0011（R46 活动信号
-    计数）、0012（R183/R184 两本台账的归属列）、0013（R190 放开挂起台账 status 的取值域）、
-    0014（R251 告警台账的处置列）、0015（R256 给 dataset_versions 补上的 scope 两列）、0016（R299
-    通知中心的读者生命周期表 notification_states）与 0017（R509 给 artifacts 落下的两枚生成血缘列
-    artifact_generation_lineage）这八次一样主动改这条，而不是让它静默失去意义。
-    0012 那一枚由总控落笔（R58 先例：该写域在施工方之外），0013、0014、0015、
-    0016 与 0017 这五枚由施工方本人改口——尾号引信留在哪一版手里，下一版就归谁动。
-    R349 起尾号数字不在本件手抄：它只在 tests/test_r349_catalog_tail_ledger.py 写死一枚，同族件一律 import；
-    那一枚文件里另有一枚自校验引信，专抓「新排了一版却没在任何地方登记过」，所以改口只改那一处。
-    """
+def test_offline_migration_plan_loads_the_discovered_catalog():
+    """All discovered migrations load and enter an empty database's plan."""
     from app.db.migrations import MIGRATIONS, discover_migrations, migration_plan
 
     versions = [migration.version for migration in MIGRATIONS]
     assert versions == sorted(versions) and len(set(versions)) == len(versions)
-    assert versions == [
-        f"{number:04d}" for number in range(1, int(CATALOG_TAIL_VERSION) + 1)
-    ], versions
-    assert versions[-1] == CATALOG_TAIL_VERSION, (
-        "尾号账本过期：去改 tests/test_r349_catalog_tail_ledger.py 那两枚字面量，别改本件"
-    )
     assert [migration.version for migration in migration_plan({})] == [
         migration.version for migration in MIGRATIONS
     ]

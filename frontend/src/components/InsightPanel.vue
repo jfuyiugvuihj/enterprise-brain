@@ -109,6 +109,17 @@ const ruleForm = ref(emptyRuleForm())
 const ruleErrors = ref({})
 const savingRule = ref(false)
 const ruleSaveFailure = ref(null)
+const dataFiles = ref([])
+const dataFilesLoading = ref(false)
+const dataFilesFailure = ref('')
+const ruleVersionStale = ref(false)
+const dataFileOptions = computed(() => [
+  ...(ruleForm.value.versionPolicy === 'follow_latest' ? [{ value: '', label: '全部授权可见资料' }] : []),
+  ...dataFiles.value.map(file => ({
+  value: file.filename,
+  label: `${file.filename} · ${file.version_id || '版本未记录'}`,
+}))])
+const selectedDataFile = computed(() => dataFiles.value.find(file => file.filename === ruleForm.value.dataFilename) || null)
 
 const pendingRuleId = ref('')
 const deletingRuleId = ref('')
@@ -208,6 +219,27 @@ async function loadRules() {
   }
 }
 
+async function loadRuleDataFiles() {
+  dataFilesLoading.value = true
+  dataFilesFailure.value = ''
+  dataFiles.value = []
+  try {
+    const response = await http.get('/data-files')
+    const files = response?.data?.files
+    if (!Array.isArray(files)) throw new Error('数据文件列表结构不正确')
+    dataFiles.value = files.filter(file => file && typeof file.filename === 'string' && file.filename.trim())
+    ruleVersionStale.value = false
+    if (!dataFiles.value.some(file => file.filename === ruleForm.value.dataFilename)) {
+      ruleForm.value.dataFilename = ''
+    }
+  } catch (err) {
+    ruleForm.value.dataFilename = ''
+    dataFilesFailure.value = '数据文件列表加载失败。请刷新列表后再选择；跟随最新版仍可留空检查授权可见资料。'
+  } finally {
+    dataFilesLoading.value = false
+  }
+}
+
 function loadAll() {
   return Promise.all([loadAlerts(), loadRules()])
 }
@@ -232,15 +264,36 @@ async function runManualCheck(ruleIds = null) {
 }
 
 async function addRule() {
+  if (savingRule.value) return
   const verdict = validateRuleForm(ruleForm.value)
   ruleErrors.value = verdict.errors
   if (!verdict.ok) return
+  if (ruleForm.value.versionPolicy === 'fixed' && (ruleVersionStale.value || !selectedDataFile.value || !selectedDataFile.value.version_id)) {
+    ruleErrors.value = { ...ruleErrors.value, dataFilename: '请刷新并选择一个可见且已记录版本号的数据文件' }
+    return
+  }
   savingRule.value = true
   ruleSaveFailure.value = null
   try {
-    await createRule(ruleForm.value)
+    await createRule({
+      ...ruleForm.value,
+      ...(ruleForm.value.versionPolicy === 'fixed'
+        ? { expectedVersionId: selectedDataFile.value.version_id }
+        : {}),
+    })
     ruleForm.value = emptyRuleForm()
   } catch (err) {
+    if (err?.response?.status === 409) {
+      ruleVersionStale.value = true
+      ruleSaveFailure.value = {
+        face: 'error',
+        title: '数据版本已变化',
+        description: '选定资料的版本已更新。请刷新数据文件列表并重新核对当前版本后，再手动新增规则。此请求没有自动重试。',
+        codeLabel: '',
+        retryable: false,
+      }
+      return
+    }
     ruleSaveFailure.value = readFailureView(err, {
       deniedTitle: '这个账号没有新增告警规则的权限',
       failedTitle: '规则没有保存成功',
@@ -440,7 +493,10 @@ function rowActionNote(item) {
   return ''
 }
 
-onMounted(loadAll)
+onMounted(() => {
+  loadAll()
+  loadRuleDataFiles()
+})
 </script>
 
 <template>
@@ -500,6 +556,7 @@ onMounted(loadAll)
               <details v-if="item.evidence" data-testid="alert-evidence">
                 <summary>计算依据与历次观察</summary>
                 <p>{{ item.evidence.filename }} · 版本 {{ item.evidence.version_id }}</p>
+                <p>版本策略：{{ item.evidence.versionPolicyText }}</p>
                 <p>{{ item.evidence.period }}；{{ item.evidence.filter }}；{{ item.evidence.unit }}</p>
                 <p>纳入 {{ item.evidence.rows }} 条，指标 {{ item.evidence.current }}，阈值 {{ item.evidence.threshold }}。</p>
                 <p v-for="part in item.evidence.contributions" :key="part.label">{{ part.label }}：{{ part.value }}（构成不等于原因）</p>
@@ -692,6 +749,7 @@ onMounted(loadAll)
               <div class="record-body">
                 <strong>{{ item.name }}</strong>
                 <p class="rule-rule">{{ item.metricText }} {{ item.opLabel }} {{ item.thresholdText }}</p>
+                <p class="rule-version" data-testid="rule-version-policy">{{ item.versionPolicyText }}</p>
               </div>
               <div class="record-meta">
                 <span v-if="!item.enabled" class="chip">已停用</span>
@@ -722,7 +780,48 @@ onMounted(loadAll)
           />
 
           <div class="rule-form" data-testid="rule-form">
-            <UiField v-model="ruleForm.dataFilename" label="数据文件（可选）" hint="填写经营数据完整文件名；留空逐份检查授权可见数据" :disabled="!canManage || savingRule" />
+            <UiSelect
+              v-model="ruleForm.versionPolicy"
+              label="数据版本策略"
+              :options="[{ value: 'fixed', label: '固定当前版本' }, { value: 'follow_latest', label: '跟随最新版' }]"
+              :error="ruleErrors.versionPolicy"
+              :disabled="!canManage || savingRule"
+              data-testid="rule-version-policy-select"
+            />
+            <div class="rule-data-source">
+              <div class="rule-data-source__head">
+                <span>数据文件{{ ruleForm.versionPolicy === 'fixed' ? '（必选）' : '（可选）' }}</span>
+                <UiButton
+                  size="sm"
+                  variant="ghost"
+                  label="刷新文件列表"
+                  :loading="dataFilesLoading"
+                  :disabled="savingRule || dataFilesLoading"
+                  data-testid="refresh-rule-data-files"
+                  @click="loadRuleDataFiles"
+                />
+              </div>
+              <UiSelect
+                v-model="ruleForm.dataFilename"
+                label="选择可见数据文件"
+                :options="dataFileOptions"
+                :placeholder="dataFilesLoading ? '正在读取数据文件…' : '选择数据文件'"
+                :empty-text="dataFilesLoading ? '正在读取数据文件…' : '当前列表没有可见文件'"
+                :error="ruleErrors.dataFilename"
+                :disabled="!canManage || savingRule || dataFilesLoading || Boolean(dataFilesFailure)"
+                data-testid="rule-data-file-select"
+              />
+              <p v-if="dataFilesFailure" class="rule-data-source__error" role="alert">{{ dataFilesFailure }}</p>
+              <p v-else-if="!dataFilesLoading && dataFiles.length === 0" class="rule-data-source__hint">
+                当前列表没有可见文件。固定版本需要选择文件；跟随最新版可留空检查全部授权资料。
+              </p>
+              <p v-else-if="ruleForm.versionPolicy === 'follow_latest'" class="rule-data-source__hint">
+                可选一个文件限定范围，也可以留空检查全部授权资料。
+              </p>
+              <p v-if="ruleForm.versionPolicy === 'fixed' && selectedDataFile" class="rule-data-source__version" data-testid="selected-rule-version">
+                当前绑定版本：{{ selectedDataFile.version_id || '未记录版本号' }}
+              </p>
+            </div>
             <UiField v-model="ruleForm.query" label="期间与筛选（可选）" hint="例如：2026-10-01至2026-10-31，仅统计已支付。使用真实列名和值" :disabled="!canManage || savingRule" />
             <UiField v-model="ruleForm.groupBy" label="构成维度（可选）" hint="例如：部门、产品；用于查看贡献构成，不作为确定原因" :disabled="!canManage || savingRule" />
             <UiField
@@ -758,7 +857,7 @@ onMounted(loadAll)
               <UiButton
                 variant="primary"
                 :loading="savingRule"
-                :disabled="savingRule || !canManage"
+                :disabled="savingRule || !canManage || (ruleForm.versionPolicy === 'fixed' && ruleVersionStale)"
                 label="新增规则"
                 data-testid="create-rule"
                 @click="addRule"
@@ -822,6 +921,7 @@ onMounted(loadAll)
 .rule-form {
   display: grid;
   gap: var(--s-2);
+  min-width: 0;
 }
 
 .record-item,
@@ -846,12 +946,65 @@ onMounted(loadAll)
 }
 
 .record-analysis,
-.rule-rule {
+.rule-rule,
+.rule-version {
   display: block;
   margin: var(--s-1) 0 0;
   color: var(--muted);
   font-size: var(--t-xs);
   line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.rule-data-source {
+  display: grid;
+  gap: var(--s-1);
+  min-width: 0;
+}
+
+.rule-data-source__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  color: var(--muted);
+  font-size: var(--t-xs);
+}
+
+.rule-data-source__hint,
+.rule-data-source__version,
+.rule-data-source__error {
+  margin: 0;
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.rule-data-source__hint,
+.rule-data-source__version {
+  color: var(--muted);
+}
+
+.rule-data-source__error {
+  color: var(--danger);
+}
+
+.rule-form :deep(.ui-select),
+.rule-form :deep(.ui-select__trigger),
+.rule-form :deep(.ui-select__value) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.rule-form :deep(.ui-select__value) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rule-form :deep(.ui-select__option) {
+  overflow-wrap: anywhere;
 }
 
 .record-analysis {
@@ -977,6 +1130,20 @@ onMounted(loadAll)
 @media (max-width: 760px) {
   .panel-grid {
     grid-template-columns: 1fr;
+  }
+
+  .rule-item {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .record-body {
+    width: 100%;
+  }
+
+  .record-meta {
+    flex-wrap: wrap;
+    min-width: 0;
   }
 }
 </style>

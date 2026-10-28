@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest'
 import { errorText } from '../../lib/errcodes'
 import {
   USER_BACKEND_COLUMNS,
+  USER_STATUS_UNKNOWN,
   USER_COLUMNS,
   USER_ROLES,
   USER_ROLE_LABELS,
@@ -105,7 +106,7 @@ describe('R316① · 列只认后端真发的那五枚键', () => {
   })
 
   it('屏上的列定义按 key 与账本一一对应：label 是界面词汇，key 才是契约', () => {
-    expect(USER_COLUMNS.map(column => column.key)).toEqual(USER_BACKEND_COLUMNS)
+    expect(USER_COLUMNS.map(column => column.key)).toEqual([...USER_BACKEND_COLUMNS, 'status'])
     for (const column of USER_COLUMNS) {
       expect(column.label, `${column.key} 没有给人看的列名`).toBeTruthy()
       expect(typeof column.formatter, `${column.key} 缺人话化这一层`).toBe('function')
@@ -121,13 +122,15 @@ describe('R316① · 列只认后端真发的那五枚键', () => {
     }
   })
 
-  it('mapUserRow 只造那五枚键：回包里多出来的键一概不带上屏', () => {
+  it('mapUserRow 保留五枚原始列与受控状态字段；其他回包键不带上屏', () => {
     const row = mapUserRow({
       id: 7, username: 'baiye', role: 'admin', department: 'finance', created_at: '2026-09-01T10:00:00+08:00',
       last_login: '2026-09-27', status: 'active', email: 'x@y.z',
     })
-    expect(Object.keys(row)).toEqual(USER_BACKEND_COLUMNS)
-    expect(row).toEqual({ id: '7', username: 'baiye', role: 'admin', department: 'finance', created_at: '2026-09-01T10:00:00+08:00' })
+    expect(Object.keys(row)).toEqual([...USER_BACKEND_COLUMNS, 'status'])
+    expect(row).toEqual({ id: '7', username: 'baiye', role: 'admin', department: 'finance', created_at: '2026-09-01T10:00:00+08:00', status: 'active' })
+    expect(mapUserRow({ username: 'unknown', status: 'paused' }).status).toBe('')
+    expect(USER_STATUS_UNKNOWN).toBe('未记录')
   })
 
   it('读路径只有 GET /users 一枚；写路径恰好后端已有的那四枚', () => {
@@ -136,13 +139,13 @@ describe('R316① · 列只认后端真发的那五枚键', () => {
     const text = libSource()
     // R316 当年这一格钉的是「这一屏没有写出口」，禁的是字面量。R360 把后端早就长在树上的
     // 那四枚写出口接上了，所以这一格不能退回成「有 post 就红」——那会把正确的接线判成违规。
-    // 改按形状判：读只许一枚 GET，写只许 post / put×3 / delete 这五枚。
+    // 改按形状判：读只许一枚 GET，写由在册出口提供。
     expect([...text.matchAll(/client\.get\(/g)].length, '取数路径只许一枚 client.get').toBe(1)
-    expect([...text.matchAll(/client\.post\(/g)].length).toBe(1)
-    expect([...text.matchAll(/client\.put\(/g)].length).toBe(3)
+    expect([...text.matchAll(/client\.post\(/g)].length).toBe(2)
+    expect([...text.matchAll(/client\.put\(/g)].length).toBe(4)
     expect([...text.matchAll(/client\.delete\(/g)].length).toBe(1)
-    // 五枚写腿共用同一枚 submitWrite（不乐观 + 写完回读）。
-    expect([...text.matchAll(/return submitWrite\(/g)].length).toBe(5)
+    // 七枚写腿共用同一枚 submitWrite（不乐观 + 写完回读）。
+    expect([...text.matchAll(/return submitWrite\(/g)].length).toBe(7)
     expect([...text.matchAll(/async function submitWrite\(/g)].length).toBe(1)
     // 屏壳自己发请求 = 把判脸逻辑复制成第二套，这一格管的是「只有一个出口」而不只是「有出口」
     expect(panelSource()).not.toMatch(/client\.(get|post|put|delete)\(/)

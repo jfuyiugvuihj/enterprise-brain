@@ -274,7 +274,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         from app.agents.contracts import Principal
-        from app.common.auth import get_token_from_request, get_user, verify_token, UserStoreUnavailable
+        from app.common.auth import get_token_from_request, get_user, verify_token, token_matches_user, UserStoreUnavailable
         from psycopg import Error as DatabaseError
         token = get_token_from_request(request)
         payload = verify_token(token) if token else None
@@ -290,13 +290,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
             from fastapi.responses import JSONResponse
             logger.warning("[Auth] account lookup unavailable: %s", type(exc).__name__)
             return JSONResponse(status_code=503, content={"detail": "storage_unavailable"})
-        if not user:
+        if not user or not token_matches_user(payload, user):
             from fastapi.responses import JSONResponse
             # 凭证在、人不在：仍然算匿名探测，主体走 record_audit 的退化投影。
             _file_anonymous_denial(request, "unknown_account")
             return JSONResponse(status_code=401, content={"detail": "authentication_required"})
         principal = Principal.from_user(user)
-        if principal.status != "active":
+        if principal.status == 'password_change_required':
+            from fastapi.responses import JSONResponse
+            if (request.method, request.url.path) not in {
+                ('PUT', '/api/v1/users/password'), ('GET', '/api/v1/account')
+            }:
+                return JSONResponse(status_code=403, content={"detail": "password_change_required"})
+        elif principal.status != "active":
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=403, content={"detail": "account_unavailable"})
         request.state.username = principal.username

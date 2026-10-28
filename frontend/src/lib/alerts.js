@@ -53,7 +53,7 @@ export function operatorLabel(op) {
 
 /** 新增规则的表单初值：四格全空。预填示例值会和真数据混在同一屏里（V7-1 的教训）。 */
 export function emptyRuleForm() {
-  return { name: '', metric: '', op: 'lt', threshold: '' }
+  return { name: '', metric: '', op: 'lt', threshold: '', versionPolicy: 'fixed', dataFilename: '' }
 }
 
 /**
@@ -78,6 +78,12 @@ export function validateRuleForm(form) {
   if (!String(source.metric || '').trim()) errors.metric = '请填写要盯的指标列名'
   if (!Number.isFinite(thresholdValue(source.threshold))) errors.threshold = '阈值必须是一个数字'
   if (!RULE_OPERATORS.some(item => item.value === source.op)) errors.op = '请选择比较方式'
+  if (source.versionPolicy !== undefined && !['fixed', 'follow_latest'].includes(source.versionPolicy)) {
+    errors.versionPolicy = '请选择有效的数据版本策略'
+  }
+  if (source.versionPolicy === 'fixed' && !String(source.dataFilename || '').trim()) {
+    errors.dataFilename = '固定当前版本时必须选择数据文件'
+  }
   return { ok: Object.keys(errors).length === 0, errors }
 }
 
@@ -90,6 +96,10 @@ export function ruleRequestBody(form) {
     op: RULE_OPERATORS.some(item => item.value === source.op) ? source.op : 'lt',
     threshold: thresholdValue(source.threshold),
     ...(source.dataFilename ? { data_filename: String(source.dataFilename).trim() } : {}),
+    ...(source.versionPolicy !== undefined ? { version_policy: source.versionPolicy } : {}),
+    ...(source.versionPolicy === 'fixed' && source.expectedVersionId
+      ? { expected_version_id: String(source.expectedVersionId) }
+      : {}),
     ...(source.query ? { query: String(source.query).trim() } : {}),
     ...(source.groupBy ? { group_by: String(source.groupBy).trim() } : {}),
   }
@@ -376,7 +386,11 @@ export function mapAlertRow(row) {
     statusLabel: alertStatusLabel(source.status),
     statusKnown: status !== '',
     handled: ledger.some(line => line.recorded),
-    evidence: source.evidence || null,
+    evidence: source.evidence && typeof source.evidence === 'object' ? {
+      ...source.evidence,
+      versionPolicyText: source.evidence.version_policy
+        ? versionPolicyLabel(source.evidence.version_policy, source.evidence.version_id) : '未记录版本策略',
+    } : null,
     observations: Array.isArray(source.observations) ? source.observations : [],
     recoveredAt: String(source.recovered_at || ''),
     artifacts: Array.isArray(source.artifacts) ? source.artifacts : [],
@@ -401,7 +415,19 @@ export function mapRuleRow(row) {
     thresholdText: Number.isFinite(threshold) ? String(threshold) : '没有登记阈值',
     enabled: source.enabled !== false,
     options: source.options || {},
+    versionPolicyText: versionPolicyLabel(source.options?.version_policy, source.options?.version_id),
   }
+}
+
+/** Version strategy labels preserve unknown backend values as unknown rather than guessing. */
+export function versionPolicyLabel(policy, versionId = '') {
+  if (policy === 'fixed') {
+    const id = String(versionId || '').trim()
+    return id ? `固定版本 · ${id}` : '固定版本 · 未记录版本 ID'
+  }
+  if (policy === 'follow_latest') return '跟随最新版'
+  if (policy === undefined || policy === null || policy === '') return '跟随最新版（已有规则）'
+  return '无法识别的数据版本策略'
 }
 
 /**
@@ -440,7 +466,8 @@ export function checkOutcomeView(data) {
   const reason = SCAN_REASON_MESSAGES[reasonKey] || ''
   const failures = Array.isArray(scope.evaluation_failures) ? scope.evaluation_failures : []
   if (failures.length) return { kind: 'unknown', count: triggered.length,
-    title: '部分规则未能完成判断', detail: failures.map(item => `${item.filename}：${item.reason}`).join('；') }
+      title: '部分规则未能完成判断', detail: failures.map(item =>
+        `${item.filename || (item.rule_id ? `规则 #${item.rule_id}` : '规则检查')}：${item.reason}`).join('；') }
   if (triggered.length > 0) {
     return {
       kind: 'hit',

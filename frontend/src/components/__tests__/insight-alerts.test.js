@@ -74,7 +74,7 @@ import { UiEmptyState, UiErrorState } from '../ui'
 
 const source = name => readFileSync(new URL('../' + name, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 const libSource = name => readFileSync(new URL('../../lib/' + name, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
-const render = component => renderToString(h({ render: () => h(component) }))
+const render = (component, props = {}) => renderToString(h({ render: () => h(component, props) }))
 
 /** 后端码名不许出现在给人看的句子里（B-5 ②：码走独立通道，不进正文）。 */
 const SNAKE = /[a-z][a-z0-9]*_[a-z0-9_]+/
@@ -463,8 +463,7 @@ describe('W7 判据② · 手填阈值表单与演示常量整块摘掉（只准
     expect(alertsCode()).not.toMatch(/threshold:\s*['"]?[0-9]/)
     // 阈值这一格是「新增规则」表单的一部分，值经 ruleRequestBody 变成 number 再交给 POST。
     expect(code()).toContain('v-model="ruleForm.threshold"')
-    expect(code()).toContain('createRule(ruleForm.value)')
-    expect(alertsCode()).toContain('threshold: thresholdValue(source.threshold)')
+    expect(ruleRequestBody({ name: 'n', metric: 'm', op: 'lt', threshold: ' 8000 ' }).threshold).toBe(8000)
     // 既然阈值只能由操作者填：空着提交必须被拦下，而不是静默取 0。
     expect(validateRuleForm(emptyRuleForm()).errors.threshold).toBeTruthy()
   })
@@ -702,41 +701,35 @@ describe('W7 请求编排 · 进页面只读，写操作只认人工点击', () 
 
 // ==================== 判据③：审批页的定位 ====================
 
-describe('W7 判据③ · 审批页是报销政策自查工具，不是审批', () => {
+describe('W7 判据③ · 审批页区分待确认操作与费用制度自查', () => {
   const approvalCode = () => codeOnly(source('ApprovalPanel.vue'))
 
-  it('界面自己说清定位：自查工具、不办理审批、不生成工单', () => {
-    const s = source('ApprovalPanel.vue')
-    for (const phrase of ['审批与待办', '它不办理审批', '自查工具，不是审批', '入口在对话页',
-      '不会生成工单', '不会记在任何人名下', '不会改变任何单据的状态']) {
-      expect(s).toContain(phrase)
+  it('费用制度自查屏说明用途、标准依据和状态边界', async () => {
+    const text = visibleText(await render(ApprovalPanel, { mode: 'selfcheck' }))
+    for (const phrase of ['费用制度自查', '自查工具，不是审批', '不会生成工单', '不会记在任何人名下',
+      '不会改变任何单据的状态', '报销标准与依据由系统从知识库查询', '重新自查', '自查参数', '自查结论']) {
+      expect(text).toContain(phrase)
     }
-    expect(s).toContain('data-testid="approval-scope-note"')
-    expect(s).toContain('<h4>自查参数</h4>')
-    expect(s).toContain('<h4>自查结论</h4>')
-    expect(s).toContain('重新自查')
   })
 
-  it('判据自证：「批准 / 驳回」只许活在解释性注释里，代码体与按钮一个都不留', () => {
-    const s = source('ApprovalPanel.vue')
-    expect(s).toContain('批准与驳回按钮')
-    const code = approvalCode()
-    expect(code).not.toMatch(/批准|驳回/)
-    expect(code).not.toMatch(/工单列表|待我审批|一键通过/)
+  it('自查屏的按钮不提供批准、驳回或正式审批动作', async () => {
+    const labels = buttonLabels(await render(ApprovalPanel, { mode: 'selfcheck' }))
+    expect(labels.join(' / ')).not.toMatch(/批准|驳回|正式审批|同意|否决|通过|不通过/)
   })
 
   it('整屏只渲染一个按钮，文案是「重新自查」，没有任何审批动作', async () => {
-    const html = await render(ApprovalPanel)
+    const html = await render(ApprovalPanel, { mode: 'selfcheck' })
     const labels = buttonLabels(html)
     expect(labels).toEqual(['重新自查'])
     expect(labels.join(' / ')).not.toMatch(/批准|驳回|同意|否决|拒绝|通过|不通过/)
   })
 
-  it('屏上不摆「待审批 N 条」这种无处可取的数字，并说明为什么没有待办列表', async () => {
-    const text = visibleText(await render(ApprovalPanel))
+  it('自查屏不摆待审批数字，并把真实待确认操作指向待办或对话', async () => {
+    const text = visibleText(await render(ApprovalPanel, { mode: 'selfcheck' }))
     expect(text).not.toMatch(/待审批\s*\d+/)
     expect(text).not.toMatch(/审批\s*\d+\s*条/)
-    expect(text).toContain('挂起待办')
+    expect(text).toContain('真实待确认操作')
+    expect(text).toContain('待办事项')
     expect(text).toContain('自查工具，不是审批')
   })
 
@@ -911,6 +904,10 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
       statusLabel: '还没人处理',
       statusKnown: true,
       handled: false,
+      evidence: null,
+      observations: [],
+      recoveredAt: '',
+      artifacts: [],
       actions: ['ack', 'close', 'assign'],
       ledger: [
         { key: 'ack', label: '确认', who: UNRECORDED, to: '', at: UNRECORDED, recorded: false },
@@ -935,6 +932,10 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
       statusLabel: '还没人处理',
       statusKnown: true,
       handled: false,
+      evidence: null,
+      observations: [],
+      recoveredAt: '',
+      artifacts: [],
       actions: ['ack', 'close', 'assign'],
       ledger: [
         { key: 'ack', label: '确认', who: UNRECORDED, to: '', at: UNRECORDED, recorded: false },
@@ -1017,10 +1018,10 @@ describe('W7 lib/alerts.js · 判脸与归码矩阵（R1 裁定 (c) 的逻辑全
     expect(view.title + view.detail).not.toMatch(ZERO_CLAIM)
   })
   it('emptyRuleForm / validateRuleForm：四格全空起步，阈值留空不许静默变成 0', () => {
-    expect(emptyRuleForm()).toEqual({ name: '', metric: '', op: 'lt', threshold: '' })
+    expect(emptyRuleForm()).toMatchObject({ name: '', metric: '', op: 'lt', threshold: '', versionPolicy: 'fixed', dataFilename: '' })
     const blank = validateRuleForm(emptyRuleForm())
     expect(blank.ok).toBe(false)
-    expect(Object.keys(blank.errors).sort()).toEqual(['metric', 'name', 'threshold'])
+    expect(Object.keys(blank.errors).sort()).toEqual(['dataFilename', 'metric', 'name', 'threshold'])
     expect(validateRuleForm({ name: 'n', metric: 'm', op: 'lt', threshold: '0' }).ok).toBe(true)
     expect(validateRuleForm({ name: 'n', metric: 'm', op: 'gt', threshold: -3.5 }).ok).toBe(true)
     expect(validateRuleForm({ name: 'n', metric: 'm', op: 'eq', threshold: 5 }).errors.op).toBeTruthy()

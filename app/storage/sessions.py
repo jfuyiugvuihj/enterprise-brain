@@ -20,10 +20,11 @@ import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Lock
+from threading import RLock
 
 from app.agents.contracts import Principal
 from app.common.logger import logger
+from app.storage.persistence import _AdvisoryFileLock, DEFAULT_LOCK_TIMEOUT_SECONDS
 
 #: R495 · 会话归属键命名空间的唯一真源：全仓只有这里把「台账按哪套键认人」写成字面。
 #: 想知道归属键是谁就读这一枚；要换命名空间也只改这一枚，且必须与台账迁移同单进行。
@@ -83,8 +84,20 @@ class SessionRegistry:
     def __init__(self, metadata_path: str | Path):
         self.metadata_path = Path(metadata_path).resolve()
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = Lock()
+        self._lock = RLock()
+        self._file_lock_path = self.metadata_path.with_suffix(self.metadata_path.suffix + '.lock')
         self._records = self._load()
+        self._records_stamp = None
+
+    def _refresh_records(self):
+        try:
+            info = self.metadata_path.stat()
+            stamp = (info.st_mtime_ns, info.st_size, info.st_ino)
+        except FileNotFoundError:
+            stamp = None
+        if stamp != self._records_stamp:
+            self._records = self._load()
+            self._records_stamp = stamp
 
     def _load(self) -> dict[str, SessionRecord]:
         if not self.metadata_path.exists():
@@ -120,12 +133,13 @@ class SessionRegistry:
         owner_key = session_owner_key(principal)
         if not session_id or not owner_key or principal.status != "active":
             raise PermissionError("an active principal and session id are required")
-        drift = self._owner_key_drift(principal)
-        if drift:
-            # 写腿当场响。这一格若放行，台账就长出一套新键，而读腿会替全员把它读成空列表。
-            logger.error(f"[Sessions] R495 归属键命名空间漂移，写腿拒: {drift}")
-            raise SessionOwnerNamespaceError(drift)
-        with self._lock:
+        # Reuse the existing host-local journal lock across API/worker processes.
+        with self._lock, _AdvisoryFileLock(self._file_lock_path, DEFAULT_LOCK_TIMEOUT_SECONDS):
+            self._refresh_records()
+            drift = self._owner_key_drift(principal)
+            if drift:
+                logger.error(f"[Sessions] R495 归属键命名空间漂移，写腿拒: {drift}")
+                raise SessionOwnerNamespaceError(drift)
             existing = self._records.get(session_id)
             if existing is not None:
                 if existing.status != "active" or existing.owner_id != owner_key:
@@ -142,8 +156,10 @@ class SessionRegistry:
             return record
 
     def get_active(self, session_id: str) -> SessionRecord | None:
-        record = self._records.get(str(session_id or ""))
-        return record if record is not None and record.status == "active" else None
+        with self._lock:
+            self._refresh_records()
+            record = self._records.get(str(session_id or ""))
+            return record if record is not None and record.status == "active" else None
 
     def is_owned_by(self, session_id: str, principal: Principal) -> bool:
         record = self.get_active(session_id)
@@ -162,6 +178,7 @@ class SessionRegistry:
     def _owner_keys_on_ledger(self) -> list[str]:
         """台账上当前挂着的所有归属键。只用来出证词，不参与归属判定，因此不是第二把尺。"""
         with self._lock:
+            self._refresh_records()
             return [record.owner_id for record in self._records.values()]
 
     def _owner_key_drift(self, principal: Principal) -> str:

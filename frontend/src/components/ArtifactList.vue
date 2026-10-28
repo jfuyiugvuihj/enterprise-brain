@@ -738,7 +738,7 @@ defineExpose({ loadArtifacts, reload })
 .artifact-pdf-dialog header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .artifact-pdf-dialog header .ui-button { min-height: 44px; }
 .artifact-download-error { margin: 0; padding: 8px 12px; color: var(--danger); }
-.artifact-pdf-dialog .pdf-pages { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; -webkit-overflow-scrolling: touch; }
+.artifact-pdf-dialog .pdf-pages { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
 
 @media (max-width: 900px) {
   .artifact-item { flex-wrap: wrap; align-items: flex-start; }

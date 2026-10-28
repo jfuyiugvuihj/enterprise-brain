@@ -392,6 +392,7 @@ const moreError = ref('')
 const offset = ref(0)
 const busyId = ref('')
 const outcomes = ref({})
+const latestDecision = ref(null)
 const localIds = ref([])
 // 判据②的那份【后端】会话名单。asked = 这一屏有没有真去问过；known = 问到了没有。
 // 「没问过」「问了但读不到」「问到了而且名单是空的」是三件事，一句都不许顶另一句。
@@ -593,8 +594,27 @@ async function decide({ row, approved } = {}) {
     })
   } catch (err) {
     view = transportDecisionView(approved, err)
+    try {
+      const response = await http.get(`/hitl/decision/${encodeURIComponent(row.sessionId)}`)
+      const status = response.data?.ledger_status
+      if (!approved && status === 'refused') {
+        view = decisionView({ approved, ledgerStatus: status })
+      } else if (approved && ['resumed', 'failed', 'abandoned'].includes(status)) {
+        view = {
+          kind: 'approved', face: status === 'resumed' ? 'ok' : 'failed',
+          title: status === 'failed' ? '确认已记录，任务执行失败'
+            : status === 'abandoned' ? '确认已记录，本轮处理已取消' : '确认已记录，请核对执行结果',
+          description: status === 'resumed'
+            ? '服务端已处理这次确认。响应未完整返回，请回到原对话查看实际结果和成果；没有重新发送操作。'
+            : status === 'failed' ? '本轮未成功完成，请回到原对话查看失败原因；没有重新发送操作。'
+              : '后续处理已取消，已完成的操作不会撤销；没有重新发送操作。',
+          codeLabel: '',
+        }
+      }
+    } catch (_) { /* 查询失败仍保留未知，不再次执行原操作。 */ }
   }
   outcomes.value = { ...outcomes.value, [row.sessionId]: view }
+  latestDecision.value = view
   busyId.value = ''
   // 只有真办成才重读账本。失败时重读等于让一次刷新把这一笔洗掉：后端在跑崩那一支
   // 也可能已经把挂起行改成终态，届时屏上只剩下一句「没有待办」——那是把失败说成办完。
@@ -676,6 +696,14 @@ onMounted(() => {
       <p v-if="failedTurnsMore" class="hitl-note" data-testid="hitl-failed-more">{{ failedCopy.more }}</p>
     </section>
 
+    <aside v-if="latestDecision" class="hitl-receipt" role="status" data-testid="hitl-decision-receipt" :data-face="latestDecision.face">
+      <div class="section-head">
+        <strong>这一轮最近操作：{{ latestDecision.title }}</strong>
+        <UiButton variant="ghost" size="sm" label="关闭回执" @click="latestDecision = null" />
+      </div>
+      <p class="hitl-note">{{ latestDecision.description }}</p>
+    </aside>
+
     <UiLoadingState v-if="face === 'loading'" label="正在读取挂起待办..." dense />
     <UiErrorState
       v-else-if="failure"
@@ -749,6 +777,14 @@ onMounted(() => {
   color: var(--ink-soft);
   font-size: var(--t-xs);
   line-height: 1.6;
+}
+
+.hitl-receipt {
+  padding: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
 }
 
 /* 只借 theme.css 既有令牌与 var(--*)，零裸色值 —— 与 HitlPendingRow 同一份视觉口径。 */

@@ -503,6 +503,10 @@ def _answer_leg_publishes_tail(resp) -> bool:
 
 
 def main_agent_node(state: AgentState, config=None) -> dict:
+    from app.agents.task_review import turn_clarification
+    clarification = turn_clarification(state)
+    if clarification:
+        return {'messages': [AIMessage(content=clarification)], 'final_answer': clarification}
     all_msgs = state.get("messages", [])
 
     # 短期记忆：R33 起确定性裁剪，零模型。旧写法在这里多发一发 COMPRESS 往返，让本机模型
@@ -674,6 +678,9 @@ def route_main(state: AgentState, config=None):
     ``config`` 只为一件事存在：读出调用方声明的档位（R141）。不传时（全部既有单参数
     直调，含 tests/test_r42_zero_model_calls.py 的 105 题全量）本函数与改动前逐字节相同。
     """
+    from app.agents.task_review import turn_clarification
+    if turn_clarification(state):
+        return 'synthesize'
     last = state["messages"][-1]
     tools = getattr(last, "tool_calls", None) or []
 
@@ -711,11 +718,14 @@ def route_main(state: AgentState, config=None):
         "入职", "安全", "规定", "标准", "谁审批", "审批人",
     ]
     # Rewriting may expand a follow-up, but cannot grant actions the user prohibited.
-    execution_question = (state.get("task_context") or {}).get("execution_question") or user_msg
+    execution_question = (state.get("task_context") or state.get('data_context') or {}).get("execution_question") or user_msg
     preserving_report = bool((state.get('task_context') or state.get('data_context') or {}).get('report_body'))
     if preserving_report:
         execution_question = '导出PDF报告'
-    intent_text = _intent_text(execution_question)
+    from app.agents.task_review import alert_task_question, output_constraints
+    execution_question = alert_task_question(execution_question, state.get('data_context') or {})
+    raw_intent_text = _intent_text(execution_question)
+    intent_text, _ = output_constraints(raw_intent_text)
     ai_answer_text = str(getattr(last, "content", "") or "").strip()
     # supervisor 既没派发也没给出正文时，确定性计划就是本轮契约。旧版本只在
     # len(planned_workers) > 1 时才尊重计划，单步计划被关键词规则整组覆盖。
@@ -821,7 +831,7 @@ def route_main(state: AgentState, config=None):
     # dispatches can otherwise put unsupported claims into the final answer.
     if (state.get("data_filename") and not selected_docs
             and re.search(r"合计|总计|统计|多少|平均|均值|记录数|总数", intent_text)
-            and not re.search(r"制度|规定|依据|合规|核验|文档|材料|审批|凭证|图|报告|导出|下载", intent_text)):
+            and not re.search(r"制度|规定|依据|合规|核验|文档|材料|审批|凭证|图|报告|简报|PDF|pdf|导出|下载", intent_text)):
         workers = ["data"]
     elif (len(selected_docs) >= 2 and not state.get("data_filename")
             and re.search(r"比较|对比|差异|区别", user_msg)
@@ -838,18 +848,35 @@ def route_main(state: AgentState, config=None):
     prohibited = set()
     dataset_evidence = [item for item in ((state.get("agent_results") or {}).get("data") or {}).get("evidence", [])
                         if item.get("source_type") == "dataset"]
-    conditional_empty = bool(re.search(r"(?:如|如果|若|当|为空时).*?(?:为空|0行|没有记录|无数据|不画)", intent_text))
+    conditional_empty = bool(re.search(r"(?:如|如果|若|当|为空时).*?(?:为空|0行|没有记录|无数据|不画)", raw_intent_text))
     empty_data = bool(dataset_evidence) and all(item.get("metadata", {}).get("row_count") == 0 for item in dataset_evidence)
     enforce_prohibition = not conditional_empty or empty_data
-    if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:画|绘制|生成)(?:柱状|折线|饼)?图|不(?:要|需)?(?:生成)?图表", intent_text):
+    # A condition in another clause must never disable an absolute refusal.
+    prohibited.update(output_constraints(raw_intent_text, empty_data=empty_data)[1])
+    if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:画|绘制|生成)(?:柱状|折线|饼)?图|不(?:要|需)?(?:生成)?图表", raw_intent_text):
         prohibited.add("chart")
-    if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:(?:导出|下载)(?:PDF|pdf)?(?:报告)?|生成(?:PDF|pdf|报告))", intent_text):
+    if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:(?:导出|下载)(?:PDF|pdf)?(?:报告)?|生成(?:PDF|pdf|报告))", raw_intent_text):
         prohibited.add("export")
     workers = [worker for worker in workers if worker not in prohibited]
+    # A supplied tree with an explicit no-lookup request needs only drawing.
+    # Running a free-form analysis first can claim an image exists before HITL.
+    if (re.search(r'思维导图|mindmap', intent_text, re.I)
+            and re.search(r'中心|根节点', intent_text) and '分支' in intent_text
+            and re.search(r'(?:不需要|无需|不要|不必)(?:再)?(?:查询|检索)(?:资料|文档|知识库)', raw_intent_text)
+            and not any(state.get(key) for key in ('data_filename', 'document_selection', 'task_context', 'data_context'))):
+        workers = [worker for worker in workers if worker not in ('data', 'doc')]
     if preserving_report:
         workers = ['export']
     elif state.get('document_selection') and 'doc' not in workers:
         workers.insert(0, 'doc')
+    from app.agents.task_review import scoped_question_items
+    subtasks = scoped_question_items((state.get('task_context') or state.get('data_context') or {}).get('analysis_question') or user_msg)
+    if subtasks and not preserving_report:
+        kinds = {kind for _, _, kind in subtasks}
+        if 'data' in kinds and state.get('data_filename') and 'data' not in workers and declared != LANE_QA:
+            workers.insert(0, 'data')
+        if 'doc' in kinds and 'doc' not in workers:
+            workers.insert(0, 'doc')
     completed_workers = set((state.get("worker_results") or {}).keys())
     remaining = [worker for worker in workers if worker not in completed_workers]
     ready = [
@@ -1053,9 +1080,27 @@ def _make_worker_wrapper(graph, name: str):
             user_msg = HumanMessage(content="请完成你的专业工作。")
         child_conf["data_question"] = str(child_conf.get("task_context", {}).get("analysis_question")
             or child_conf.get('data_context', {}).get('query') or user_msg.content or "")
-        child_conf["execution_question"] = str(child_conf.get("task_context", {}).get("execution_question") or user_msg.content or "")
+        child_conf["execution_question"] = str((child_conf.get('task_context') or child_conf.get('data_context') or {}).get("execution_question") or user_msg.content or "")
+        from app.agents.task_review import scoped_question_items
+        subtasks = scoped_question_items(child_conf['data_question'])
+        mixed = subtasks and len({kind for _, _, kind in subtasks}) > 1
+        if mixed and name == 'doc' and not child_conf.get('task_context'):
+            doc_questions = [(label, item) for label, item, kind in subtasks if kind == 'doc']
+            if doc_questions:
+                user_msg = HumanMessage(content='\n'.join(label + ' ' + item for label, item in doc_questions)
+                    + '\n只回答以上制度问题，逐题列出依据；不要推测经营数据或业务原因。')
+                child_conf['data_question'] = user_msg.content
         if name == "export":
             chart_result = (state.get("agent_results") or {}).get("chart") or {}
+            data_result = (state.get('agent_results') or {}).get('data') or {}
+            doc_result = (state.get('agent_results') or {}).get('doc') or {}
+            child_conf['report_source_documents'] = [
+                {'source_name': row['source_name'], 'version_id': row['document_version_id'], 'index_version_id': row['index_version_id']}
+                for row in doc_result.get('evidence', []) if row.get('source_type') == 'document'
+                and row.get('document_version_id') and row.get('index_version_id')]
+            if not child_conf['report_source_documents']:
+                child_conf['report_source_documents'] = (child_conf.get('data_context') or {}).get('report_source_documents') or []
+            child_conf['report_calculation_request_id'] = str(data_result.get('request_id') or '')
             child_conf["report_chart_ids"] = [str(item["artifact_id"])
                 for item in chart_result.get("artifacts", []) if isinstance(item, dict) and item.get("artifact_id")]
 
@@ -1084,25 +1129,47 @@ def _make_worker_wrapper(graph, name: str):
                 from app.agents.task_review import independent_period_questions
                 from app.agents.tools import _verified_data_answer
                 independent = independent_period_questions(child_conf["data_question"])
+                if mixed:
+                    independent = [(label, item) for label, item, kind in subtasks if kind == 'data']
                 if independent:
                     answers = []
-                    shared_scope = child_conf["data_question"].split(independent[0][0], 1)[0]
+                    first_label = subtasks[0][0] if mixed else independent[0][0]
+                    shared_scope = (child_conf["data_question"].split(first_label, 1)[0]
+                                    if first_label in child_conf["data_question"] else '')
                     for label, question in independent:
                         scoped_question = shared_scope + " " + question
                         item_bag = new_evidence_bag()
                         item_cfg = {**child_cfg, "configurable": {**child_conf,
                             "data_question": scoped_question, "evidence_bag": item_bag}}
-                        item_result = analyze_data.invoke({"query": scoped_question}, config=item_cfg)
+                        from app.agents.task_review import requires_query_calculation
+                        item_result = (query_data if requires_query_calculation(scoped_question) else analyze_data).invoke(
+                            {"query": scoped_question}, config=item_cfg)
                         for key, rows in item_bag.items():
                             if isinstance(rows, list):
                                 evidence_bag.setdefault(key, []).extend(rows)
                         if any(row.get("error_code") == "validation_error" for row in item_bag["tool_statuses"]):
                             answers.append(f"{label} {question}\n\n未能计算：{item_result}")
+                        elif requires_query_calculation(scoped_question):
+                            answers.append(f'{label} {question}\n\n{item_result}')
                         elif item_bag.get("report_facts"):
                             answers.append(f"{label} {question}\n\n{_verified_data_answer(item_bag['report_facts'], question=question)}")
                         else:
                             answers.append(f"{label} {question}\n\n未得到可核实的计算结果。")
+                    if mixed:
+                        for label, item, kind in subtasks:
+                            if kind == 'explanation':
+                                answers.append(f'{label} {item}\n\n当前统计可以说明数值及构成，不能单凭金额确认业务原因。'
+                                    '请补充可比期间、业务量、价格及对应明细，再逐项核查；本轮未把贡献因素认定为确定原因。')
+                            elif kind == 'unknown':
+                                answers.append(f'{label} {item}\n\n这项要求尚不明确，请补充处理对象和预期结果；其余题按各自范围回答。')
                     table_answer = "\n\n".join(answers)
+            if table_answer is None and name in ("data", "chart") and child_conf.get("data_filename"):
+                from app.agents.task_review import table_summary_intent
+                if name == 'data' and not table_summary_intent(child_conf['data_question'], contextual=bool(
+                        child_conf.get('task_context') or child_conf.get('data_context', {}).get('alert_id'))):
+                    # A median, ranking or derived calculation must actually execute
+                    # its query; reading a sample and letting the model guess is not a result.
+                    table_answer = query_data.invoke({'query': child_conf['data_question']}, config=child_cfg)
             if table_answer is None and name in ("data", "chart") and child_conf.get("data_filename"):
                 # Invalid original filters cannot be repaired by repeatedly rephrasing
                 # a tool call. Check through the same authorized data tool first.
@@ -1112,9 +1179,8 @@ def _make_worker_wrapper(graph, name: str):
                 if any(row.get("error_code") == "validation_error" for row in probe_bag["tool_statuses"]):
                     filter_failure = str(probe)
                     evidence_bag["tool_statuses"].extend(probe_bag["tool_statuses"])
-                elif ((child_conf.get("task_context") or child_conf.get('data_context', {}).get('alert_id')
-                       or re.search(r"按.+?(?:汇总|合计|统计)|合计|总计|统计|多少|平均|均值|记录数|总数|报告|简报", str(user_msg.content or "")))
-                      and not re.search(r"同比|环比|预算|预测|SQL|相关性", str(user_msg.content or ""), re.I)
+                elif (table_summary_intent(child_conf['data_question'], contextual=bool(
+                        child_conf.get('task_context') or child_conf.get('data_context', {}).get('alert_id')))
                       and probe_bag.get("report_facts")):
                     # Numeric briefs and their charts use the authorized, filtered frame.
                     # A model must not invent units or claim a tool ran before approval.
@@ -1129,20 +1195,36 @@ def _make_worker_wrapper(graph, name: str):
                             table_answer += '\n\n### 阈值提醒与核查限制\n\n' + explain_finding(child_conf['data_context'])
                     elif name == "chart" and re.search(r"柱状图|柱图", str(user_msg.content or "")):
                         table_answer = generate_chart.invoke({"chart_type": "bar"}, config=child_cfg)
+                    elif (name == 'chart' and child_conf.get('data_context', {}).get('alert_id')
+                          and re.search(r'趋势|折线图', str(user_msg.content or ''))):
+                        table_answer = generate_chart.invoke({'chart_type': 'line'}, config=child_cfg)
             if name == "export" and child_conf.get("data_filename"):
                 table_answer = export_report.invoke({"report_title": "制度核查简报" if child_conf.get("task_context") else "经营分析简报", "sections_json": "[]"}, config=child_cfg)
             if name == "doc" and child_conf.get("task_context"):
                 from app.agents.tools import search_docs
-                from app.agents.task_review import policy_review_text, policy_identity, _applicable_policy_documents
+                from app.agents.task_review import policy_review_text, policy_identity, _applicable_policy_documents, policy_question_reviews
                 searched = search_docs.invoke({"query": child_conf["data_question"]}, config=child_cfg)
                 if any(row.get("error_code") == "validation_error" for row in evidence_bag["tool_statuses"]):
                     table_answer = str(searched)
                 else:
-                    evidence_bag["documents"] = _applicable_policy_documents(evidence_bag.get("documents", []), child_conf["data_question"])
-                    table_answer = policy_review_text(evidence_bag.get("documents", []), period=child_conf["data_question"])
-                    actual_policy = policy_identity(evidence_bag.get("documents", []), period=child_conf["data_question"])
+                    reviews = policy_question_reviews(evidence_bag.get('documents', []),child_conf['data_question'])
+                    if reviews:
+                        previous_items = child_conf['task_context'].get('policy_items') or {}
+                        if any(row['question'] in previous_items and row['policy_sources'] != previous_items[row['question']] for row in reviews):
+                            table_answer = '分题制度依据版本已变化或当前无权访问，请重新发起核查。'
+                            record_tool_status(evidence_bag,tool='search_docs',status='rejected',error_code='validation_error')
+                        else:
+                            child_conf['task_context'] = {**child_conf['task_context'],
+                                'policy_items':{row['question']:row['policy_sources'] for row in reviews}}
+                            table_answer = '\n\n'.join(row['label']+' '+row['question']+'\n\n'+row['body'] for row in reviews)
+                        actual_policy = policy_identity([doc for doc in evidence_bag['documents']
+                            if any(policy_identity([doc]) == [identity] for row in reviews for identity in row['policy_sources'])])
+                    else:
+                        evidence_bag["documents"] = _applicable_policy_documents(evidence_bag.get("documents", []), child_conf["data_question"])
+                        table_answer = policy_review_text(evidence_bag.get("documents", []), period=child_conf["data_question"])
+                        actual_policy = policy_identity(evidence_bag.get("documents", []), period=child_conf["data_question"])
                     pinned_policy = child_conf["task_context"].get("policy_sources")
-                    if pinned_policy is not None and actual_policy != pinned_policy:
+                    if not reviews and pinned_policy is not None and actual_policy != pinned_policy:
                         table_answer = "制度依据版本已变化或当前无权访问，未沿用旧依据作核查结论。请重新发起核查并确认制度版本。"
                         record_tool_status(evidence_bag, tool="search_docs", status="rejected", error_code="validation_error")
                     else:
@@ -1150,6 +1232,7 @@ def _make_worker_wrapper(graph, name: str):
             result = ({"messages": [AIMessage(content=filter_failure)]} if filter_failure else
                       {"messages": [AIMessage(content=table_answer)]} if table_answer is not None else
                       graph.invoke({"messages": [user_msg]}, config=child_cfg))
+            _raise_if_cancelled(parent_conf.get('cancel_event'))
             if name == "doc" and table_answer is None and _doc_leg_spoke_without_reading(result, evidence_bag):
                 # B17：模型一枚工具都没调就把话说了——补一发真检索，带着原文在同一腿重答一次。
                 logger.warning("[doc] 这一腿没检索就作答，按 B17 补查后重答一次")
@@ -1164,6 +1247,10 @@ def _make_worker_wrapper(graph, name: str):
             if isinstance(m, AIMessage) and m.content and not getattr(m, "tool_calls", None):
                 final = m.content
                 break
+        if mixed and name == 'doc':
+            doc_items = [(label, item) for label, item, kind in subtasks if kind == 'doc']
+            if len(doc_items) == 1:
+                final = f'{doc_items[0][0]} {doc_items[0][1]}\n\n{final}'
         if name == "export":
             # 取消检查点 3（即将落盘）：_fallback_export_result 自己会生成 PDF，所以
             # 即使图已经跑到这里，仍然拦得住最后一个副作用。
@@ -1767,7 +1854,7 @@ def run_with_stream(
         # 与上面两枚同一个理由：能进 state 的东西才进 state，声明只是一个字符串，但它要影响
         # 的是**图内**派发，跨不过节点的只有 config，所以走同一条 configurable 通道。
         config["configurable"][DECLARED_LANE_KEY] = declared
-    from app.agents.task_review import is_review_question, review_context
+    from app.agents.task_review import alert_task_question, is_review_question, review_context
     raw_question = str(context.get("task_question") or user_message)
     raw_question = re.sub(r'^仅依据以下文件(?:《[^》\r\n]+》)+回答：\n', '', raw_question)
     filename = str(context.get("data_filename") or "").strip()
@@ -1776,10 +1863,16 @@ def run_with_stream(
     same_owner = _owner_id_from({"principal": previous.get("principal")}) == owner_id
     task_context = {}
     data_context = context.get('data_context') or {}
-    if filename and (is_review_question(raw_question) or (previous_context and same_owner)):
+    raw_question = alert_task_question(raw_question, data_context)
+    preserving_previous = raw_question.startswith('请将以下已完成的分析原文排版导出') and same_owner
+    if preserving_previous and not previous_context and previous.get('data_context'):
+        data_context = dict(previous['data_context'])
+    if filename and ((is_review_question(raw_question) and not preserving_previous) or (previous_context and same_owner)):
         from app.storage.datasets import dataset_registry
         from app.documents.catalog import latest_document_version
-        dataset = dataset_registry.get_active_by_filename(filename)
+        dataset = (dataset_registry.resolve_version(filename, data_context.get('version_id') or '')
+            if data_context.get('version_policy') == 'fixed'
+            else dataset_registry.get_active_by_filename(filename))
         requested = context.get('document_filenames')
         documents = None if requested is None else []
         for name in requested or []:
@@ -1788,6 +1881,10 @@ def run_with_stream(
         task_context = review_context(raw_question, filename, previous_context if same_owner else {},
             {"version_id": getattr(dataset, "version_id", ""), "sha256": getattr(dataset, "content_sha256", "")},
             documents=documents)
+        if data_context.get('alert_id'):
+            task_context['analysis_question'] = data_context['query']
+        if data_context.get('version_policy') == 'fixed':
+            task_context.update(version_policy='fixed', filename=filename, alert_id=data_context.get('alert_id'))
         task_context.pop('report_body', None)
         if raw_question.startswith('请将以下已完成的分析原文排版导出') and same_owner:
             task_context['report_body'] = str(previous_context.get('report_body') or previous.get('final_answer') or '')
@@ -1807,13 +1904,18 @@ def run_with_stream(
         task_id=task_id,
     )
     initial_state["task_context"] = task_context
-    if not filename and context.get('document_filenames'):
+    if not task_context and context.get('document_filenames'):
         from app.agents.task_review import document_selection_context
         initial_state['document_selection'] = document_selection_context(
             context['document_filenames'], previous.get('document_selection') or {} if same_owner else {})
     initial_state['data_context'] = data_context
     if initial_state.get('data_context') and same_owner and raw_question.startswith('请将以下已完成的分析原文排版导出'):
         initial_state['data_context'] = {**initial_state['data_context'], 'report_body': str((previous.get('data_context') or {}).get('report_body') or previous.get('final_answer') or '')}
+        initial_state['data_context']['report_source_documents'] = [
+            {'source_name': row['source_name'], 'version_id': row['document_version_id'], 'index_version_id': row['index_version_id']}
+            for row in ((previous.get('agent_results') or {}).get('doc') or {}).get('evidence', [])
+            if row.get('source_type') == 'document' and row.get('document_version_id') and row.get('index_version_id')
+        ] or (previous.get('data_context') or {}).get('report_source_documents') or []
     exported_body = report_body_from_export_prompt(raw_question)
     if exported_body:
         # The export prompt carries the settled answer itself. Keep it on a dedicated

@@ -22,7 +22,7 @@ import hashlib
 import json
 import os
 import uuid
-from dataclasses import asdict, dataclass, field, fields as dataclass_fields
+from dataclasses import asdict, dataclass, field, fields as dataclass_fields, replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -348,7 +348,7 @@ class DatasetTableStore:
     ) -> list[dict[str, Any]]:
         raise NotImplementedError
 
-    def apply(self, changes: Iterable[Change]) -> None:
+    def apply(self, changes: Iterable[Change], *, expected_version_id: str | None = None) -> None:
         raise NotImplementedError
 
 
@@ -406,11 +406,17 @@ class InMemoryDatasetTableStore(DatasetTableStore):
             ]
         return sorted(rows, key=lambda row: _sort_key(row.get(order_column)), reverse=descending)
 
-    def apply(self, changes: Iterable[Change]) -> None:
+    def apply(self, changes: Iterable[Change], *, expected_version_id: str | None = None) -> None:
         staged = [(table, dict(row), change) for table, row, change in changes]
         if not staged:
             return
         with self._lock:
+            if expected_version_id is not None:
+                for table, row, change in staged:
+                    if table == DATASET_TABLE and change == _UPDATE:
+                        current = self._rows[table].get(str(row['dataset_id']))
+                        if not current or current.get('status') != STATUS_ACTIVE or current.get('current_version_id') != expected_version_id:
+                            raise DatasetRowConflict('dataset_version_changed')
             for table, row, change in staged:
                 _validate_row(table, row, change=change)
             for table, row, change in staged:
@@ -495,14 +501,18 @@ class PostgresDatasetTableStore(DatasetTableStore):
         *,
         connection_factory: Callable[[], Any] | None = None,
         database_url: str | None = None,
+        connection=None,
     ) -> None:
         self.connection_factory = connection_factory
         self.database_url = (database_url or "").strip()
+        self.connection = connection
 
     def resolve_database_url(self) -> str:
         return (self.database_url or os.getenv("DATABASE_URL", "")).strip()
 
     def _connect(self) -> Any:
+        if self.connection is not None:
+            return self.connection
         if self.connection_factory is not None:
             return self.connection_factory()
         from app.db.connection import open_connection, parse_database_settings
@@ -547,7 +557,7 @@ class PostgresDatasetTableStore(DatasetTableStore):
         finally:
             self._close(connection)
 
-    def apply(self, changes: Iterable[Change]) -> None:
+    def apply(self, changes: Iterable[Change], *, expected_version_id: str | None = None) -> None:
         staged = [(table, dict(row), change) for table, row, change in changes]
         if not staged:
             return
@@ -556,24 +566,34 @@ class PostgresDatasetTableStore(DatasetTableStore):
         connection = None
         try:
             connection = self._connect()
+            if expected_version_id is not None:
+                for table, row, change in staged:
+                    if table == DATASET_TABLE and change == _UPDATE:
+                        current = connection.execute(
+                            "SELECT current_version_id FROM datasets WHERE dataset_id=%s AND status='active' FOR UPDATE",
+                            (row['dataset_id'],)).fetchone()
+                        version = current.get('current_version_id') if isinstance(current, Mapping) else current[0] if current else None
+                        if version != expected_version_id:
+                            raise DatasetRowConflict('dataset_version_changed')
             for table, row, change in staged:
                 sql, params = _write_statement(table, row, change=change)
                 connection.execute(sql, params)
-            if hasattr(connection, "commit"):
+            if self.connection is None and hasattr(connection, "commit"):
                 connection.commit()
         except Exception as exc:
-            if connection is not None and hasattr(connection, "rollback"):
+            if self.connection is None and connection is not None and hasattr(connection, "rollback"):
                 try:
                     connection.rollback()
                 except Exception:  # pragma: no cover - the original failure is the one to report
                     pass
+            if isinstance(exc, DatasetRowConflict):
+                raise
             raise PersistenceWriteError(f"{DATASET_TABLE}/{DATASET_VERSION_TABLE} write failed: {exc}") from exc
         finally:
             self._close(connection)
 
-    @staticmethod
-    def _close(connection: Any) -> None:
-        if connection is not None and hasattr(connection, "close"):
+    def _close(self, connection: Any) -> None:
+        if self.connection is None and connection is not None and hasattr(connection, "close"):
             connection.close()
 
 
@@ -893,6 +913,7 @@ class DatasetRegistry:
         schema_snapshot: Mapping[str, Any] | None = None,
         period_start: str | date | None = None,
         period_end: str | date | None = None,
+        expected_version_id: str | None = None,
     ) -> DatasetRecord:
         """Register the file as a new *version* of the dataset that owns its logical name.
 
@@ -920,13 +941,21 @@ class DatasetRegistry:
                 if value
             }
         )
-        if not departments:
-            raise DatasetOwnerScopeMissing("dataset owner must have a department scope")
         content_sha256 = _hash_file(path)
 
         with self._lock:
             self._ensure_legacy_import()
             existing = self._active_row_by_filename(logical_filename)
+            if expected_version_id is not None:
+                if existing is None or existing.get('current_version_id') != expected_version_id:
+                    raise DatasetRowConflict('dataset_version_changed')
+                previous = _dataset_from_row(existing)
+                departments = list(previous.department_ids)
+                classification, visibility = previous.classification, previous.visibility
+                if content_sha256 == previous.content_sha256:
+                    return previous
+            if not departments:
+                raise DatasetOwnerScopeMissing("dataset owner must have a department scope")
             now = _utc_now_text()
             if existing is None:
                 dataset_id = uuid.uuid4().hex
@@ -942,7 +971,7 @@ class DatasetRegistry:
                 previous_version_id = previous.current_version_id
                 version_number = self._next_version_number(dataset_id)
             version_id = f"{dataset_id}:v{version_number}"
-            owner_id = str(principal.user_id)
+            owner_id = str(previous.owner_id) if expected_version_id is not None else str(principal.user_id)
             version = DatasetVersionRecord(
                 dataset_version_id=version_id,
                 dataset_id=dataset_id,
@@ -957,7 +986,7 @@ class DatasetRegistry:
                 created_at=now,
                 published_at=now,
                 superseded_at=None,
-                metadata={"registered_by": owner_id, "previous_version_id": previous_version_id},
+                metadata={"registered_by": str(principal.user_id), "previous_version_id": previous_version_id},
                 # The scope this version is *registered under*, copied onto the version row
                 # rather than left to the dataset row to remember: the dataset row is what a
                 # later registration rewrites, and a version that only borrows it changes
@@ -997,7 +1026,10 @@ class DatasetRegistry:
                     )
                 )
             changes.append((DATASET_VERSION_TABLE, asdict(version), _INSERT))
-            self.store.apply(changes)
+            if expected_version_id is not None:
+                self.store.apply(changes, expected_version_id=expected_version_id)
+            else:
+                self.store.apply(changes)
 
         published = self.get(dataset_id)
         if published is None:
@@ -1126,6 +1158,21 @@ class DatasetRegistry:
                 where={"dataset_id": dataset_id, "version_number": version_number},
             )
         return _version_from_row(rows[0]) if rows else None
+
+    def resolve_version(self, filename: str, version_id: str) -> DatasetRecord | None:
+        """Project retained bytes through the current dataset's stricter version scope."""
+        current = self.get_active_by_filename(filename)
+        version = self.version_row(version_id)
+        if (current is None or version is None or version.dataset_id != current.dataset_id
+                or version.status == STATUS_DELETED):
+            return None
+        scope = self.scope_for_version(version)
+        if scope is None:
+            return None
+        path = self._contained_path(version.storage_key, must_exist=False)
+        return replace(current, storage_key=str(path), content_sha256=version.content_sha256,
+            current_version_id=version.dataset_version_id, classification=scope.classification,
+            department_ids=list(scope.department_ids))
 
     def dataset_for_version(self, version_id: str) -> DatasetRecord | None:
         """The dataset a version row belongs to."""

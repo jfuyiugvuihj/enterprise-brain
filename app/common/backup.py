@@ -9,7 +9,7 @@ from pathlib import Path
 DEFAULT_BACKUP_DIRS = (
     "documents",
     "data",
-    "static/exports",
+    "static",
     "logs",
 )
 
@@ -40,6 +40,7 @@ def create_backup(
         elif candidate.is_dir():
             candidates.extend(path for path in candidate.rglob("*") if path.is_file())
 
+    candidates = [path for path in candidates if path.resolve() != archive]
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as handle:
         for path in sorted(candidates):
             relative = path.relative_to(root).as_posix()
@@ -48,6 +49,7 @@ def create_backup(
                 {
                     "path": relative,
                     "size": path.stat().st_size,
+                    "mtime_ns": path.stat().st_mtime_ns,
                     "sha256": _sha256(path),
                 }
             )
@@ -84,4 +86,6 @@ def restore_backup(archive_path: str | Path, destination: str | Path) -> dict:
         restored = _safe_member_path(target_root, entry["path"])
         if not restored.exists() or _sha256(restored) != entry["sha256"]:
             raise ValueError(f"backup checksum mismatch: {entry['path']}")
+        if entry.get('mtime_ns') is not None:
+            os.utime(restored, ns=(restored.stat().st_atime_ns, int(entry['mtime_ns'])))
     return manifest

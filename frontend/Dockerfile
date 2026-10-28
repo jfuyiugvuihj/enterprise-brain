@@ -11,6 +11,7 @@ COPY frontend/package*.json ./
 RUN npm install -g npm@11.6.2
 RUN npm ci
 
+COPY docs/user-guide /docs/user-guide
 COPY frontend/ ./
 RUN npm run build
 

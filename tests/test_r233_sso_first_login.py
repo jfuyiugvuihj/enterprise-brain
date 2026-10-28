@@ -82,6 +82,11 @@ class _Table:
         text = " ".join(sql.lower().split())
         params = tuple(params or ())
         self.statements.append(text)
+        if text.startswith('lock table users'):
+            return _Result()
+        if text.startswith('select username, role, status from users where username'):
+            hit = self._by_name(params[0])
+            return _Result(row={**hit,'status':hit.get('status','active')} if hit else None)
         if text.startswith("select to_regclass"):
             return _Result(row={"table_name": "users"})
         if text.startswith("select count(*) as c from users"):
@@ -97,6 +102,15 @@ class _Table:
             return _Result() if not hit else _Result(
                 row={key: hit[key] for key in ("username", "role", "department")}
             )
+        if text.startswith('select username, role, department,'):
+            hit = self._by_name(params[0])
+            return _Result(row={**hit,'auth_version':0,'must_change_password':False,'status':'active'} if hit else None)
+        if text.startswith('update users set role'):
+            hit = self._by_name(params[2]);hit.update(role=params[0],department=params[1])
+            return _Result(rowcount=1)
+        if text.startswith('select id, username, role, department, created_at,'):
+            return _Result(rows=[{**{key:row[key] for key in ('id','username','role','department','created_at')},
+                'must_change_password':False,'status':'active'} for row in self.rows])
         if text.startswith("select id, username, role, department, created_at from users"):
             columns = ("id", "username", "role", "department", "created_at")
             return _Result(
@@ -291,7 +305,7 @@ def test_the_pg_branch_swallows_the_missing_mint_into_that_exact_message(monkeyp
     assert auth.upsert_sso_user(SSO_USER, role="manager", department="sales") == PG_SYMPTOM
     assert env.table.rows == [], "症状必须只来自铸口令，不许留下半笔写入"
     assert env.table.commits == 0, env.table.statements
-    assert any(stmt.startswith("select id from users") for stmt in env.table.statements)
+    assert any(stmt.startswith("select username, role, status from users") for stmt in env.table.statements)
     assert not any(stmt.startswith("insert into users") for stmt in env.table.statements)
 
 
@@ -497,11 +511,13 @@ def test_the_placeholder_never_leaves_the_user_store(monkeypatch):
     digest = row["password_hash"]
 
     assert auth.list_users() == [
-        {"id": 1, "username": SSO_USER, "role": "staff", "department": "ops", "created_at": "now"}
+        {"id": 1, "username": SSO_USER, "role": "staff", "department": "ops", "created_at": "now",
+         'must_change_password':False,'status':'active'}
     ], auth.list_users()
     for user in auth.list_users():
         assert "password_hash" not in user
-    assert auth.get_user(SSO_USER) == {"username": SSO_USER, "role": "staff", "department": "ops"}
+    assert auth.get_user(SSO_USER) == {"username": SSO_USER, "role": "staff", "department": "ops",
+        'auth_version':0,'must_change_password':False,'status':'active'}
     assert digest not in json.dumps(auth.list_users(), ensure_ascii=False)
     assert digest not in "\n".join(env.logger.records), env.logger.records
 
@@ -553,7 +569,8 @@ def test_an_existing_user_never_remints_its_password(monkeypatch):
 
     assert env.table._by_name(SSO_USER)["password_hash"] == keep
     assert [stmt.split(")")[0] for stmt in env.table.statements] == [
-        "select id from users where username = %s",
+        "lock table users in share row exclusive mode",
+        "select username, role, status from users where username = %s",
         "update users set role = %s, department = %s where username = %s",
     ], env.table.statements
     assert env.table.commits == 1

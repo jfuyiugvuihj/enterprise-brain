@@ -180,6 +180,7 @@ PRINCIPAL_SCOPE_FIELDS = (
     "clearance",
     "clearance_label",
     "status",
+    "auth_version",
     "is_system",
 )
 
@@ -992,6 +993,11 @@ def _process_report_lane_turn(
             )
         # 判据②：出处走的是同步道那两只现成的件（`_collect_document_sources` 取证、
         # `_authorized_source_rows` 复核），判定仍是 `scope.allows`，一行都不许多。
+        from app.common.auth import principal_current_reason
+        identity_reason = principal_current_reason(principal)
+        if identity_reason:
+            code = IDENTITY_STORE_UNAVAILABLE if identity_reason == 'storage_unavailable' else 'permission_denied'
+            return _refuse_identity(queue, request_id, code, session_id=session_id, write_back=write_back)
         visible_sources, scope_reason, sources_error = chat.queue_turn_sources(
             agent_results, principal
         )
@@ -1157,6 +1163,12 @@ def _process_reserved(queue: ReliableQueue, message: QueueMessage) -> bool:
             )
             queue.fail_or_retry(request_id, NO_MODEL_CALL_READOUT)
             return True
+        from app.common.auth import principal_current_reason
+        identity_reason = principal_current_reason(principal_payload)
+        if identity_reason:
+            code = IDENTITY_STORE_UNAVAILABLE if identity_reason == 'storage_unavailable' else 'permission_denied'
+            return _refuse_identity(queue,request_id,code,session_id=session_id,
+                                   write_back=bool(payload.get('write_back_session')))
         visible_sources, scope_reason, sources_error = chat.queue_turn_sources(
             {"orchestrator": record}, principal_payload
         )

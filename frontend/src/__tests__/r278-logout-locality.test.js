@@ -106,9 +106,10 @@ async function loginAndUse(seed) {
   const Host = defineComponent({
     name: 'R278LogoutHost',
     ssrRender: App.ssrRender,
-    setup(props, ctx) {
+    async setup(props, ctx) {
       const given = App.setup({}, ctx)
-      given.checkAuth()
+      http.get.mockResolvedValueOnce({ data: { username: 'baiye', role: 'staff', must_change_password: false } })
+      await given.checkAuth()
       bindings = given
       return given
     },

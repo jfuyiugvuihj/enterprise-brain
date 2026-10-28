@@ -1,13 +1,10 @@
 # 备份与恢复
 
-默认备份范围包括原始文档、数据文件、Chroma、导出报告和日志目录。PostgreSQL
-业务数据和 Redis 队列状态不包含在工作区 ZIP 中，生产备份必须单独导出数据库。
+工作区 ZIP 默认备份原始文档、经营数据、`static`（图表与导出报告）和日志，具体目录以 `app/common/backup.py::DEFAULT_BACKUP_DIRS` 为准。PostgreSQL 业务数据与 PGVector 向量不在这个 ZIP 内，必须另做数据库备份；Redis 队列也不在 ZIP 内。新版备份保留文件修改时间；输出 ZIP 位于备份目录内时，不把该 ZIP 自身重复打包。旧 ZIP 不含修改时间字段时仍可恢复内容，但不能精确还原原修改时间。
 
-向量这条腿的落点与退役工序另有一页：docs/deployment/chroma-retirement-path.md（停写之后的归档顺序、
-每阶段的判据与回滚点）。库级全量恢复的真跑工序在 scripts/r575_vector_restore_drill.py：备份必须连
-库级 GUC 成对产物（.globals.json / .globals.sql）一起备，恢复时在任何校验之前重新施加。
+PGVector 是当前唯一现役向量库。恢复准备应同时保留工作区文件、PostgreSQL 归档、部署配置与所需本地模型；配置和凭据按企业的保管规则单独保护，不放进公开代码包。旧 Chroma 迁移材料只供历史追溯，不作为现役恢复步骤。
 
-向量这条腿今天有两处落点：定案的生产向量库是 PostgreSQL + PGVector，双写镜像 `chunk_vectors` 随整库 `pg_dump` 一起进 dump（`scripts/backup_database.py:41-48` 不做表级筛选）；仍提供读服务的 Chroma 目录走工作区 ZIP。隔离演练现在**两枚落点一起点名**：`tests/test_postgres_backup_recovery.py:109` 的 `VECTOR_LANDING_TABLES = ("chunks", "chunk_vectors")` 是唯一事实源，`scripts/backup_database.py:38/:51` 要求 `TABLE` 与 `TABLE DATA` 两条目录都齐才算在场（只点名表名不算），恢复侧逐枚数行数并按 `<=>`／`<->` 两把尺各取回 top-1 比对。🔴 **但真库那一格今天仍未跑绿过一次**：离线件 22 passed、真机件 3 skipped（跑法钉在该测试件模块头「判据④」，需要 `EB_PG_BIN_DIR` + 5433 一次性集群）⇒ 停写退役（R60）要等这一格真跑，本文件不许提前写成「备份已覆盖向量列」。生产 CLI 默认不带落点核对（`--require-table` 是一枚可能变红的闸，业主点头才进默认路径）。
+库级恢复演练入口为 `scripts/r575_vector_restore_drill.py`；涉及库级设置时，应成对保存 `.globals.json`／`.globals.sql`，并在恢复校验前重新施加。向量表和数据是否完整，应核对数据库归档目录、恢复后的行数及检索结果。能生成 ZIP、能列出归档目录或单项测试通过，都不能代替完整备份恢复验收；本轮完整目标机恢复仍待实机验证。
 
 ```powershell
 python scripts/backup_workspace.py --output backups/enterprise-brain.zip
@@ -56,13 +53,17 @@ docker compose up -d
 PostgreSQL dump，并将 dump 放入受控备份目录。恢复演练至少验证：
 
 1. 文档和数据文件可以读取；
-2. Chroma 可以重新加载或重建；
+2. PGVector 表、向量维度及同一权限范围内的检索结果正确；
 3. 导出报告和审计日志完整；
 4. 服务重启后健康检查和权限校验正常；
 5. PostgreSQL 中的用户、资源元数据、审计和任务状态可查询；
 6. 每一行的 `owner_id`、部门范围与密级仍然与原库一致（权限关系随行恢复）。
 
-## 已验证的隔离演练
+## 隔离演练与验证范围
+
+2026-10-27 在一次性 PostgreSQL 16 + PGVector 容器中完成真实归档、恢复到兄弟库及恢复后核对，来源和恢复库均与应用库隔离。具名检查覆盖迁移、权限字段、向量内容、维度、最近邻和约束；日志在 `output/enterprise-readiness-20261025/backup-isolated-pg-final.log`。这一组只覆盖数据库；联合恢复的范围见下段，新机器安装与72小时运行仍未验。
+
+同日另将隔离验收站的文件 ZIP、数据库归档及成对库级设置恢复到独立临时服务，110个文件校验和一致、9份登记图表存在；账号登录、资料列表（含修改时间）、原会话、计算记录及原PDF字节核对通过，1440px／377px浏览器登录和原PDF预览通过。部署配置由受保护环境提供，模型地址断开、没有启动任务执行器。证据为上述产物目录内 `restore-files-pg-proof.json` 与 `restore-browser.log`。临时服务已移除；仅证明本机隔离环境的联合恢复，不证明异机安装、真实手机、模型恢复运行、排队中任务恢复或72小时运行。
 
 `tests/test_postgres_backup_recovery.py` 在隔离集群上真实执行了以下链路，只有显式导出
 `EB_PG_ACCEPTANCE_URL` 与 `EB_PG_BIN_DIR` 才会运行，避免误碰生产库：

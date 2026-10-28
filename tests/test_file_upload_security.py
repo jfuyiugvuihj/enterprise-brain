@@ -187,7 +187,7 @@ def test_load_document_hands_spreadsheets_to_the_parser(tmp_path):
     assert "销售" in body and "Sheet「一月」" in body
 
 
-def _document_upload_client(monkeypatch, tmp_path):
+def _document_upload_client(monkeypatch, tmp_path, *, authenticated=True):
     """Serve the real document router on a probe app: no port, no app.main lifespan."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -216,6 +216,14 @@ def _document_upload_client(monkeypatch, tmp_path):
     monkeypatch.setattr(tools, "rebuild_bm25", lambda: None)
 
     probe = FastAPI()
+    if authenticated:
+        from app.common.identity import Principal
+        principal = Principal.from_user({'id':'upload-parser','username':'upload-parser',
+            'role':'manager','department':'财务部','clearance':3})
+        @probe.middleware('http')
+        async def authenticate(request, call_next):
+            request.state.principal = principal
+            return await call_next(request)
     probe.include_router(chat.router, prefix="/api/v1")
     return TestClient(probe), retriever
 
@@ -318,7 +326,7 @@ def test_http_upload_ingests_a_markdown_document(tmp_path, monkeypatch):
     response = client.post(
         "/api/v1/upload",
         files={"file": ("inventory.md", body.encode("utf-8"), "text/markdown")},
-        data={"classification": "2", "department": "operations"},
+        data={"classification": "2", "department": "财务部"},
     )
 
     assert response.status_code == 200, response.text
@@ -342,13 +350,19 @@ def test_upload_inherits_the_uploader_department_and_not_the_form_one(
         data={"classification": "1", "department": "财务部"},
     )
 
+    assert response.status_code == 403, response.text
+    assert response.json()['detail'] == 'department_override_denied'
+    assert retriever.indexed == {} and list(tmp_path.iterdir()) == []
+    response = client.post('/api/v1/upload',
+        files={'file':('stock.txt','库存周转 32 天。'.encode('utf-8'),'text/plain')},
+        data={'classification':'1'})
     assert response.status_code == 200, response.text
     assert retriever.indexed["department"] == "仓储部"
     assert response.json()["department"] == "仓储部"
 
 
-def test_an_upload_with_no_subject_stays_unscoped(tmp_path, monkeypatch):
-    client, retriever = _document_upload_client(monkeypatch, tmp_path)
+def test_http_upload_without_a_subject_is_rejected_before_writing(tmp_path, monkeypatch):
+    client, retriever = _document_upload_client(monkeypatch, tmp_path, authenticated=False)
 
     response = client.post(
         "/api/v1/upload",
@@ -356,9 +370,9 @@ def test_an_upload_with_no_subject_stays_unscoped(tmp_path, monkeypatch):
         data={"classification": "1", "department": "随便填"},
     )
 
-    assert response.status_code == 200, response.text
-    assert response.json()["department"] == ""
-    assert retriever.indexed["department"] is None
+    assert response.status_code == 401, response.text
+    assert response.json()['detail'] == 'authentication_required'
+    assert retriever.indexed == {} and list(tmp_path.iterdir()) == []
 
 
 def test_http_upload_ingests_a_fake_workbook_and_keeps_the_file(tmp_path, monkeypatch):
@@ -590,8 +604,7 @@ def test_http_upload_accepts_all_11_versioned_corpus_names(tmp_path, monkeypatch
         assert response.json()["filename"] == filename
         assert retriever.indexed["filename"] == filename
 
-    # 无 principal ⇒ 沿用既有的 unscoped 语义，本单不碰权限判定
-    assert retriever.indexed["department"] is None
+    assert retriever.indexed["department"] == '财务部'
 
 
 def test_http_upload_still_rejects_a_disguised_name_with_the_stable_code(tmp_path, monkeypatch):

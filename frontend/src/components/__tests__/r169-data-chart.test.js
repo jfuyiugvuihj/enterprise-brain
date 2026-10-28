@@ -36,6 +36,7 @@ import { http } from '../../lib/http'
 import { fetchArtifactBlob } from '../../lib/artifacts'
 import ChartViewer from '../ChartViewer.vue'
 import DataPanel from '../DataPanel.vue'
+import AnalysisContext from '../AnalysisContext.vue'
 
 const source = name => readFileSync(new URL('../' + name, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
 
@@ -86,6 +87,28 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
+it('新任务没有独立记录时不把正文摘录当范围，旧记录明确未核实', async () => {
+  const props = { hasAnswer: true, scope: { period: '正文推测9999年' } }
+  const current = await renderToString(h(AnalysisContext, { ...props, hasRecordedRequest: true }))
+  expect(current).not.toContain('正文推测9999年')
+  const historical = await renderToString(h(AnalysisContext, props))
+  expect(historical).toContain('旧正文摘录，尚未核实')
+  expect(historical).toContain('正文推测9999年')
+})
+
+it('查询范围把输入行数和输入单位与查询结果分开说明', async () => {
+  const html = await renderToString(h(AnalysisContext, { hasAnswer: true, calculations: [{
+    calculation_run_id: 'count-run', status: 'completed', dataset_version_id: 'finance:v2',
+    parameters: { operation: 'query_data', filename: 'finance.csv' },
+    result: { rows: 2, query_result: 1, analysis_scope: { kind: 'query_input',
+      period: '2026-01 至 2026-02', units: [{ column: '金额（元）', unit: '元' }] } },
+  }] }))
+  expect(html).toContain('输入记录数')
+  expect(html).toContain('输入字段单位')
+  expect(html).toContain('不代表查询结果的行数或单位')
+  expect(html).not.toContain('<dt>记录数</dt>')
+})
+
 describe('R169 D1 · 选文件这一腿真的会拉预览（跑真 loadDataFiles / selectDataFile）', () => {
   it('列表回来后自动选中第一个文件，并立刻打它的预览', async () => {
     http.get.mockImplementation(async (url) => {
@@ -122,6 +145,14 @@ describe('R169 D1 · 选文件这一腿真的会拉预览（跑真 loadDataFiles
 })
 
 describe('R169 D2 · 预览与统计：屏上的数只从后端画像来（跑真 applyDataPreview）', () => {
+  it('无日期字段不推荐趋势，切换到带月份的资料才提供趋势入口', async () => {
+    const b = await mountBindings(DataPanel)
+    b.applyDataPreview(previewPayload())
+    expect(b.quickActions.value.some(action => action.id === 'trend')).toBe(false)
+    b.applyDataPreview(previewPayload({ profile: { rows: 6, columns: [{ name: '月份', dtype: 'str' }, { name: '金额', dtype: 'int64' }] } }))
+    expect(b.quickActions.value.some(action => action.id === 'trend')).toBe(true)
+  })
+
   it('行数列数取画像里的数，不取样例行长度', async () => {
     const b = await mountBindings(DataPanel)
     b.applyDataPreview(previewPayload())

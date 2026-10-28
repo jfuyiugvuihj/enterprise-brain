@@ -44,7 +44,9 @@ def _authorized_artifact(request: Request, artifact_id: str, action: str, *, rec
         action=action,
         require_resource_scope=True,
     )
-    source_allowed = decision.allowed and artifact_storage.artifact_sources_allowed(artifact, principal)
+    # Removing an already authorized artifact does not reveal its retired source.
+    # Read, download and ticket issuance still require current source access.
+    source_allowed = decision.allowed and (action == ACTION_DELETE or artifact_storage.artifact_sources_allowed(artifact, principal))
     if not source_allowed or record_allowed:
         record_audit(
             principal,
@@ -78,7 +80,8 @@ async def create_artifact_download_link(artifact_id: str, request: Request):
     artifact = _authorized_artifact(request, artifact_id, ACTION_DOWNLOAD, record_allowed=False)
     principal = principal_from_request(request)
     ticket = secrets.token_urlsafe(32)
-    payload = json.dumps({"artifact_id": artifact.artifact_id, "username": principal.username})
+    payload = json.dumps({"artifact_id": artifact.artifact_id, "username": principal.username,
+                          "auth_version": principal.auth_version})
     try:
         _ticket_store().setex(_ticket_key(ticket), _DOWNLOAD_TICKET_TTL_SECONDS, payload)
     except HTTPException:
@@ -120,6 +123,8 @@ async def download_artifact_with_ticket(request: Request):
         principal = Principal.from_user(user)
         if principal.status != "active":
             raise ValueError("account inactive")
+        if principal.auth_version != payload.get('auth_version', 0):
+            raise ValueError("credential expired")
     except (ValueError, TypeError, KeyError) as exc:
         raise HTTPException(status_code=403, detail="permission_denied") from exc
     request.state.principal = principal

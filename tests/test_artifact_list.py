@@ -144,13 +144,13 @@ def test_an_administrator_crosses_departments_and_a_low_clearance_caller_does_no
     assert client.get(confidential.content_url, headers=_headers("junior")).status_code == 403
 
 
-def test_the_owner_of_an_artifact_keeps_it_even_below_its_classification(client, registry, account):
-    """Pinned, not endorsed: ``owner_match`` is evaluated before the ceiling in policy.py."""
+def test_an_owner_still_needs_clearance_for_their_artifact(client, registry, account):
+    """Ownership must not bypass the current clearance requirement."""
     account("author", "finance", role="staff")
     artifact = _store(registry, "author", "author-secret.png", role="staff", classification="confidential")
 
-    assert _ids(client.get(LIST_PATH, headers=_headers("author")).json()) == [artifact.artifact_id]
-    assert client.get(artifact.content_url, headers=_headers("author")).status_code == 200
+    assert _ids(client.get(LIST_PATH, headers=_headers("author")).json()) == []
+    assert client.get(artifact.content_url, headers=_headers("author")).status_code == 403
 
 
 # ------------------------------------------------------------------ shape and paging

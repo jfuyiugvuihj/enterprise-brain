@@ -11,19 +11,20 @@ app/agents/tools.rebuild_bm25 —— 这四枚出口就是知识库路由 app/ap
 loader.load_document(path, display_name=名字)，且库里那条命中必须是既有分块器切出来的原块。
 谁另起一套渲染或第二套分块，这两句当场对不上。
 
-替身只有四枚，各自都有理由，都不是被测代码的形状：
+替身仅限 embedding 服务边界和 BM25 调用记账；上传路由、解析、PGVector 写入与检索、
+数据集登记、目录权限过滤都连接同一枚一次性真实 PostgreSQL + PGVector 库：
 * OllamaEmbeddings._call_api 换成按词表定向 + L2 归一的假向量 —— 与同族在册件
   tests/test_r50_incremental_index.py 同一手法，让「这一篇在不在名次里」成为可数的事实。
-  归一是必需的：遗留向量库缺省按 L2 排，不归一的二值向量会把「块更长」读成「越不像」。
+  使用单位向量，避免把块长度差异误当成主题差异。
 * 模型发现那枚在册离线桩换成「embedding 模型在服务上」——闸门这一格要按生产分支走，
   服务答得出、且答的模型就是向量腿要调的那一枚；闸门自己的两格答复（模型没在／服务不答）
   由 tests/test_r700_dataset_upload_reads_the_document_dict.py 单独钉。
-* chat.retriever 换成临时目录里的真 DocumentRetriever（透明替身只多记一本调用账）——
-  仓库的 chroma_db 一枚字节都不碰，R134 那道闸门自己守着这句话。
+* chat.retriever 使用无参数构造的现役 DocumentRetriever（透明包装只多记一本调用账）。
+  测试向量由确定性假 embedding 产生，但仍经真实 PGVector 存取与排序。
 * app.agents.tools.rebuild_bm25 记一笔就走：本件要证明的是「关键词那一路也被同一条腿叫过」，
   真重建读的是仓库 documents/，那是总控窗口的活。
 
-全程离线：不连 PostgreSQL、不起服务、不开宿主模型端口、不打模型。
+不启动应用服务或调用模型；仅使用 alert scope 测试创建的隔离一次性 PostgreSQL + PGVector。
 """
 from __future__ import annotations
 
@@ -33,10 +34,13 @@ import math
 import openpyxl
 import pytest
 from fastapi.testclient import TestClient
+from test_alert_scan_scope import alert_pg
 
 from app.rag import loader
 from app.rag import retriever as retriever_module
 from app.rag.retriever import DocumentRetriever
+from app.rag import pg_store
+from app.documents import catalog
 
 DEPT = "r700-finance"
 OWNER = "r700-manager"
@@ -47,11 +51,11 @@ CSV_NAME = "预算明细表.csv"
 XLSX_NAME = "预算明细表.xlsx"
 
 #: 假向量的词表：查的两枚词、表里的列名与三行值，再加上对照文档自己的词。
-VOCAB = (HEADER_TERM, ROW_TERM, "部门", "研发", "市场", "行政", "备份", "恢复", "制度")
+VOCAB = (HEADER_TERM, ROW_TERM, "部门", "研发", "市场", "行政", "备份")
 #: 一枚词都不沾的文本走这一枚备用轴：交回的向量恒为非零，且与词表所有轴正交。
 SPARE_AXIS = len(VOCAB)
-MODEL = retriever_module.EMBED_MODEL
-WIDTH = retriever_module.EMBEDDING_DIM
+MODEL = "isolated-alert-test"
+WIDTH = 8
 
 DECOY_NAME = "客户数据备份制度.txt"
 DECOY_BODY = (
@@ -117,23 +121,32 @@ class _RecordingHandle:
 class _Brain:
     """一副盘面：tmp 里的真向量库 + 真路由 + 数得清的替身 + 记账的关键词腿。"""
 
-    def __init__(self, monkeypatch, tmp_path) -> None:
+    def __init__(self, monkeypatch, tmp_path, alert_pg) -> None:
         from app.agents import tools as agent_tools
         from app.api.v1 import chat, data
         from app.common import auth, model_config
         from app.storage import datasets
-        from app.storage.datasets import DatasetRegistry, InMemoryDatasetTableStore
+        from app.storage.datasets import DatasetRegistry, PostgresDatasetTableStore
 
         self.data_dir = tmp_path / "data"
         self.data_dir.mkdir()
         self.retriever = _RecordingHandle(
-            DocumentRetriever(chroma_dir=str(tmp_path / "chroma"))
+            DocumentRetriever()
         )
+        self.retriever.embedding.model = MODEL
+        monkeypatch.setenv("EMBEDDING_MODEL", MODEL)
+        monkeypatch.setenv("EMBEDDING_DIMENSION", str(WIDTH))
+        monkeypatch.setattr(retriever_module, "EMBEDDING_DIM", WIDTH)
+        monkeypatch.setattr(retriever_module, "EMBED_MODEL", MODEL)
+        monkeypatch.setattr(pg_store, "_connect", lambda *args, **kwargs: alert_pg())
+        monkeypatch.setattr(catalog, "_conn", alert_pg)
+        monkeypatch.setattr(catalog, "_initialized", True)
+        monkeypatch.setattr(catalog, "_db_available", True)
         self.bm25_calls: list[int] = []
         registry = DatasetRegistry(
             root=self.data_dir,
             metadata_path=self.data_dir / ".dataset-metadata.json",
-            store=InMemoryDatasetTableStore(),
+            store=PostgresDatasetTableStore(connection_factory=alert_pg),
         )
         monkeypatch.setattr(data, "DATA_DIR", str(self.data_dir))
         monkeypatch.setattr(data, "dataset_registry", registry)
@@ -149,6 +162,7 @@ class _Brain:
                 "department": DEPT,
             },
         )
+        monkeypatch.setattr(auth, "_db_ready", True)
         # 闸门按生产分支走：服务答得出，且答的正是向量腿要调的那一枚 embedding 模型。
         monkeypatch.setattr(
             model_config,
@@ -183,7 +197,7 @@ class _Brain:
         )
 
     def stored_path(self, name: str):
-        return self.data_dir / name
+        return self.registry.get_active_by_filename(name).storage_path
 
     @property
     def handle(self):
@@ -191,9 +205,11 @@ class _Brain:
 
 
 @pytest.fixture(params=[CSV_NAME, XLSX_NAME], ids=["csv", "xlsx"])
-def table_upload(request, monkeypatch, tmp_path):
+def table_upload(request, monkeypatch, tmp_path, alert_pg):
     """同一副夹具跑两形：csv 与 xlsx 都必须走通同一条腿。"""
-    return _Brain(monkeypatch, tmp_path), request.param, _upload_bytes(request.param)
+    with alert_pg() as connection:
+        connection.execute("TRUNCATE datasets, document_versions, documents, chunk_vectors CASCADE")
+    return _Brain(monkeypatch, tmp_path, alert_pg), request.param, _upload_bytes(request.param)
 
 
 # ==================== 判据①：两查都必须交出这一枚文档的块 ====================
@@ -249,7 +265,7 @@ def test_the_decoy_document_loses_both_queries(table_upload) -> None:
             "对照文档在表头词/行值两问上都该排在表格之后，第一枚就不许是它"
         )
     # 权限口径同一条腿：部门过滤交给同一枚 search 的 where，别人的部门查不到这一枚表格。
-    assert brain.handle.search(HEADER_TERM, k=3, where={"department": "r700-hr"}) == []
+    assert brain.handle.search(HEADER_TERM, k=3, where={"department": {"$in": ["r700-hr"]}}) == []
 
 
 # ==================== 判据③：表格通道只有既有那一套 ====================

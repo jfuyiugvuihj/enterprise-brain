@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -26,6 +27,11 @@ RUNS = ROOT / "output" / "c18-local-runs"
 STATE = RUNS / "state.json"
 LOCK = RUNS / "active.lock"
 HEARTBEAT_SECONDS = 5
+SOURCE_PATHS = ["app", "deploy", "scripts", "tests", "migrations", "frontend/src", "frontend/public",
+                "frontend/package.json", "frontend/package-lock.json", "frontend/vite.config.js",
+                "frontend/index.html", "frontend/Dockerfile", "frontend/nginx.conf", "Dockerfile",
+                "docs/user-guide", "AGENTS.md", "pyproject.toml", "uv.lock", "conftest.py",
+                "docker-compose.yml"]
 
 
 def now() -> str:
@@ -44,6 +50,12 @@ def write_state(state: dict) -> None:
     temporary = RUNS / f"state.{os.getpid()}.tmp"
     temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(temporary, STATE)
+    run_id = str(state.get("run_id") or "")
+    if re.fullmatch(r"\d{8}-\d{6}-[0-9a-f]{6}", run_id) and (RUNS / run_id).is_dir():
+        snapshot = RUNS / run_id / "state.json"
+        temporary = snapshot.with_suffix(f".{os.getpid()}.tmp")
+        temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, snapshot)
 
 
 def git_head() -> str:
@@ -51,6 +63,34 @@ def git_head() -> str:
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=False,
     )
     return result.stdout.strip() if result.returncode == 0 else "unavailable"
+
+
+def git_output(args: list[str]) -> bytes:
+    return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, check=True).stdout
+
+
+def source_fingerprint() -> str:
+    """Include working changes and new source files without reading secrets or output/."""
+    digest = hashlib.sha256(git_head().encode())
+    digest.update(git_output(["diff", "--binary", "HEAD", "--", *SOURCE_PATHS]))
+    names = git_output(["ls-files", "--others", "--exclude-standard", "-z", "--", *SOURCE_PATHS])
+    for name in sorted(filter(None, names.split(b"\0"))):
+        content = (ROOT / os.fsdecode(name)).read_bytes()
+        digest.update(len(name).to_bytes(8, "big") + name)
+        digest.update(len(content).to_bytes(8, "big") + content)
+    return digest.hexdigest()
+
+
+def record_final_source(state: dict) -> None:
+    state["head_after"] = git_head()
+    state["head_unchanged"] = state["head_before"] == state["head_after"]
+    try:
+        state["source_after"] = source_fingerprint()
+        before = state.get("source_before")
+        state["source_unchanged"] = before == state["source_after"] if before else None
+    except (OSError, subprocess.SubprocessError) as exc:
+        state["source_unchanged"] = None
+        state["source_check_error"] = type(exc).__name__
 
 
 def alive(pid: int | None) -> bool:
@@ -78,17 +118,28 @@ def alive(pid: int | None) -> bool:
         return False
 
 
-def plan() -> None:
-    print("C18 全仓回归没有可靠的完成时间预估：上次 2 worker 运行 120 分钟到 99% 后被旧脚本截断。")
+def plan(cases: list[str] | None = None) -> None:
+    if cases:
+        print("C18 定点验证范围：" + "、".join(cases))
+        print("耗时取决于选定用例；不据全仓进度百分比推算。")
+    else:
+        print("C18 全仓回归没有可靠的完成时间预估：上次 2 worker 运行 120 分钟到 99% 后被旧脚本截断。")
     print("worker 数量由 run_gate.py 按当时可用内存决定；不设置自动停止时间。")
     print("start 只启动一次；失败或 Codex 会话结束后不会自动重跑。需要中止时手动执行 stop。")
 
 
-def start() -> int:
-    plan()
+def start(cases: list[str] | None = None, *, serial: bool = False) -> int:
+    plan(cases)
     if not PYTHON.is_file():
         print(f"缺少项目解释器：{PYTHON}", file=sys.stderr)
         return 2
+    cases = cases or []
+    for case in cases:
+        path = (ROOT / case.split("::", 1)[0]).resolve()
+        if not path.is_relative_to(ROOT / "tests") or not path.is_file() or path.suffix != ".py":
+            print(f"用例必须指向仓库 tests/ 内的 Python 文件：{case}", file=sys.stderr)
+            return 2
+    source_before = source_fingerprint()
     RUNS.mkdir(parents=True, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     try:
@@ -107,6 +158,10 @@ def start() -> int:
         "head_before": git_head(),
         "head_after": None,
         "head_unchanged": None,
+        "source_before": source_before,
+        "source_unchanged": None,
+        "cases": cases,
+        "serial": serial,
         "workers": "auto",
         "max_minutes": None,
         "worker_pid": None,
@@ -115,6 +170,7 @@ def start() -> int:
         "ended_at": None,
         "elapsed_seconds": None,
         "log": str(folder / "gate.log"),
+        "progress_dir": str(folder / "cases"),
     }
     try:
         folder.mkdir()
@@ -240,9 +296,9 @@ def guardian_main(run_id: str) -> int:
         final_status = ("passed" if exit_code == 0 else "failed") if reason == "finished" else reason
         ended = now()
         state.update(status=final_status, exit_code=exit_code, ended_at=ended,
-                     heartbeat_at=ended, head_after=git_head(),
+                     heartbeat_at=ended,
                      elapsed_seconds=round((datetime.fromisoformat(ended) - datetime.fromisoformat(state["started_at"])).total_seconds(), 1))
-        state["head_unchanged"] = state["head_before"] == state["head_after"]
+        record_final_source(state)
         write_state(state)
         with Path(state["log"]).open("a", encoding="utf-8") as log:
             log.write(f"\nLOCAL_RUN_FINISHED reason={reason} exit={exit_code} elapsed_s={state['elapsed_seconds']}\n")
@@ -265,19 +321,40 @@ def worker_main(run_id: str) -> int:
     log_path = Path(state["log"])
     stop_request = log_path.parent / "stop.request"
     command = [str(PYTHON), "-u", str(ROOT / "scripts" / "run_gate.py"),
-               "-vv", "--tb=short", "--durations=20"]
+               "-vv", "--tb=short", "--durations=20", "-p", "c18_progress",
+               *state.get("cases", [])]
+    if state.get("serial"):
+        command.append("--serial")
     begun = time.monotonic()
     reason = "finished"
     gate = None
     try:
         with log_path.open("w", encoding="utf-8", errors="replace") as log:
+            from importlib.metadata import PackageNotFoundError, version
+
+            dependencies = {}
+            for name in ("pytest", "pytest-xdist", "pandas", "psycopg", "pgvector"):
+                try:
+                    dependencies[name] = version(name)
+                except PackageNotFoundError:
+                    dependencies[name] = None
+            manifest = {"run_id": run_id, "command": command, "python": sys.version,
+                        "source_before": state.get("source_before"), "head": state["head_before"],
+                        "cases": state.get("cases", []), "dependencies": dependencies}
+            (log_path.parent / "manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
             log.write(f"run_id={run_id} started={now()} head={state['head_before']}\n")
             log.write("command=" + " ".join(command) + "\n")
             log.flush()
             flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            progress_dir = str(log_path.parent / "cases")
+            child_env = {**os.environ, "PYTHONIOENCODING": "utf-8",
+                         "EB_C18_PROGRESS_DIR": progress_dir,
+                         "PYTHONPATH": os.pathsep.join(filter(None, [str(ROOT / "scripts"),
+                             os.environ.get("PYTHONPATH", "")]))}
             gate = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                     stdin=subprocess.DEVNULL, creationflags=flags,
-                                    env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+                                    env=child_env,
                                     start_new_session=os.name != "nt")
             state.update(status="running", gate_pid=gate.pid, heartbeat_at=now())
             write_state(state)
@@ -299,8 +376,8 @@ def worker_main(run_id: str) -> int:
             log.flush()
         final_status = ("passed" if exit_code == 0 else "failed") if reason == "finished" else reason
         state.update(status=final_status, exit_code=exit_code, ended_at=now(),
-                     elapsed_seconds=elapsed, heartbeat_at=now(), head_after=git_head())
-        state["head_unchanged"] = state["head_before"] == state["head_after"]
+                     elapsed_seconds=elapsed, heartbeat_at=now())
+        record_final_source(state)
         write_state(state)
         return 0
     except BaseException as exc:
@@ -310,7 +387,7 @@ def worker_main(run_id: str) -> int:
         state.update(status="runner_error", ended_at=now(), heartbeat_at=now(),
                      elapsed_seconds=round(time.monotonic() - begun, 1), runner_error=type(exc).__name__,
                      head_after=git_head())
-        state["head_unchanged"] = state["head_before"] == state["head_after"]
+        record_final_source(state)
         write_state(state)
         return 1
     finally:
@@ -319,6 +396,8 @@ def worker_main(run_id: str) -> int:
 
 
 def status() -> int:
+    from c18_progress import read_progress
+
     state = read_state()
     if not state:
         print("尚未启动本机 C18 回归；先运行 plan 查看预计时间。")
@@ -341,9 +420,12 @@ def status() -> int:
         progress = f"{found[-1]}%" if found else None
     print(json.dumps({
         "run_id": state["run_id"], "status": label, "progress": progress,
+        "progress_note": "旧日志百分比不是剩余时间；用例详情以case_progress为准",
+        "case_progress": read_progress(Path(state.get("progress_dir") or log_path.parent / "cases")),
         "started_at": state["started_at"], "heartbeat_at": state["heartbeat_at"],
         "ended_at": state["ended_at"], "elapsed_seconds": elapsed,
         "exit_code": state["exit_code"], "head_unchanged": state["head_unchanged"],
+        "source_unchanged": state.get("source_unchanged"),
         "worker_pid": state["worker_pid"], "gate_pid": state["gate_pid"],
         "guardian_pid": state.get("guardian_pid"), "max_minutes": state["max_minutes"], "log": state["log"],
     }, ensure_ascii=False, indent=2))
@@ -371,8 +453,8 @@ def stop() -> int:
         else:
             state["status"] = "interrupted"
             print("两个后台进程均已退出，记录为中断。")
-        state.update(ended_at=now(), head_after=git_head())
-        state["head_unchanged"] = state["head_before"] == state["head_after"]
+        state.update(ended_at=now())
+        record_final_source(state)
         write_state(state)
         if LOCK.exists() and LOCK.read_text(encoding="utf-8") == state["run_id"]:
             LOCK.unlink()
@@ -405,12 +487,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["plan", "start", "status", "stop", "unlock", "extend", "_worker", "_guardian"])
     parser.add_argument("run_id", nargs="?")
+    parser.add_argument("--case", action="append", default=[], help="only run this tests/file.py[::case]; repeatable")
+    parser.add_argument("--serial", action="store_true", help="run the selected gate serially")
     args = parser.parse_args()
     if args.action == "plan":
         plan()
         return 0
     if args.action == "start":
-        return start()
+        return start(args.case, serial=args.serial)
     if args.action == "status":
         return status()
     if args.action == "stop":

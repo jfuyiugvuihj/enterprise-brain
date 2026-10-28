@@ -7,6 +7,7 @@ import { resetSessions } from './lib/sessions'
 import { UiButton } from './components/ui'
 import NotificationBell from './components/NotificationBell.vue'
 import InstallShortcut from './components/InstallShortcut.vue'
+import PasswordChangePanel from './components/PasswordChangePanel.vue'
 import BrandMark from './components/BrandMark.vue'
 import WorkspaceGuide from './components/WorkspaceGuide.vue'
 import WorkspaceNavigation from './components/WorkspaceNavigation.vue'
@@ -14,6 +15,7 @@ import loginIllustration from './assets/login-knowledge.png'
 import {
   clearSession,
   errorDetail,
+  getToken,
   hasSession,
   http,
   ROLE_KEY,
@@ -36,6 +38,7 @@ const userRole = shallowRef('staff')
 const loginUser = shallowRef('')
 const loginPass = shallowRef('')
 const loginError = shallowRef('')
+const passwordChangeRequired = shallowRef(false)
 const rememberMe = shallowRef(false)
 const showPassword = shallowRef(false)
 const showForgotDialog = shallowRef(false)
@@ -47,6 +50,7 @@ const REMEMBER_KEY = 'eb_remember_username'
 let stopExpiryWatch = null
 let unsubscribeAuth = null
 let toastTimer = null
+let accountReadSequence = 0
 const toast = shallowRef(null)
 
 // R452 · G07 残格「全站降级横幅」。尺子只有 lib/health.js 那两把：modelState() 定三态，
@@ -138,7 +142,9 @@ async function handleAsk(query) {
   nextTick(() => window.dispatchEvent(new CustomEvent('chat-ask', { detail: query })))
 }
 
-function checkAuth() {
+async function checkAuth() {
+  const read = ++accountReadSequence
+  const token = getToken()
   const rememberedUsername = localStorage.getItem(REMEMBER_KEY)
   if (rememberedUsername) {
     loginUser.value = rememberedUsername
@@ -147,7 +153,22 @@ function checkAuth() {
   if (!hasSession()) return
   username.value = localStorage.getItem(USER_KEY) || ''
   userRole.value = localStorage.getItem(ROLE_KEY) || 'staff'
-  enterWorkspace()
+  try {
+    const { data } = await http.get('/account')
+    if (read !== accountReadSequence || getToken() !== token) return
+    if (!data?.username || typeof data.must_change_password !== 'boolean') {
+      loginError.value = '账号状态未能确认，请重新登录。'
+      return
+    }
+    username.value = data.username
+    userRole.value = data.role
+    passwordChangeRequired.value = data.must_change_password === true
+    if (passwordChangeRequired.value) isLoggedIn.value = true
+    else enterWorkspace()
+  } catch (reason) {
+    if (read !== accountReadSequence || getToken() !== token) return
+    loginError.value = errorDetail(reason, '暂时无法核对账号，请稍后登录。')
+  }
 }
 
 async function enterWorkspace() {
@@ -187,6 +208,10 @@ function readableMessage(message) {
 
 function onAuthEvent(event) {
   if (!event) return
+  if (event.type === 'password_change_required') {
+    passwordChangeRequired.value = true
+    return
+  }
   if (event.type === 'expiring') {
     showToast(event.message, 'warn', 12000)
     return
@@ -226,7 +251,10 @@ async function doLogin() {
     saveSession(data)
     username.value = data.username || loginUser.value.trim()
     userRole.value = data.role || 'staff'
-    enterWorkspace()
+    loginPass.value = ''
+    passwordChangeRequired.value = data.must_change_password === true
+    if (passwordChangeRequired.value) isLoggedIn.value = true
+    else enterWorkspace()
   } catch (err) {
     loginError.value = errorDetail(err, '登录服务暂时不可用')
   }
@@ -258,6 +286,7 @@ function closeForgotPassword() {
  *   （判据钉在 r278-logout-locality 的乙组，与 r268-session-pull 丙组那条同向）。
  */
 function goToLogin() {
+  accountReadSequence += 1
   resetSessions()
   // 兜底：任何一枚 eb_* 都不许留给下一位使用者，只有「记住我」的账号名例外。
   try {
@@ -273,6 +302,7 @@ function goToLogin() {
   stopExpiryWatch?.()
   stopExpiryWatch = null
   isLoggedIn.value = false
+  passwordChangeRequired.value = false
   username.value = ''
   userRole.value = 'staff'
   loginPass.value = ''
@@ -282,6 +312,11 @@ function goToLogin() {
 function doLogout() {
   clearSession()
   goToLogin()
+}
+
+function passwordChanged() {
+  doLogout()
+  loginError.value = '密码已更新，请使用新密码重新登录。'
 }
 
 /**
@@ -315,7 +350,10 @@ onUnmounted(() => {
 
 <template>
   <div class="app-root">
-    <main v-if="!isLoggedIn" class="login-v2" data-testid="login-page">
+    <RouterView v-if="route.name === 'help'" />
+    <PasswordChangePanel v-else-if="isLoggedIn && passwordChangeRequired" :username="username"
+      @changed="passwordChanged" @logout="doLogout" />
+    <main v-else-if="!isLoggedIn" class="login-v2" data-testid="login-page">
       <div class="login-bg" aria-hidden="true">
         <span class="login-bg__base"></span>
         <span class="login-bg__art"></span>
@@ -330,7 +368,7 @@ onUnmounted(() => {
           <span class="login-brand__name">企业智脑</span>
           <span class="login-brand__subtitle">企业内部工作空间</span>
         </span>
-        <span class="login-network-note">企业内网专用</span>
+        <a class="login-network-note" href="/help">使用帮助</a>
       </header>
 
       <div class="login-stage">
@@ -495,13 +533,14 @@ onUnmounted(() => {
              data-testid="navigation" @keydown="onNavKeydown">
           <WorkspaceNavigation :items="navigationForRole(userRole)" :active-screen="String(route.name || '')" @navigate="openScreen" />
         </nav>
-        <p class="sidebar-note">本地部署<br />数据留在企业内部</p>
+        <p class="sidebar-note"><a href="/help">使用帮助</a><br />本地部署 · 数据留在企业内部</p>
       </aside>
 
       <main ref="workspaceEl" class="workspace" tabindex="-1" data-testid="workspace">
         <header class="workspace-head" data-testid="topbar">
           <h1>{{ activeMeta.title }}</h1>
           <div class="workspace-tools">
+            <a class="workspace-help-link" href="/help">使用帮助</a>
             <!-- R278 · G16①②：这里原先摆着两枚按了没反应的按钮（搜索、通知），一并摘掉。
                  为什么不接半截、今天为什么没有一枚诚实的条数可摆，账记在上面 script 里那段；
                  判据钉在 src 下的顶栏用例 r278-topbar 里。 -->
@@ -527,6 +566,7 @@ onUnmounted(() => {
                     @click="mobileProfileOpen = !mobileProfileOpen">我的</button>
             <div v-if="mobileProfileOpen" id="mobile-profile-menu" class="mobile-profile-menu" data-testid="mobile-profile-menu">
               <button type="button" @click="openScreen('profile')">个人资料</button>
+              <a href="/help">使用帮助</a>
               <button type="button" @click="doLogout">退出登录</button>
               <InstallShortcut />
             </div>

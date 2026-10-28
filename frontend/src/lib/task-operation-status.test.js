@@ -51,6 +51,7 @@ describe('操作状态按实际结果呈现', () => {
     ['failed', '执行失败', '⚠'], ['rejected', '已拒绝，未执行', '✕'],
     ['cancelled', '已取消', '⏹'], ['completed', '执行成功', '✅'],
     ['done', '处理结束', '•'], ['unknown', '结果未确认', '?'],
+    ['partial', '部分结果待核对', '◐'],
   ])('%s 状态有准确文字与图标', async (status, text, icon) => {
     activeId.value = 'task-review-status'
     messages.value = [{ role: 'assistant', content: '核查结果', mid: 'status-turn',

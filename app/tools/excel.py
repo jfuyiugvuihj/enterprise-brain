@@ -207,11 +207,58 @@ def _fill_merged_cells(file_path: str, sheet_name: str | None = None) -> pd.Data
 
 # ==================== 文件加载 ====================
 
+def calendar_dates(values: pd.Series) -> pd.Series:
+    """Read calendar values, including integer YYYYMM, without epoch coercion."""
+    raw = values.astype(str)
+    compact_month = raw.str.fullmatch(r"\d{6}")
+    normalized = raw.where(~compact_month, raw.str[:4] + '-' + raw.str[4:])
+    return pd.to_datetime(normalized, errors="coerce", format="mixed")
+
+
+def _filter_numeric_conditions(df: pd.DataFrame, query: str):
+    import operator
+    operations = {'不低于': operator.ge, '不少于': operator.ge, '至少': operator.ge,
+        '大于等于': operator.ge, '>=': operator.ge, '不高于': operator.le, '不超过': operator.le,
+        '至多': operator.le, '小于等于': operator.le, '<=': operator.le, '大于': operator.gt,
+        '超过': operator.gt, '高于': operator.gt, '>': operator.gt, '小于': operator.lt,
+        '低于': operator.lt, '<': operator.lt, '等于': operator.eq, '==': operator.eq}
+    pattern = '|'.join(map(re.escape, [*operations, '!=', '≠']))
+    condition = rf'({pattern})\s*([-+]?\d+(?:\.\d+)?)\s*(万元|千元|亿元|美元|元|%|％|万|千|亿|人|笔|条|件)?'
+    conditions = list(re.finditer(condition, query))
+    if not conditions:
+        return df, query, []
+    clauses = [clause for clause in re.split(r'[，。；;\n]', query) if re.search(condition, clause)]
+    if any(re.search(r'或者|或|任一|其中之一|不满足|并非|不大于|不小于|不等于|!=|≠', clause) for clause in clauses):
+        raise ValueError('数值筛选含有尚未支持的或/否定关系，请拆分问题并明确条件，未改算全表。')
+    selected, notes, cleaned = df, [], query
+    for match in conditions:
+        prefix = re.split(r'[，。；;\n]|且|并且|并', query[:match.start()])[-1].rstrip()
+        candidates = []
+        for column in df.select_dtypes(include=['number']).columns:
+            name = str(column)
+            alias = re.sub(r'[（(][^）)]+[）)]', '', name).strip()
+            if any(prefix.endswith(key) or prefix.endswith(key + '的') for key in {name, alias}):
+                candidates.append(column)
+        # Do not read 3万元 as 3元 or 1,000 as 1, or substitute another metric.
+        tail = query[match.end():]
+        if len(candidates) != 1 or re.match(r'[\d.eE]|,\d|[万千亿%％]', tail):
+            raise ValueError('数值筛选的字段或数值无法确定，请写明完整列名和数值，未改算全表。')
+        column = candidates[0]
+        unit = match.group(3) or ''
+        declared = re.search(r'[（(]([^）)]+)[）)]', str(column))
+        if unit and (not declared or unit != declared.group(1)):
+            raise ValueError(f'字段「{column}」与筛选值的单位不一致或未标注，请确认同一单位，未自动换算。')
+        op, value = match.group(1), float(match.group(2))
+        selected = selected.loc[operations[op](selected[column], value)].copy()
+        notes.append(f'{column}{op}{match.group(2)}{unit}')
+        cleaned = cleaned.replace(match.group(0), '', 1)
+    return selected, cleaned, notes
+
+
 def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: pd.DataFrame | None = None) -> pd.DataFrame:
     """在计算、样本和图表之前执行用户明确引用的分类筛选。"""
-    selected = df
+    selected, category_query, notes = _filter_numeric_conditions(df, query)
     domain = df if category_frame is None else category_frame
-    notes = []
     # A requested period is a filter, not the min/max date of the eventual result.
     date_token = r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
     periods = re.findall(rf"({date_token})\s*(?:至|到|~|～)\s*({date_token})", query)
@@ -227,16 +274,22 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
         else:
             start = pd.to_datetime(months[0] + "-01", errors="coerce")
             end = start + pd.offsets.MonthEnd(1) if pd.notna(start) else pd.NaT
-        date_columns = [c for c in df.columns if "日期" in str(c) or pd.api.types.is_datetime64_any_dtype(df[c])]
+        date_columns = [c for c in df.columns if "日期" in str(c) or str(c) in {"月份", "年月", "统计月份"}
+                        or pd.api.types.is_datetime64_any_dtype(df[c])]
         named_dates = [c for c in date_columns if str(c) in query]
         chosen_dates = named_dates or date_columns
         if len(chosen_dates) != 1 or pd.isna(start) or pd.isna(end) or start > end:
             raise ValueError("日期字段或日期范围无法确定，请明确字段和有效起止日期。")
         column = chosen_dates[0]
-        values = pd.to_datetime(df[column], errors="coerce")
+        raw_dates = df[column].astype(str)
+        compact_month = raw_dates.str.fullmatch(r"\d{6}")
+        month_precision = raw_dates.str.fullmatch(r"\d{4}[-/]\d{1,2}") | compact_month
+        if month_precision.any() and periods and (start.day != 1 or not end.is_month_end):
+            raise ValueError(f"字段「{column}」仅有月度精度，无法判断月内起止日期，请改用完整月份或提供逐日数据。")
+        values = calendar_dates(df[column])
         if values.isna().any():
             raise ValueError(f"日期字段「{column}」有缺失或无法识别的日期，未静默忽略。")
-        selected = df.loc[values.between(start, end + pd.Timedelta(days=1), inclusive="left")].copy()
+        selected = selected.loc[values.loc[selected.index].between(start, end + pd.Timedelta(days=1), inclusive="left")].copy()
         selected.attrs["requested_period"] = (f"{start:%Y-%m}（{column}）" if months
                                              else f"{start:%Y-%m-%d} 至 {end:%Y-%m-%d}（{column}）")
         notes.append(selected.attrs["requested_period"])
@@ -252,6 +305,7 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
         if len(mentioned) == 1:
             selected = selected.loc[selected[department].astype(str).eq(mentioned[0])].copy()
             notes.append(f"部门仅包含{mentioned[0]}")
+    query = category_query
     for value in sorted(known_values, key=len, reverse=True):
         if value.startswith("已") and len(value) > 1:
             query = query.replace("已经" + value[1:], value)
@@ -288,8 +342,8 @@ def filter_explicit_categories(df: pd.DataFrame, query: str, *, category_frame: 
                 # “仅统计金额” is an operation, not a categorical condition.
                 if not named and not any(v in known for v in values):
                     operations = {str(c) for c in df.select_dtypes(include=["number"]).columns} | {"合计", "总金额", "金额合计", "总额", "行数", "总行数", "记录数", "总记录数", "数量", "总数"}
-                    operation = re.sub(r"^(?:这份|这张|该|本|全部|所有)(?:数据|表格|文件|表)?的?", "", raw)
-                    if not raw or raw in operations or operation in operations:
+                    operation = re.sub(r"^(?:这份|这张|该|本|全部|所有|所选|已选|当前选中|选中)的?(?:数据|表格|文件|表)?的?", "", raw)
+                    if not raw or not operation or raw in operations or operation in operations:
                         continue
                     raise ValueError("无法确定分类筛选条件，请写明列名及表中实际取值。")
             candidates = named or [
@@ -579,6 +633,31 @@ def _validate_query_ast(code: str) -> str | None:
     return None
 
 
+def _query_chart_series(result) -> dict | None:
+    """Preserve complete numeric query output before JSON drops index information."""
+    import math
+    if isinstance(result, pd.Series) and result.index.is_unique:
+        labels, values, dimension = list(result.index), result, result.index.name
+    elif isinstance(result, pd.DataFrame) and result.shape[1] == 2 and result.columns.is_unique:
+        labels, values, dimension = result.iloc[:, 0].tolist(), result.iloc[:, 1], result.columns[0]
+    else:
+        return None
+    if not 2 <= len(values) <= 50 or not pd.api.types.is_numeric_dtype(values.dtype) or pd.api.types.is_bool_dtype(values.dtype):
+        return None
+    if any(not pd.api.types.is_scalar(label) or pd.isna(label) or not str(label).strip() for label in labels):
+        return None
+    labels = list(map(str, labels))
+    if len(set(labels)) != len(labels):
+        return None
+    try:
+        numbers = [float(value) for value in values]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not all(math.isfinite(value) for value in numbers):
+        return None
+    return {'labels': labels, 'values': numbers, 'dimension': str(dimension or '结果项')}
+
+
 def safe_query(df: pd.DataFrame, code: str, max_retries: int = 3) -> dict[str, Any]:
     """Execute a single pandas expression after AST allow-list validation."""
     if not isinstance(code, str) or not code.strip():
@@ -597,11 +676,12 @@ def safe_query(df: pd.DataFrame, code: str, max_retries: int = 3) -> dict[str, A
     for attempt in range(max_retries):
         try:
             result = eval(code, {"__builtins__": _safe_builtins()}, local_vars)
+            chart_series = _query_chart_series(result)
             if isinstance(result, pd.DataFrame):
                 result = result.head(50).to_dict(orient="records")
             elif isinstance(result, pd.Series):
                 result = result.to_dict()
-            return {"result": result, "error": None}
+            return {"result": result, "error": None, "chart_series": chart_series}
         except Exception as exc:
             last_error = str(exc)
             logger.warning(f"pandas 查询失败 (第 {attempt + 1}/{max_retries} 次): {last_error}")

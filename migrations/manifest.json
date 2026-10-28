@@ -19,5 +19,7 @@
   "0018_prompt_cache_tokens.sql": "13672cda1ee34adfe3898afdb57694340a42ffa717f70863d72d652e852515ba",
   "0019_document_engagement_events.sql": "fe52ac3ee7f7ab9d078e9442d8bbaa30e4a886fde8ca8aec2237196fff5dc764",
   "0020_alert_observation_evidence.sql": "c51a5cc77d7619c0628825d30f0ed66e401a0f6670bc4aabc9958a2bc6e30558",
-  "0021_document_visibility.sql": "8bde870170a1da61dbfdcdf85ec01d51ab90218334e7972cfe6d79b7cbe417a8"
+  "0021_document_visibility.sql": "8bde870170a1da61dbfdcdf85ec01d51ab90218334e7972cfe6d79b7cbe417a8",
+  "0022_account_credentials.sql": "99aebd5c3fa37e99ede027fddc9707ce20f47f0835f65a91e9e322b302448c95",
+  "0023_account_status.sql": "6fb5b7c6e201c4f0c54c27ea0e52e340af49e78c63026ab7214ca559365ca8aa"
 }

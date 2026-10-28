@@ -23,7 +23,7 @@ def validate_sso_headers(headers: dict) -> bool:
         return False
     expected = os.getenv("SSO_SHARED_TOKEN", "").strip()
     if not expected:
-        return True
+        return False
     provided = (
         headers.get("X-SSO-Token")
         or headers.get("x-sso-token")

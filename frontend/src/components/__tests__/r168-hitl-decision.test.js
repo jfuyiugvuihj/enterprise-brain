@@ -130,6 +130,20 @@ beforeEach(() => {
 // ==================== 判据② · 批准与驳回都按得动，成功与失败的话不同 ====================
 
 describe('R168 判据② · 这一屏上批准与驳回都是活的', () => {
+  it.each([[false, 'refused', '已驳回'], [true, 'resumed', '确认已记录'], [true, 'failed', '任务执行失败']])(
+    '响应丢失后只读取实际决定，不重复发送操作 %s/%s', async (approved, status, title) => {
+      http.get.mockImplementation(async path => ({ data: path.startsWith('/hitl/decision/')
+        ? { ledger_status: status } : pendingPage([pendingRow()]) }))
+      const bindings = await mountBindings(HitlPendingPanel)
+      await bindings.loadPending()
+      authedFetch.mockRejectedValue(new Error('response lost after server commit'))
+      const view = await bindings.decide({ row: rowOf(bindings), approved })
+      expect(view.title).toContain(title)
+      expect(view.face).not.toBe('unknown')
+      expect(authedFetch).toHaveBeenCalledTimes(1)
+      if (approved) expect(view.title).not.toContain('已完成')
+    },
+  )
   it('真行上每枚按钮都在：idle 可点、忙碌时只按住这一笔的两个决定', async () => {
     sessions.value = [{ id: 'sess-1', title: '把上季度销售额画成图', messages: [], msgCount: 0 }]
     http.get.mockResolvedValue({ data: pendingPage([pendingRow()]) })
@@ -203,7 +217,7 @@ describe('R168 判据② · 这一屏上批准与驳回都是活的', () => {
     expect(text).toMatch('不等于这一步真跑完了')
   })
 
-  it('失败要倒扣：行不消失、不重读账本；成功才重读', async () => {
+  it('失败要倒扣：行不消失、不重读账本；成功重读后在空态外保留最近决定回执', async () => {
     http.get.mockResolvedValue({ data: pendingPage([pendingRow()]) })
     const bindings = await mountBindings(HitlPendingPanel)
     await bindings.loadPending()
@@ -224,8 +238,13 @@ describe('R168 判据② · 这一屏上批准与驳回都是活的', () => {
     expect(bindings.rows.value).toEqual([])
     const after = await renderState(HitlPendingPanel, bindings)
     expect(codeText(after)).toContain('现在没有等你拍板的事')
-    // 办完之后反馈该随那一行一起退场，不许留成屏上一句无主的「已批准」。
+    // 成功后待办行按服务端真账本退出，但这次决定仍需有一份不依赖行生命周期的回执。
     expect(outcomeText(after)).toBe('')
+    expect(after).toContain('data-testid="hitl-decision-receipt"')
+    expect(after).toMatch(/role="status"[^>]*data-testid="hitl-decision-receipt"/)
+    expect(codeText(after)).toContain('已批准，这一步已放行')
+    expect(codeText(after)).toContain('这一轮')
+    expect(after).not.toContain('sess-1')
   })
 
   it('驳回成功的话与批准成功不同，且如实说这一步不会执行', async () => {
@@ -283,7 +302,8 @@ describe('R168 判据② · 这一屏上批准与驳回都是活的', () => {
     const view = await bindings.decide({ row: rowOf(bindings), approved: false })
     expect(view.face).toBe('unknown')
     expect(view.title).toBe('驳回没能送到服务，结果未知')
-    expect(http.get.mock.calls).toHaveLength(1)
+    expect(http.get.mock.calls).toHaveLength(2)
+    expect(http.get.mock.calls[1][0]).toBe('/hitl/decision/sess-1')
     expect(bindings.rows.value).toHaveLength(1)
   })
 

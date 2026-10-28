@@ -138,7 +138,12 @@ def bar_chart(labels: list[str], values: list[float],
                         for start in range(0, max(1, len(line)), 10))
                for label in labels]
     rows = max(label.count("\n") + 1 for label in wrapped)
-    if horizontal:
+    dense_labels = not horizontal and len(labels) > 10 and rows > 1
+    if dense_labels:
+        horizontal = True
+        xlabel, ylabel = ylabel, xlabel
+        size = (10, max(6, len(labels) * (rows * 14 / 72 * 1.12 + 0.06) + 1.4))
+    elif horizontal:
         size = (9, max(5.5, len(labels) * (0.3 + rows * 0.2)))
     else:
         longest = max(len(line) for label in wrapped for line in label.split("\n"))
@@ -155,7 +160,9 @@ def bar_chart(labels: list[str], values: list[float],
 
     if horizontal:
         bars = ax.barh(positions, values, color=colors, height=0.7)
-        ax.set_yticks(list(positions), wrapped, fontsize=10)
+        ax.set_yticks(list(positions), wrapped, fontsize=14 if dense_labels else 10)
+        if dense_labels:
+            ax.tick_params(axis='x', labelsize=12)
         ax.set_ylim(*category_limits)
         ax.set_xlim(*value_limits)
         # 数值标注
@@ -164,7 +171,7 @@ def bar_chart(labels: list[str], values: list[float],
                         (v, bar.get_y() + bar.get_height() / 2),
                         xytext=(-5 if v < 0 else 5, 0), textcoords="offset points",
                         ha="right" if v < 0 else "left", va="center",
-                        fontsize=9, color="#334155")
+                        fontsize=12 if dense_labels else 9, color="#334155")
     else:
         bars = ax.bar(positions, values, color=colors, width=0.65)
         ax.set_xticks(list(positions), wrapped, fontsize=10)
@@ -214,6 +221,15 @@ def line_chart(x_labels: list[str], datasets: dict[str, list[float]],
 def pie_chart(labels: list[str], values: list[float],
               title: str = "") -> str:
     """饼图（标签过多自动转为柱状图）"""
+    if not labels or len(labels) != len(values):
+        raise ValueError("饼图需要非空且数量一致的分类和数值")
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("饼图数值必须为有限数值，请先处理缺失或无穷值")
+    if any(value < 0 for value in values):
+        raise ValueError("饼图不支持负值；请使用柱状图展示收支")
+    total = sum(values)
+    if not math.isfinite(total) or total <= 0:
+        raise ValueError("饼图数值总和必须是大于零的有限数值")
     if len(labels) > 10:
         logger.warning(f"饼图标签过多 ({len(labels)})，自动转柱状图")
         return bar_chart(labels, values, title=title, horizontal=True)

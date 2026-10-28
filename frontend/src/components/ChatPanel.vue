@@ -240,6 +240,8 @@ import AnalysisContext from './AnalysisContext.vue'
 import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatArtifactDownload } from '../composables/useChatArtifactDownload'
+import { useCalculationContext } from '../composables/useCalculationContext'
+import { analysisReuseDraft } from '../lib/analysis-reuse'
 import AnswerHeadlineCard from './AnswerHeadlineCard.vue'
 import CacheFace from './CacheFace.vue'
 import ChartViewer from './ChartViewer.vue'
@@ -598,6 +600,7 @@ async function openSession(id) {
     sessionBodyFault.value = null
   }
   switchSession(id)
+  restoreQueuedTurns({ refresh: true })
 }
 
 // ==================== R268 · G03：这一轮用的哪张表，看得见也能就地改 ====================
@@ -824,6 +827,8 @@ async function startNewTask() {
   if (loading.value || hitl.value) return
   newSession()
   input.value = ''
+  reuseDraft.value = null
+  reuseStatus.value = ''
   showEarlierTurns.value = false
   await router?.replace({ name: 'chat', query: {} })
 }
@@ -869,6 +874,42 @@ function prepareAnalysisTemplate(template) {
     const field = document.querySelector('[data-testid="chat-panel"] textarea')
     if (field) field.scrollTop = 0
   })
+}
+
+const reuseBusy = ref(false)
+const reuseStatus = ref('')
+const reuseDraft = ref(null)
+async function reuseAnalysis(record) {
+  if (loading.value || hitl.value || reuseBusy.value || input.value.trim()) {
+    reuseStatus.value = '请先处理待确认操作或当前输入，再准备另一份分析。'
+    return
+  }
+  reuseBusy.value = true
+  reuseStatus.value = '正在核对当前资料的权限、版本和字段……'
+  const filename = activeDataFilename.value || record.parameters?.filename
+  const originalSession = activeId.value
+  try {
+    const response = await http.get(`/data-files/${encodeURIComponent(filename)}/preview`)
+    const draft = analysisReuseDraft(record, response.data)
+    if (loading.value || hitl.value || input.value.trim() || activeId.value !== originalSession
+        || (activeDataFilename.value && activeDataFilename.value !== filename)) {
+      reuseStatus.value = '资料或输入已经变化，未覆盖当前内容，请重新选择。'
+      return
+    }
+    await startNewTask()
+    activeDataFilename.value = draft.filename
+    input.value = draft.question
+    reuseDraft.value = { ...draft, session_id: activeId.value }
+    taskOrigin.value = null
+    referenceDocuments.value = []
+    chooseLane('')
+    reuseStatus.value = `已准备新任务，使用当前版本 ${draft.version_id}。原期间和条件保持不变；请检查问题后发送。文档依据请重新选择。`
+    syncActive()
+    await nextTick()
+    focusQuestion()
+  } catch (error) {
+    reuseStatus.value = error?.response ? errorDetail(error, '当前资料无法核对，未准备新分析。') : error.message || '当前资料无法核对，未准备新分析。'
+  } finally { reuseBusy.value = false }
 }
 
 
@@ -1062,6 +1103,9 @@ async function send(dataFilename = activeDataFilename.value) {
     return
   }
   if (dataFilename) activeDataFilename.value = dataFilename
+  const reusePin = reuseDraft.value?.filename === dataFilename && reuseDraft.value?.session_id === activeId.value
+    ? reuseDraft.value : null
+  reuseDraft.value = null
 
   messages.value.push({ role: 'user', content: text, sources: null, taskOrigin: effectiveOrigin.value })
   input.value = ''
@@ -1094,6 +1138,7 @@ async function send(dataFilename = activeDataFilename.value) {
         session_id: activeId.value,
         idempotency_key: `${activeId.value}:${aiMsg.mid}`,
         data_filename: dataFilename,
+        ...(reusePin ? { expected_data_version_id: reusePin.version_id } : {}),
         document_filenames: [...referenceDocuments.value],
         ...(effectiveOrigin.value?.kind === 'alert' && effectiveOrigin.value.versionId ? {
           alert_id: Number(effectiveOrigin.value.id), alert_version_id: effectiveOrigin.value.versionId,
@@ -1103,6 +1148,18 @@ async function send(dataFilename = activeDataFilename.value) {
         lane: selectedLane.value,
       }),
     })
+
+    if (reusePin && response.status === 409) {
+      const problem = await response.clone().json().catch(() => ({}))
+      if (problem.detail === 'dataset_version_changed') {
+        aiMsg.content = '资料在准备问题后又有更新，本轮未开始计算。请核对当前版本和字段，再发起分析。'
+        input.value = text
+        reuseStatus.value = aiMsg.content
+        note(aiMsg.content, 'warn')
+        syncActive()
+        return
+      }
+    }
 
     // 读数在流之前读：响应头随状态行一起到，不必等最后一帧，也就不会被中途中断吃掉。
     readLaneHeaders(turn, aiMsg, response)
@@ -1260,8 +1317,12 @@ async function refreshPendingDecision() {
       hitl.value = null
       if (status === 'refused') {
         const aiMsg = messages.value[messages.value.length - 1]
+        if (aiMsg?.role === 'assistant' && aiMsg.content === '拒绝请求已发送，正在核实决定。') {
+          aiMsg.content = '已拒绝该动作。'
+        }
         const step = aiMsg?.steps?.find(step => step.tool === 'export')
         if (step && !['completed', 'success'].includes(step.status)) step.status = 'rejected'
+        messages.value = [...messages.value]
         note('服务端已记录拒绝，该动作不会执行。', 'info')
       } else note('服务端已结束本次待确认状态，请查看对话中的实际结果。', 'info')
     } else hitl.value = { ...pending, decisionUnknown: true }
@@ -1334,8 +1395,7 @@ async function approve(approved) {
       aiMsg.content = approved ? '已确认，但本轮没有返回内容。' : '拒绝请求已发送，正在核实决定。'
     }
     if (hitl.value === pending) {
-      const status = await refreshPendingDecision()
-      if (approved && result.ok && result.state.terminal === 'completed' && !status) hitl.value = null
+      await refreshPendingDecision()
     }
     // R415：批准续跑的那一轮与 /ask 同一格读数（R414 两条腿各一处），同一个抄法。
     adoptServerDataRead(turn, aiMsg, result)
@@ -1411,6 +1471,7 @@ const queueStats = ref(null)  // GET /queue/stats 的最近一次读数（全局
 // requested = 后端已登记取消标记（那一格叫 cancel_requested，任务离开队列、等 worker 收尾）；
 // failed = 服务端回绝了，error 原样留着，那张脸的正文取的是 errcodes 那一份字典。
 const queueCancels = ref({})
+let queueCancelNoticeKey = ''
 
 const preview = reactive({
   open: false,
@@ -1541,6 +1602,12 @@ const contextHasAnswer = computed(() => {
   if (msg.queue && !['done', 'completed', 'succeeded'].includes(msg.queue.status)) return false
   return !(msg.steps || []).some(step => ['failed', 'error', 'rejected', 'cancelled', 'interrupted'].includes(step.status))
 })
+const contextIncomplete = computed(() => {
+  const msg = contextTurn.value?.msg
+  return !!msg && ((msg.steps || []).some(step => ['failed', 'error', 'rejected', 'cancelled', 'interrupted'].includes(step.status))
+    || ['failed', 'cancelled'].includes(msg.queue?.status)
+    || /^\[(?:请求错误|网络错误|错误)\]|^本次回答已中断/.test(msg.content || ''))
+})
 const contextAnalysisTurn = computed(() => {
   const turn = contextTurn.value
   if (!turn) return null
@@ -1553,6 +1620,9 @@ const contextAnalysisTurn = computed(() => {
 })
 const contextSourceFace = computed(() => contextAnalysisTurn.value ? sourceFaceOf(contextAnalysisTurn.value.msg, contextAnalysisTurn.value.index) : null)
 const contextSources = computed(() => contextSourceFace.value?.rows || [])
+const { records: contextCalculations, status: contextCalculationStatus } = useCalculationContext(computed(() => ({
+  session: activeId.value, request: turnIdOf(contextAnalysisTurn.value?.msg), loading: loading.value,
+})))
 const showEarlierTurns = ref(false)
 const latestQuestionIndex = computed(() => messages.value.findLastIndex(msg => msg.role === 'user'))
 const contextOrigin = computed(() => messages.value[latestQuestionIndex.value]?.taskOrigin || effectiveOrigin.value)
@@ -1584,17 +1654,21 @@ function hasCalculatedFigure(msg) {
 const taskTitle = computed(() => /费用|报销/.test(questionText(messages.value[latestQuestionIndex.value])) ? '费用分析与制度核查' : '资料分析与依据核查')
 const taskStages = computed(() => [
   { label: contextUsedData.value || activeDataFilename.value || referenceDocuments.value.length || contextSources.value.length ? '资料已准备' : '选择资料', state: contextUsedData.value || activeDataFilename.value || referenceDocuments.value.length || contextSources.value.length ? 'done' : 'waiting' },
-  { label: loading.value ? '正在分析' : contextHasAnswer.value ? '分析已完成' : '等待分析', state: loading.value ? 'active' : contextHasAnswer.value ? 'done' : 'waiting' },
+  { label: loading.value ? '正在分析' : contextHasAnswer.value ? '分析已完成' : contextIncomplete.value ? '本轮未完成，请查看结果' : '等待分析', state: loading.value ? 'active' : contextHasAnswer.value ? 'done' : 'waiting' },
   { label: contextSources.value.length || contextUsedData.value ? '依据可核对' : '依据待核对', state: contextSources.value.length || contextUsedData.value ? 'done' : 'waiting' },
   { label: hitl.value ? '报告待确认' : /\/artifacts\/[\w-]+\/(?:download|content)/.test(contextTurn.value?.msg.content || '') ? '成果已生成' : '报告未生成', state: hitl.value ? 'active' : /\/artifacts\/[\w-]+\/(?:download|content)/.test(contextTurn.value?.msg.content || '') ? 'done' : 'waiting' },
 ])
 const contextUsedData = computed(() => {
+  const files = [...new Set(contextCalculations.value.filter(row => row.status === 'completed')
+    .map(row => row.parameters?.filename).filter(Boolean))]
+  if (files.length === 1) return files[0]
   const turn = contextAnalysisTurn.value
   if (!turn) return ''
   const filename = readTurn(serverDataReads, turn.msg, turn.index) || turn.msg.serverDataFilename
   return typeof filename === 'string' ? filename : ''
 })
 const contextScope = computed(() => {
+  if (turnIdOf(contextAnalysisTurn.value?.msg)) return {}
   const content = String(contextAnalysisTurn.value?.msg.content || '').replace(/\*\*/g, '')
   const read = label => {
     const values = [...content.matchAll(new RegExp(`^${label}[：:]\\s*([^\\n]+)`, 'gm'))]
@@ -1657,6 +1731,9 @@ function sourceFaceOf(msg, index) {
   const filename = readTurn(serverDataReads, msg, index) || msg.serverDataFilename
   if (face?.kind === 'none' && typeof filename === 'string' && filename) {
     return { ...face, headline: '本轮依据数据表', reason: `统计来自「${filename}」，可到“数据”页面核对原始内容。` }
+  }
+  if (face?.kind === 'none' && parseCharts(msg.content).length) {
+    return { ...face, headline: '本轮图表没有文档引用', reason: '图表已附在回答中，可打开核对，也可到“成果”查看和下载。' }
   }
   return face
 }
@@ -1953,6 +2030,13 @@ function watchQueueTurn(key, requestId) {
         approval: status.data?.approval && typeof status.data.approval === 'object' ? status.data.approval : null,
       }
       queueReads.value = storeBag(queueReads, key, read)
+      if (QUEUE_SETTLED.includes(read.status) || read.status === 'cancel_requested') {
+        queueCancels.value = storeBag(queueCancels, key, null)
+        if (queueCancelNoticeKey === key && streamNote.value === '取消请求结果尚未确认，正在查询任务状态。') {
+          note('')
+          queueCancelNoticeKey = ''
+        }
+      }
       const turn = messages.value.find((msg, at) => turnKey(msg, at) === key)
       if (turn?.queue && turn.queue.status !== read.status) {
         turn.queue = { ...turn.queue, status: read.status }
@@ -2052,8 +2136,11 @@ async function cancelQueuedTurn(msg, index) {
   }
   if (failure) {
     queueCancels.value = storeBag(queueCancels, key, { phase: 'failed', error: failure })
+    queueCancelNoticeKey = failure.response?.status ? '' : key
     const result = normalizeError(failure)
-    note(`这一轮没能取消：${dictionarySentence(result)}`, 'error')
+    note(failure.response?.status ? `这一轮没能取消：${dictionarySentence(result)}`
+      : '取消请求结果尚未确认，正在查询任务状态。', failure.response?.status ? 'error' : 'warn')
+    watchQueueTurn(key, requestId)
     return
   }
   const receipt = cancelReceiptOf(response)
@@ -2757,6 +2844,10 @@ function renderMd(raw) {
     />
   </div>
   <AnalysisContext :selected-data="activeDataFilename" :reference-documents="referenceDocuments"
+    :calculations="contextCalculations" :calculation-status="contextCalculationStatus"
+    :has-recorded-request="Boolean(turnIdOf(contextAnalysisTurn?.msg))"
+    :reuse-disabled="Boolean(hitl) || reuseBusy || Boolean(input.trim())" :reuse-status="reuseStatus"
+    @reuse="reuseAnalysis"
     @remove-reference="removeReferenceDocument" @clear-references="clearReferenceDocuments"
     :origin="contextOrigin"
     :used-data="contextUsedData" :recorded-data="contextRecordedData" :sources="contextSources" :source-face="contextSourceFace" :scope="contextScope" :loading="loading" :has-answer="contextHasAnswer"

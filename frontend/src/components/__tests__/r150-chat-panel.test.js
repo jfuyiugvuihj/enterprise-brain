@@ -42,6 +42,15 @@ async function renderWith(turns) {
 }
 
 describe('G1 · 出处那张脸上屏（R41 判据③ 的销账实据）', () => {
+  it('独立图表提供查看入口，不要求用户先上传制度文档', async () => {
+    const html = await renderWith([assistantTurn({
+      content: '![合成验收](/api/v1/artifacts/own-chart/content)',
+      sources: { rows: [], hitCount: 0, hiddenCount: 0, scopeReasonCode: '' },
+    })])
+    expect(html).toContain('本轮图表没有文档引用')
+    expect(html).not.toContain('请先确认文档已上传并解析完成')
+  })
+
   it('一条命中：文件名是可点的按钮，卡片上带着版本/密级/部门/相关度', async () => {
     const html = await renderWith([assistantTurn({ sources: { rows: [hitRow], hitCount: 1, hiddenCount: 0, scopeReasonCode: 'department_scope' } })])
     expect(html).toContain('data-testid="source-card"')

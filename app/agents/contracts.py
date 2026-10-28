@@ -17,6 +17,7 @@ class Principal(BaseModel):
     clearance: int = 1
     clearance_label: str = "internal"
     status: str = "active"
+    auth_version: int = 0
     auth_source: str = "local"
     is_system: bool = False
     request_id: str = ""
@@ -40,7 +41,9 @@ class Principal(BaseModel):
             department_ids=[str(value) for value in (user.get("department_ids") or [])],
             clearance=int(user.get("clearance") or clearance_for(role)),
             clearance_label=str(user.get("clearance_label") or role),
-            status=str(user.get("status") or "active"),
+            status=("password_change_required" if user.get("must_change_password")
+                    and user.get("status", "active") == "active" else str(user.get("status") or "active")),
+            auth_version=int(user.get("auth_version") or 0),
             auth_source=auth_source,
             is_system=bool(user.get("is_system", False)),
         )
