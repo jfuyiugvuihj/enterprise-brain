@@ -290,6 +290,8 @@ def review_context(question: str, filename: str, previous: dict, dataset: dict,
         saved['execution_question'] = question
         if question.startswith('请将以下已完成的分析原文排版导出'):
             return _with_document_selection(saved, documents)
+        for key in ('report_body', 'report_source_documents', 'report_calculation_request_id'):
+            saved.pop(key, None)
         target = re.search(r'第?([一二两三四五六七八九十\d]+)(?:题|项|问).*?(?:改为|改成|修改为)(.+)', question)
         if target:
             numerals = dict(zip('一二三四五六七八九十', range(1, 11)))

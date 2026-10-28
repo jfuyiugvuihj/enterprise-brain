@@ -79,9 +79,13 @@ def test_new_full_metric_question_replaces_prior_goal_but_keeps_input_version():
     from app.agents.task_review import review_context
     old = review_context('按部门统计有效费用均值', '费用.csv', {}, {'version_id': 'v1', 'sha256': 'hash'})
     old['metric_binding'] = binding()
+    old['report_body'] = '上一轮已导出的分析原文'
     new = review_context('按月份统计有效费用均值', '费用.csv', old, {'version_id': 'v2', 'sha256': 'changed'})
     assert new['analysis_question'] == '按月份统计有效费用均值'
     assert new['version_id'] == 'v1' and new['metric_binding'] == old['metric_binding']
+    assert 'report_body' not in new
+    exported = review_context('请将以下已完成的分析原文排版导出为PDF', '费用.csv', old, {})
+    assert exported['report_body'] == old['report_body']
 
 
 def test_numeric_grouping_dimension_is_not_another_requested_metric():
