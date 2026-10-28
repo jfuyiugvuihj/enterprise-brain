@@ -237,7 +237,7 @@ let panelRuntimeRead = null
 <script setup>
 import BrandMark from './BrandMark.vue'
 import AnalysisContext from './AnalysisContext.vue'
-import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatArtifactDownload } from '../composables/useChatArtifactDownload'
 import { useCalculationContext } from '../composables/useCalculationContext'
@@ -312,7 +312,20 @@ const taskOrigin = ref(null)
 const effectiveOrigin = computed(() => taskOrigin.value
   || messages.value.findLast(message => message.taskSelection?.origin)?.taskSelection.origin
   || messages.value.findLast(message => message.taskOrigin)?.taskOrigin || null)
-watch(activeId, () => { taskOrigin.value = null }, { flush: 'sync' })
+const metricBinding = shallowRef(null)
+watch(activeId, () => { taskOrigin.value = null; metricBinding.value = null }, { flush: 'sync' })
+watch([activeId, () => messages.value.findLast(message => message.taskSelection)?.taskSelection],
+  ([sessionId, selection]) => {
+    if (!selection || metricBinding.value?.explicit
+        || !Object.prototype.hasOwnProperty.call(selection, 'metricBinding')) return
+    const binding = selection.metricBinding
+    metricBinding.value = binding ? {
+      session_id: sessionId, filename: selection.dataFilename || '', version_id: selection.dataVersionId || '',
+      definition_id: binding.definition_id,
+      label: `${binding.metric_name} · ${binding.formula} · 版本 ${binding.definition_version}`,
+      explicit: false, cancelled: false,
+    } : null
+  }, { immediate: true, flush: 'post' })
 const cancelPhase = ref('idle')
 const deciding = ref(false)
 const streamNote = ref('')
@@ -652,7 +665,9 @@ async function loadDataFiles({ force = false } = {}) {
 
 /** 就地改表：改的就是下一轮 send() 默认要发出去的那一枚，并随会话落盘（切回来还是这一张）。 */
 function chooseDataTable(value) {
-  activeDataFilename.value = typeof value === 'string' ? value : ''
+  const nextFilename = typeof value === 'string' ? value : ''
+  if (metricBinding.value && metricBinding.value.filename !== nextFilename) metricBinding.value = null
+  activeDataFilename.value = nextFilename
   // Selecting a table after opening a document question makes this a joint
   // calculation task. QA mode excludes the data worker on the server.
   if (activeDataFilename.value && selectedLane.value === 'qa') chooseLane('analysis')
@@ -828,6 +843,7 @@ async function startNewTask() {
   newSession()
   input.value = ''
   reuseDraft.value = null
+  metricBinding.value = null
   reuseStatus.value = ''
   showEarlierTurns.value = false
   await router?.replace({ name: 'chat', query: {} })
@@ -849,9 +865,26 @@ async function onChatAsk(e) {
     await startNewTask()
   }
   taskOrigin.value = detail?.origin || null
+  const previousFilename = activeDataFilename.value
   activeDataFilename.value = typeof detail === 'string' || detail?.documentFilenames?.length
     ? activeDataFilename.value
     : typeof detail?.filename === 'string' ? detail.filename : activeDataFilename.value
+  const hasMetricContract = detail && typeof detail === 'object'
+    && (Object.prototype.hasOwnProperty.call(detail, 'metricDefinitionId')
+      || Object.prototype.hasOwnProperty.call(detail, 'expectedDataVersionId'))
+  if (hasMetricContract) {
+    metricBinding.value = {
+      session_id: activeId.value,
+      filename: String(detail.filename || ''),
+      version_id: String(detail.expectedDataVersionId || ''),
+      definition_id: String(detail.metricDefinitionId || ''),
+      label: String(detail.metricLabel || ''),
+      cancelled: false,
+      explicit: true,
+    }
+  } else if (previousFilename !== activeDataFilename.value) {
+    metricBinding.value = null
+  }
   input.value = query
   referenceDocuments.value = normalizeDocumentNames(detail?.documentFilenames || [detail?.documentFilename])
   syncActive()
@@ -874,6 +907,12 @@ function prepareAnalysisTemplate(template) {
     const field = document.querySelector('[data-testid="chat-panel"] textarea')
     if (field) field.scrollTop = 0
   })
+}
+
+function cancelMetricBinding() {
+  const current = metricBinding.value
+  if (!current || !current.definition_id) return
+  metricBinding.value = { ...current, definition_id: '', label: '', cancelled: true, explicit: true }
 }
 
 const reuseBusy = ref(false)
@@ -900,10 +939,19 @@ async function reuseAnalysis(record) {
     activeDataFilename.value = draft.filename
     input.value = draft.question
     reuseDraft.value = { ...draft, session_id: activeId.value }
+    metricBinding.value = {
+      session_id: activeId.value,
+      filename: draft.filename,
+      version_id: draft.version_id,
+      definition_id: '',
+      label: '',
+      cancelled: false,
+      explicit: true,
+    }
     taskOrigin.value = null
     referenceDocuments.value = []
     chooseLane('')
-    reuseStatus.value = `已准备新任务，使用当前版本 ${draft.version_id}。原期间和条件保持不变；请检查问题后发送。文档依据请重新选择。`
+    reuseStatus.value = `已准备新任务，使用当前版本 ${draft.version_id}。原期间和条件保持不变；本次为普通分析，不继承原指标口径。请检查问题后发送。文档依据请重新选择。`
     syncActive()
     await nextTick()
     focusQuestion()
@@ -1105,6 +1153,9 @@ async function send(dataFilename = activeDataFilename.value) {
   if (dataFilename) activeDataFilename.value = dataFilename
   const reusePin = reuseDraft.value?.filename === dataFilename && reuseDraft.value?.session_id === activeId.value
     ? reuseDraft.value : null
+  const bindingForSend = metricBinding.value?.session_id === activeId.value
+    && metricBinding.value?.filename === dataFilename
+    ? metricBinding.value : null
   reuseDraft.value = null
 
   messages.value.push({ role: 'user', content: text, sources: null, taskOrigin: effectiveOrigin.value })
@@ -1138,7 +1189,10 @@ async function send(dataFilename = activeDataFilename.value) {
         session_id: activeId.value,
         idempotency_key: `${activeId.value}:${aiMsg.mid}`,
         data_filename: dataFilename,
-        ...(reusePin ? { expected_data_version_id: reusePin.version_id } : {}),
+        ...((reusePin?.version_id || (bindingForSend?.explicit && bindingForSend?.version_id)) ? {
+          expected_data_version_id: reusePin?.version_id || bindingForSend.version_id,
+        } : {}),
+        ...(bindingForSend?.explicit ? { metric_definition_id: bindingForSend.definition_id || '' } : {}),
         document_filenames: [...referenceDocuments.value],
         ...(effectiveOrigin.value?.kind === 'alert' && effectiveOrigin.value.versionId ? {
           alert_id: Number(effectiveOrigin.value.id), alert_version_id: effectiveOrigin.value.versionId,
@@ -1200,6 +1254,11 @@ async function send(dataFilename = activeDataFilename.value) {
         aiMsg.unseenEvents = [...(Array.isArray(aiMsg.unseenEvents) ? aiMsg.unseenEvents : []), event]
       },
     })
+    if (bindingForSend?.explicit && metricBinding.value === bindingForSend && result.ok
+        && (['answered', 'awaiting_approval', 'queued'].includes(result.state?.terminal)
+          || result.stopped === 'hitl' || aiMsg.queue)) {
+      metricBinding.value = { ...bindingForSend, explicit: false }
+    }
 
     aiMsg.terminalState = !result.ok || result.state?.terminal === 'failed' ? 'failed' : result.state?.terminal || ''
 
@@ -2780,6 +2839,21 @@ function renderMd(raw) {
           >刷新文件列表</UiButton>
           <span class="lane-promise" data-testid="chat-data-table-face">{{ dataTableFaceText() }}</span>
         </div>
+        <div
+          v-if="metricBinding?.session_id === activeId && metricBinding?.filename === activeDataFilename && (metricBinding.definition_id || metricBinding.explicit)"
+          class="metric-binding-setting"
+          data-testid="chat-metric-binding"
+        >
+          <span v-if="metricBinding.definition_id">本任务指标口径：{{ metricBinding.label }}</span>
+          <span v-else>{{ metricBinding.cancelled ? '本轮将清除指标口径，按普通分析继续。' : '本轮使用普通分析，不绑定指标口径。' }}</span>
+          <UiButton
+            v-if="metricBinding.definition_id"
+            variant="ghost"
+            size="sm"
+            data-testid="chat-metric-cancel"
+            @click="cancelMetricBinding"
+          >取消指标口径</UiButton>
+        </div>
         <!-- 失败提示原先只是换行色的 <p role="status">：读屏不会打断，等于把错误当通知。
              这些句子都是一次性结果，不是一条能重试的面板加载，所以 retryable=false。 -->
         </details>
@@ -3676,6 +3750,17 @@ function renderMd(raw) {
 .lane-promise {
   font-size: var(--t-xs);
   color: var(--text-3);
+}
+.metric-binding-setting {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  min-width: 0;
+  margin: 0 0 var(--s-2);
+  overflow-wrap: anywhere;
+  font-size: var(--t-xs);
+  color: var(--text-2);
 }
 .runtime-face {
   margin: 0;

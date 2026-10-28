@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ANALYSIS_TEMPLATES } from '../lib/analysis-templates'
 import { FILE_CLASSIFICATION_LEVELS, fileAccessLabel, filterFileClassification } from '../lib/file-access'
@@ -56,6 +56,16 @@ const profile = ref(null)
 const route = useRoute()
 const requestedFileMissing = ref(false)
 const dataFile = ref('')
+const previewVersionId = shallowRef('')
+const previewDatasetId = shallowRef('')
+const metricDefinitions = ref([])
+const metricDefinitionsLoading = shallowRef(false)
+const metricDefinitionsError = shallowRef('')
+const selectedMetricDefinitionId = shallowRef('')
+let previewRequestId = 0
+let metricRequestId = 0
+let previewRequestController = null
+let metricRequestController = null
 const tableColumns = ref([])
 const tableRows = ref([])
 const tableTruncated = ref(false)
@@ -96,6 +106,14 @@ const hasDateColumn = computed(() => (profile.value?.columns || []).some(column 
   || /日期|时间|月份|年月|期间|季度|年度|^(?:年|月)$|(?:^|_)(?:date|time|period|month|year)(?:$|_)/i.test(column.name || '')))
 const quickActions = computed(() => !profile.value || selectingFile.value ? []
   : ANALYSIS_TEMPLATES.filter(action => action.id !== 'trend' || hasDateColumn.value))
+const applicableMetrics = computed(() => metricDefinitions.value.filter(metric => {
+  if (metric?.execution?.supported !== true) return false
+  const scopes = Array.isArray(metric.source_scope) ? metric.source_scope : []
+  return scopes.includes(dataFile.value) || (previewDatasetId.value && scopes.includes(previewDatasetId.value))
+}))
+const selectedMetric = computed(() => applicableMetrics.value.find(metric =>
+  metric?.provenance?.definition_id === selectedMetricDefinitionId.value
+) || null)
 
 const emit = defineEmits(['ask'])
 
@@ -112,7 +130,9 @@ async function uploadExcel(e) {
   try {
     const res = await http.post('/upload-excel', form)
     listClassification.value = ''
+    clearMetricSelection()
     applyDataPreview(res.data)
+    void loadMetricDefinitions()
     await loadDataFiles(file.name)
   } catch (err) {
     uploadError.value = errorDetail(err, '数据上传失败')
@@ -124,11 +144,44 @@ async function uploadExcel(e) {
 
 function applyDataPreview(data) {
   dataFile.value = data.filename || ''
+  previewVersionId.value = typeof data.version_id === 'string' ? data.version_id : ''
+  previewDatasetId.value = typeof data.dataset_id === 'string' ? data.dataset_id : ''
   profile.value = data.profile || null
   tableColumns.value = data.columns || []
   tableRows.value = data.rows || []
   tableTruncated.value = Boolean(data.truncated)
   rowScope.value = data.row_scope || null
+}
+
+function clearMetricSelection() {
+  metricRequestId += 1
+  metricRequestController?.abort()
+  metricRequestController = null
+  metricDefinitions.value = []
+  metricDefinitionsLoading.value = false
+  metricDefinitionsError.value = ''
+  selectedMetricDefinitionId.value = ''
+}
+
+async function loadMetricDefinitions() {
+  if (!previewVersionId.value) return
+  metricRequestController?.abort()
+  const controller = new AbortController()
+  metricRequestController = controller
+  const requestId = ++metricRequestId
+  metricDefinitionsLoading.value = true
+  metricDefinitionsError.value = ''
+  try {
+    const response = await http.get('/semantics/metrics', { signal: controller.signal })
+    if (controller.signal.aborted || requestId !== metricRequestId) return
+    metricDefinitions.value = Array.isArray(response.data?.metrics) ? response.data.metrics : []
+  } catch (error) {
+    if (!controller.signal.aborted && requestId === metricRequestId) {
+      metricDefinitionsError.value = errorDetail(error, '指标口径目录读取失败')
+    }
+  } finally {
+    if (requestId === metricRequestId) metricDefinitionsLoading.value = false
+  }
 }
 
 async function loadDataFiles(preferredFilename = '') {
@@ -169,27 +222,41 @@ async function reloadUpdatedDataFile(filename) {
 }
 
 async function selectDataFile(filename) {
+  previewRequestController?.abort()
+  const controller = new AbortController()
+  previewRequestController = controller
+  const requestId = ++previewRequestId
   requestedFileMissing.value = false
   dataFile.value = filename
+  previewVersionId.value = ''
+  previewDatasetId.value = ''
+  clearMetricSelection()
   selectingFile.value = true
   previewError.value = ''
   previewDenied.value = false
-  // 换文件与请求失败都不许留着上一个文件的行级结论：那一屏的因由改由 previewError 说。
+  // 换文件或预览失败后，旧表格和分析入口都不能冒充当前文件的预览。
+  profile.value = null
+  tableColumns.value = []
+  tableRows.value = []
+  tableTruncated.value = false
   rowScope.value = null
   try {
     const res = await http.get(
       `/data-files/${encodeURIComponent(filename)}/preview`,
-      { params: { _ts: Date.now() } }
+      { params: { _ts: Date.now() }, signal: controller.signal }
     )
+    if (requestId !== previewRequestId || dataFile.value !== filename) return
     applyDataPreview(res.data)
+    void loadMetricDefinitions()
   } catch (err) {
+    if (requestId !== previewRequestId) return
         // 别人的数据集会走到这里：data.py:89-90 用 policy 的 reason code 回 403。
         previewDenied.value = isPermissionDenied(err)
         previewError.value = previewDenied.value
           ? '这份数据文件不属于你的可见范围，当前账号打不开它。'
           : errorDetail(err, '数据文件预览失败')
   } finally {
-    selectingFile.value = false
+    if (requestId === previewRequestId) selectingFile.value = false
   }
 }
 
@@ -230,6 +297,12 @@ async function downloadDataFile() {
  * 下一次点开会让人以为它还在。dataFile 清空后 loadDataFiles 会自己挑剩下第一个补位。
  */
 function clearTableState() {
+  previewRequestController?.abort()
+  previewRequestId += 1
+  selectingFile.value = false
+  previewVersionId.value = ''
+  previewDatasetId.value = ''
+  clearMetricSelection()
   profile.value = null
   tableColumns.value = []
   tableRows.value = []
@@ -384,7 +457,16 @@ function closeDataPreview() {
 
 function askQuestion(q) {
   if (!dataFile.value) return
-  emit('ask', { query: q, filename: dataFile.value, prepare: true })
+  emit('ask', {
+    query: q,
+    filename: dataFile.value,
+    expectedDataVersionId: previewVersionId.value,
+    metricDefinitionId: selectedMetric.value?.provenance?.definition_id || '',
+    metricLabel: selectedMetric.value
+      ? `${selectedMetric.value.metric_name} · ${selectedMetric.value.formula || ''} · 版本 ${selectedMetric.value.definition_version || '未标版本'}`
+      : '',
+    prepare: true,
+  })
 }
 
 function typeIcon(dtype) {
@@ -407,6 +489,10 @@ function formatModifiedAt(value) {
 }
 
 onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route.query.filename : ''))
+onUnmounted(() => {
+  previewRequestController?.abort()
+  metricRequestController?.abort()
+})
 </script>
 
 <template>
@@ -605,14 +691,44 @@ onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route
     <!-- 快捷提问 -->
     <div v-if="dataFile" class="data-next-step">
       <p>已选择：<strong>{{ dataFile }}</strong>。将此文件带入智能助手，补充分析要求后发送。</p>
+      <p v-if="selectingFile || !previewVersionId" class="analysis-template-note" role="status">
+        {{ selectingFile ? '正在加载资料预览，请稍候。' : '请先成功加载资料预览，再开始分析。' }}
+      </p>
       <UiButton variant="primary" data-testid="data-prepare-analysis"
-        @click="emit('ask', { query: '请分析这份经营数据：', filename: dataFile, prepare: true })"
+        :disabled="selectingFile || !previewVersionId"
+        @click="askQuestion('请分析这份经营数据：')"
       >分析这份数据 <span aria-hidden="true">→</span></UiButton>
     </div>
     <div class="quick-actions" data-testid="data-quick-actions">
       <h4>选择分析模板</h4>
       <p class="analysis-template-note">选择后会带入当前文件和可编辑的问题，补充期间或口径后再发送。</p>
-        <p v-if="profile && !selectingFile && !hasDateColumn" class="analysis-template-note">未识别到日期或月份字段，暂不提供趋势分析；可先检查字段与数据质量。</p>
+      <label class="metric-label" for="data-metric-select">指标口径（可选）</label>
+      <select
+        id="data-metric-select"
+        v-model="selectedMetricDefinitionId"
+        class="metric-select"
+        data-testid="data-metric-select"
+        :disabled="!previewVersionId || selectingFile || metricDefinitionsLoading || !applicableMetrics.length"
+      >
+        <option value="">普通分析（不绑定指标）</option>
+        <option v-for="metric in applicableMetrics" :key="metric.provenance?.definition_id" :value="metric.provenance?.definition_id">
+          {{ metric.metric_name }} · 版本 {{ metric.definition_version || '未标版本' }}
+        </option>
+      </select>
+      <div v-if="selectedMetric" class="metric-definition" data-testid="selected-metric-definition">
+        <strong>{{ selectedMetric.metric_name }}</strong>
+        <span>{{ selectedMetric.definition }}</span>
+        <span>公式：{{ selectedMetric.formula || '未登记' }} · 版本：{{ selectedMetric.definition_version || '未标版本' }} · 单位：{{ selectedMetric.unit || '未登记' }}</span>
+        <span>登记核对：{{ selectedMetric.provenance?.verified_document || '未登记文档' }} / {{ selectedMetric.provenance?.verified_section || '未登记章节' }}</span>
+      </div>
+      <p v-else-if="metricDefinitionsLoading" class="analysis-template-note" role="status">正在读取适用于这份资料的已核对指标口径…</p>
+      <div v-else-if="metricDefinitionsError" class="metric-error" role="status">
+        <span>{{ metricDefinitionsError }}；普通分析仍可继续。</span>
+        <UiButton variant="ghost" size="sm" label="重试读取指标" data-testid="metric-retry" @click="loadMetricDefinitions" />
+      </div>
+      <p v-else-if="previewVersionId && !applicableMetrics.length" class="analysis-template-note" data-testid="no-applicable-metrics">暂无适用于这份资料的已核对指标口径，可继续普通分析</p>
+      <p v-else-if="!previewVersionId" class="analysis-template-note">预览资料后可读取适用的指标口径；普通分析仍可继续。</p>
+      <p v-if="profile && !selectingFile && !hasDateColumn" class="analysis-template-note">未识别到日期或月份字段，暂不提供趋势分析；可先检查字段与数据质量。</p>
       <UiButton
         v-for="act in quickActions"
         :key="act.label"
@@ -620,7 +736,7 @@ onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route
         :label="act.label"
         :title="act.description"
         :data-testid="`analysis-template-${act.id}`"
-        :disabled="!dataFile"
+        :disabled="!dataFile || selectingFile || !previewVersionId"
         @click="askQuestion(act.query)"
       />
     </div>
@@ -653,6 +769,11 @@ onMounted(() => loadDataFiles(typeof route?.query?.filename === 'string' ? route
 .data-panel::-webkit-scrollbar-thumb {
   border-radius: 4px;
 }
+
+.metric-label { display: block; margin-top: 10px; font-size: 12px; font-weight: 600; color: var(--legacy-ink-strong); }
+.metric-select { display: block; width: 100%; min-width: 0; margin-top: 5px; padding: 8px; border: 1px solid var(--legacy-fill-cool); border-radius: 7px; background: var(--legacy-paper); color: var(--legacy-ink-strong); }
+.metric-definition { display: grid; gap: 4px; min-width: 0; margin-top: 8px; padding: 9px; border-radius: 7px; background: var(--legacy-emerald-pale); overflow-wrap: anywhere; font-size: 12px; }
+.metric-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-top: 6px; color: var(--legacy-ink-soft); font-size: 12px; }
 
 /* 上传 */
 .upload-section {

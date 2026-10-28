@@ -1165,7 +1165,8 @@ def _make_worker_wrapper(graph, name: str):
                     table_answer = "\n\n".join(answers)
             if table_answer is None and name in ("data", "chart") and child_conf.get("data_filename"):
                 from app.agents.task_review import table_summary_intent
-                if name == 'data' and not table_summary_intent(child_conf['data_question'], contextual=bool(
+                from app.semantics.execution import binding_from_config
+                if name == 'data' and not binding_from_config(child_cfg) and not table_summary_intent(child_conf['data_question'], contextual=bool(
                         child_conf.get('task_context') or child_conf.get('data_context', {}).get('alert_id'))):
                     # A median, ranking or derived calculation must actually execute
                     # its query; reading a sample and letting the model guess is not a result.
@@ -1179,8 +1180,8 @@ def _make_worker_wrapper(graph, name: str):
                 if any(row.get("error_code") == "validation_error" for row in probe_bag["tool_statuses"]):
                     filter_failure = str(probe)
                     evidence_bag["tool_statuses"].extend(probe_bag["tool_statuses"])
-                elif (table_summary_intent(child_conf['data_question'], contextual=bool(
-                        child_conf.get('task_context') or child_conf.get('data_context', {}).get('alert_id')))
+                elif ((binding_from_config(child_cfg) or table_summary_intent(child_conf['data_question'], contextual=bool(
+                        child_conf.get('task_context') or child_conf.get('data_context', {}).get('alert_id'))))
                       and probe_bag.get("report_facts")):
                     # Numeric briefs and their charts use the authorized, filtered frame.
                     # A model must not invent units or claim a tool ran before approval.
@@ -1878,7 +1879,8 @@ def run_with_stream(
         for name in requested or []:
             version = latest_document_version(name) or {}
             documents.append({'filename': name, 'version_id': str(version.get('version') or '')})
-        task_context = review_context(raw_question, filename, previous_context if same_owner else {},
+        task_context = review_context(raw_question, filename,
+            previous_context if same_owner and 'metric_binding' not in data_context else {},
             {"version_id": getattr(dataset, "version_id", ""), "sha256": getattr(dataset, "content_sha256", "")},
             documents=documents)
         if data_context.get('alert_id'):
@@ -1895,6 +1897,19 @@ def run_with_stream(
         data_context = review_context(raw_question, filename, prior_data if same_owner else {},
             {'version_id': getattr(dataset, 'version_id', ''), 'sha256': getattr(dataset, 'content_sha256', '')})
         data_context['query'] = data_context['analysis_question']
+    if filename:
+        prior = (previous.get('data_context') or previous_context) if same_owner else {}
+        supplied = context.get('data_context') or {}
+        if 'metric_binding' in supplied:
+            binding = supplied['metric_binding']
+        else:
+            binding = prior.get('metric_binding') if prior.get('filename') == filename else None
+        # Keep the server snapshot in the checkpoint, including an explicit clear.
+        # A supplied version pin must still retain the resolved follow-up scope.
+        if data_context or binding:
+            data_context = {**data_context, 'metric_binding': binding}
+        if task_context:
+            task_context['metric_binding'] = binding
     initial_state = _initial_execution_state(
         user_message,
         thread_id=thread_id,

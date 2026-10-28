@@ -67,7 +67,7 @@ class CalculationStorage:
                 connection.close()
 
     def start_run(self, owner_id: str, dataset_version_id: str, request_id: str | None,
-                  parameters: dict, formula: str | None = None) -> dict:
+                  parameters: dict, formula: str | None = None, metric_definition_id: str | None = None) -> dict:
         if not str(owner_id or "").strip() or not str(dataset_version_id or "").strip():
             raise ValueError("owner_id and dataset_version_id are required")
         scope = parameters.get("scope", {})
@@ -80,9 +80,9 @@ class CalculationStorage:
         run_id = "calc_" + uuid.uuid4().hex
         rows = self._query(
             "INSERT INTO calculation_runs "
-            "(calculation_run_id,owner_id,dataset_version_id,request_id,status,formula,parameters,started_at) "
-            f"VALUES (%s,%s,%s,%s,'running',%s,%s::jsonb,NOW()) RETURNING {_SELECT}",
-            (run_id, str(owner_id), str(dataset_version_id), request_id or None, formula,
+            "(calculation_run_id,owner_id,dataset_version_id,metric_definition_id,request_id,status,formula,parameters,started_at) "
+            f"VALUES (%s,%s,%s,%s,%s,'running',%s,%s::jsonb,NOW()) RETURNING {_SELECT}",
+            (run_id, str(owner_id), str(dataset_version_id), metric_definition_id or None, request_id or None, formula,
              json.dumps(parameters, ensure_ascii=False, allow_nan=False, default=str)), write=True,
         )
         return rows[0]

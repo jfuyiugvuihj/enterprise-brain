@@ -540,12 +540,19 @@ def _start_calculation(config, filename: str, query: str, *, operation: str):
     session, request = _tool_turn(config)
     if dataset is None or not dataset.version_id:
         raise _CalculationPersistenceError("数据版本未登记，无法保存可回查的计算记录。")
+    from app.semantics.execution import binding_from_config, validate_binding
+    binding = binding_from_config(config)
+    if binding:
+        validate_binding(binding, principal.user_id, dataset)
     try:
         return calculation_storage.start_run(
             owner_id=principal.user_id,
             dataset_version_id=dataset.version_id,
             request_id=request,
+            formula=binding['formula'] if binding else None,
+            metric_definition_id=binding['definition_id'] if binding else None,
             parameters={
+                **({'metric_binding': binding} if binding else {}),
                 "session_id": session,
                 "trace_id": span_identity(config).get("trace_id"),
                 "filename": filename,
@@ -826,6 +833,16 @@ def _answer_query(
 ) -> list[str]:
     """用 pandas 计算查询结果，返回简洁的分析文本"""
     import pandas as pd
+    if df.attrs.get('metric_result'):
+        from app.semantics.execution import metric_answer
+        result = df.attrs['metric_result']
+        if series_out is not None and result['groups'] and all(value is not None for _, value in result['groups']):
+            series_out.append({'kind': 'group', 'operation': result['operation'],
+                'metric_definition_id': result['binding']['definition_id'],
+                'dimension': result['dimension'], 'column': result['binding']['metric_name'],
+                'labels': [label for label, _ in result['groups']],
+                'values': [value for _, value in result['groups']], 'unit': result['binding']['unit']})
+        return [metric_answer(result)]
     results = []
 
     q_lower = query.lower()
@@ -1842,7 +1859,13 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
             produced += 1
             try:
                 df = filter_explicit_categories(df, question or query, category_frame=category_frame)
-                _require_requested_metric(df, question or query)
+                from app.semantics.execution import binding_from_config, calculate_metric
+                binding = binding_from_config(config)
+                if binding:
+                    df, _ = calculate_metric(df, binding, question or query,
+                        dimension=_named_dimension_column(question or query, list(map(str, df.columns))))
+                else:
+                    _require_requested_metric(df, question or query)
             except ValueError as exc:
                 _fail_calculation(calculation_id, "validation_error")
                 return _denial_text(config, tool="analyze_data", code="validation_error",
@@ -1850,7 +1873,7 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
             pending_datasets.append((fname, df, len(parts)))
             if df.attrs.get("filter_note"):
                 parts.append(f"📁 {fname}: {df.attrs['filter_note']}")
-            if df.empty:
+            if df.empty and not df.attrs.get('metric_result'):
                 _finish_calculation(calculation_id, {"rows": 0, "columns": list(map(str, df.columns)),
                     "analysis_scope": _calculation_scope(df, question or query),
                     "filter_note": df.attrs.get("filter_note", ""), "sheet_name": df.attrs.get("sheet_name", ""),
@@ -1879,6 +1902,7 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                     "filter_note": df.attrs.get("filter_note", ""), "sheet_name": df.attrs.get("sheet_name", ""),
                     "numeric_statistics": [c for c in profile["columns"] if c["name"] in profile["numeric_columns"]],
                     "chart_series": series, "answer": ai_parts,
+                    **({'metric_result': df.attrs['metric_result']} if df.attrs.get('metric_result') else {}),
                 })
                 parts.extend(ai_parts)
                 #: 10-07 现读（走查环 7）：图腿自己调用 analyze_data 时，数在这条边界上就算完了，
@@ -1886,7 +1910,7 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 #: 服务端 500，一轮白等 114 s、屏上零张图。数既然已经在手，就不该再押在模型的抄写上。
                 for item in series:
                     from app.insights.alert_evidence import metric_unit
-                    item["unit"] = metric_unit(item.get("column") or "")
+                    item.setdefault("unit", metric_unit(item.get("column") or ""))
                 record_chart_series(bag_from_config(config), series)
             except _CalculationPersistenceError:
                 raise
@@ -2053,6 +2077,10 @@ def _flatten_query_tuple_keys(value: Any) -> Any:
 
 
 def _query_data(query: str, config: RunnableConfig, *, expression: str | None = None) -> str:
+    from app.semantics.execution import binding_from_config
+    if binding_from_config(config):
+        # A generated expression cannot replace the formula the user selected.
+        return _analyze_data(query, config)
     from app.common.rbac import filter_dataframe_rows_with_scope
     from app.tools.excel import load_excel, safe_query
     from app.tools.excel import filter_explicit_categories
@@ -2525,6 +2553,15 @@ def _generate_chart(
                 head=_CHART_REPEAT_HEAD.format(times=times),
             )
     requested = _requested_group_series(bag, str(((config or {}).get("configurable") or {}).get("data_question") or ""))
+    from app.semantics.execution import binding_from_config
+    if binding_from_config(config) and chart_type in ('bar', 'line', 'pie', 'radar'):
+        authoritative = [row for row in (bag or {}).get('chart_series', []) if row.get('metric_definition_id')]
+        if not requested or chart_type == 'radar' or len({json.dumps(row.get('values')) for row in authoritative}) > 1:
+            return _denial_text(config, tool='generate_chart', code='validation_error',
+                head='当前没有唯一可核对的指标分组结果，请明确分组维度或逐题生成图表；未使用模型提供的数值。')
+        if chart_type == 'pie' and requested.get('operation') == 'MEAN':
+            return _denial_text(config, tool='generate_chart', code='validation_error',
+                head='均值不能相加作为构成占比，请改用柱状图比较各组均值。')
     if requested and chart_type in ("bar", "line", "pie"):
         labels, values = list(requested["labels"]), list(requested["values"])
         if chart_type == "bar" and re.search(r"PDF|报告|导出", str(((config or {}).get("configurable") or {}).get("data_question") or ""), re.I):
@@ -2698,18 +2735,21 @@ def _require_requested_metric(df, question: str) -> None:
 def _calculation_scope(df, question: str) -> dict:
     facts = _report_data_facts('', df, question)
     requested = df.attrs.get('requested_period')
+    binding = (df.attrs.get('metric_result') or {}).get('binding')
     return {'period': requested or '未限定期间；数据覆盖' + facts['observed_period'],
             'period_kind': 'requested' if requested else 'observed',
             'filter': df.attrs.get('filter_note') or '未指定分类筛选',
             'sheet': df.attrs.get('sheet_name') or '单表', 'rows': int(len(df)),
-            'units': [{'column': metric['column'], 'unit': metric['unit']} for metric in facts['metrics']]}
+            'units': ([{'column': binding['metric_name'], 'unit': binding['unit']}] if binding else
+                      [{'column': metric['column'], 'unit': metric['unit']} for metric in facts['metrics']])}
 
 
 def _report_data_facts(filename: str, df, question: str, *, version_id: str = "", sha256: str = "") -> dict:
     """Compute report claims directly from the authorized, filtered frame."""
     import pandas as pd
     from app.insights.alert_evidence import additive_metric, metric_unit
-    _require_requested_metric(df, question)
+    if not df.attrs.get('metric_result'):
+        _require_requested_metric(df, question)
     numeric = [column for column in df.select_dtypes(include=['number']).columns if additive_metric(column)]
     named = [column for column in numeric if str(column) in question]
     chosen = named or numeric
@@ -2759,6 +2799,9 @@ def _report_data_facts(filename: str, df, question: str, *, version_id: str = ""
                 "earliest": parsed.min().strftime(date_format), "latest": parsed.max().strftime(date_format)}
     if df.attrs.get("requested_period"):
         facts["period"] = df.attrs["requested_period"]
+    if df.attrs.get('metric_result'):
+        facts['metric_result'] = df.attrs['metric_result']
+        return facts
     for column in chosen:
         values = df[column].dropna()
         metric = {"column": str(column), "unit": metric_unit(column),
@@ -2780,6 +2823,12 @@ def _verified_data_answer(facts: list[dict], *, question: str = "", include_grou
     """Present calculated table facts without model-written units or artifact claims."""
     parts = []
     for source in facts:
+        if source.get('metric_result'):
+            from app.semantics.execution import metric_answer
+            parts.append(metric_answer(source['metric_result'], include_groups=include_groups))
+            parts.append(f"筛选：{source['filter'] or '未指定分类筛选'}\n\n期间：{source['period']}\n\n"
+                         f"来源：{source['filename']}；工作表：{source['sheet'] or '单表'}；版本：{source['version_id']}。")
+            continue
         if source.get("named_rows"):
             for hit in source["named_rows"]:
                 parts.append(f"按 {hit['name_column']}＝{hit['name']} 找到 {len(hit['values'])} 条授权记录。")
@@ -2897,7 +2946,7 @@ def _analysis_body_sections(body: str) -> list[dict]:
                 index += 1
             sections.append({'type': 'table', 'headers': headers, 'rows': rows, 'align': 'LEFT'})
             continue
-        elif not line.strip():
+        elif not line.strip() or re.fullmatch(r'图表已生成\s*[:：]\s*', line.strip()):
             flush()
         else:
             paragraph.append(line.lstrip('> '))
@@ -2908,8 +2957,19 @@ def _analysis_body_sections(body: str) -> list[dict]:
 
 def _report_sections(facts: list[dict], analysis: str, original_body: str) -> list[dict]:
     """The answer the user saw comes first; verified fact tables remain underneath."""
+    if len(facts) == 1 and facts[0].get('metric_result'):
+        result = facts[0]['metric_result']
+        summary = {'type': 'summary', 'period': facts[0]['period'], 'cards': [
+            {'label': result['binding']['metric_name'],
+             'value': f"{result['value']:,.2f}" if result['value'] is not None else '无非空数据',
+             'hint': result['binding']['unit']},
+            {'label': '筛选后的记录', 'value': str(result['rows']), 'hint': '已应用权限、期间和口径筛选'},
+            {'label': '缺失输入', 'value': str(result['missing']), 'hint': '空值未按零值填充'}]}
+        return [summary, *_analysis_body_sections(original_body or _verified_data_answer(facts))]
     if original_body:
         return _analysis_body_sections(original_body)
+    if any(source.get('metric_result') for source in facts):
+        return _analysis_body_sections(_verified_data_answer(facts))
     sections = _verified_report_sections(facts, analysis)
     if facts:
         return sections
@@ -2921,6 +2981,11 @@ def _report_sections(facts: list[dict], analysis: str, original_body: str) -> li
 
 def _report_chart_metric(facts: list[dict], question: str = ''):
     from app.agents.task_review import requires_query_calculation
+    for source in facts:
+        result = source.get('metric_result')
+        if result and 2 <= len(result['groups']) <= 50 and all(value is not None for _, value in result['groups']):
+            return {'column': result['binding']['metric_name'], 'unit': result['binding']['unit'],
+                    'dimension': result['dimension']}, result['groups'], ''
     if requires_query_calculation(question):
         return None, [], ''
     mean = bool(re.search(r'平均|均值',question) and not re.search(r'合计|总计|总额|求和|汇总',question))
@@ -3396,6 +3461,10 @@ def _export_report(report_title: str, sections_json: str,
             caption = f"{report_title}；来源：{filename or '本轮分析'}"
             if filename and facts:
                 caption = "当前授权与筛选范围内的分组构成；单位以坐标轴标注为准；来源与版本详见编制口径。"
+                if any(source.get('metric_result') for source in facts):
+                    caption = ('按选定指标口径计算的分组结果；单位见坐标轴，来源与版本见正文。'
+                        + ('各组均值用于比较，不能相加作为总额或构成占比。'
+                           if any(source.get('metric_result', {}).get('operation') == 'MEAN' for source in facts) else ''))
                 if verified_bag.get('verified_queries'):
                     caption = '本题已复核查询结果；单位依本题运算口径，未直接沿用输入字段单位；来源与版本详见正文。'
             chart_sections = [{"type": "chart", "path": chart, "caption": f"图{i + 1}：{caption}"} for i, chart in enumerate(charts)]

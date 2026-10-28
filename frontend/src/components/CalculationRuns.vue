@@ -36,6 +36,15 @@ const statisticColumns = [
 ]
 const parameters = computed(() => selected.value?.parameters || {})
 const result = computed(() => selected.value?.result || {})
+const metricBinding = computed(() => parameters.value.metric_binding || null)
+const metricResult = computed(() => result.value.metric_result || null)
+const metricResultValueText = computed(() => {
+  if (!metricResult.value) return ''
+  const value = metricResult.value.value
+  if (value === null || value === undefined) return '无可计算的非空数据'
+  const unit = metricBinding.value?.unit
+  return unit ? `${value} ${unit}` : String(value)
+})
 const statistics = computed(() => result.value.numeric_statistics || [])
 const answers = computed(() => Array.isArray(result.value.answer) ? result.value.answer : [])
 const artifacts = computed(() => selected.value?.artifacts || [])
@@ -147,6 +156,14 @@ onBeforeUnmount(() => { listController?.abort(); detailController?.abort(); clea
           <dt>数据版本</dt><dd>{{ selected.dataset_version_id || '未记录' }}</dd>
           <dt>工作表</dt><dd>{{ sheetName }}</dd>
           <dt>计算问题</dt><dd>{{ parameters.query || '未记录' }}</dd>
+          <dt>指标口径</dt><dd>{{ metricBinding?.metric_name || '普通分析（未绑定指标）' }}</dd>
+          <template v-if="metricBinding">
+            <dt>指标定义 ID</dt><dd>{{ metricBinding.definition_id || '未记录' }}</dd>
+            <dt>定义版本</dt><dd>{{ metricBinding.definition_version || '未记录' }}</dd>
+            <dt>指标公式</dt><dd>{{ metricBinding.formula || '未记录' }}</dd>
+            <dt>指标单位</dt><dd>{{ metricBinding.unit || '未记录' }}</dd>
+            <dt>登记核对</dt><dd>{{ metricBinding.provenance?.verified_document || '未记录文档' }} / {{ metricBinding.provenance?.verified_section || '未记录章节' }}</dd>
+          </template>
           <dt>筛选口径</dt><dd>{{ filterNote }}</dd>
           <dt>开始时间</dt><dd>{{ timeLabel(selected.started_at) }}</dd>
           <dt>完成时间</dt><dd>{{ timeLabel(selected.completed_at) }}</dd>
@@ -154,6 +171,12 @@ onBeforeUnmount(() => { listController?.abort(); detailController?.abort(); clea
         </dl>
         <template v-if="selected.status === 'completed'">
           <h4>已保存的计算结果</h4>
+          <p v-if="metricResult" data-testid="calculation-metric-result">
+            指标结果：{{ metricResultValueText }}
+          </p>
+          <p v-if="metricResult && Number(metricResult.missing) > 0" data-testid="calculation-metric-missing">
+            缺失输入：{{ metricResult.missing }} 条，未按零值计算
+          </p>
           <p v-if="result.rows !== undefined" data-testid="calculation-row-count">参与计算：{{ result.rows }} 行</p>
           <p v-for="(answer, index) in answers" :key="index">{{ answer }}</p>
           <UiTable v-if="statistics.length" :columns="statisticColumns" :rows="statistics" row-key="name" aria-label="计算统计结果" />
@@ -175,7 +198,7 @@ onBeforeUnmount(() => { listController?.abort(); detailController?.abort(); clea
 
 <style scoped>
 .calculation-detail { margin-top: var(--s-4); }
-.calculation-fields { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--s-2) var(--s-4); }
+.calculation-fields { display: grid; grid-template-columns: minmax(5rem, max-content) minmax(0, 1fr); gap: var(--s-2) var(--s-4); }
 .calculation-fields dt { color: var(--text-3); }
 .calculation-fields dd { margin: 0; overflow-wrap: anywhere; }
 .calculation-result { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--t-sm); }

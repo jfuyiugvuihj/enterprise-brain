@@ -1513,6 +1513,7 @@ class AskRequest(BaseModel):
     alert_id: int | None = None
     alert_version_id: str | None = None
     expected_data_version_id: str | None = None
+    metric_definition_id: str | None = None
     _alert_context: dict = PrivateAttr(default_factory=dict)
     _data_context: dict = PrivateAttr(default_factory=dict)
     idempotency_key: str = ""
@@ -3019,6 +3020,8 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     # R32：先验取值再动手。这一行必须在建表、绑会话、落库、入队、模型之前，
     # 非法档位留下的是零副作用，而不是"跑了一半再告诉调用方字段写错了"。
     _require_valid_lane(request)
+    if request.metric_definition_id is not None and (not request.data_filename or not request.expected_data_version_id):
+        raise HTTPException(status_code=400, detail='选择指标口径时须同时指定数据文件与预览版本。')
     if request.expected_data_version_id is not None:
         from app.api.v1.data import _authorized_dataset
         from app.common.permissions import ACTION_ANALYZE
@@ -3027,6 +3030,13 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
             raise HTTPException(status_code=409, detail='dataset_version_changed')
         request._data_context = {'filename': record.filename, 'version_id': record.version_id,
             'sha256': record.content_sha256, 'query': request.message}
+        if request.metric_definition_id is not None:
+            from app.semantics.execution import bind_metric
+            try:
+                request._data_context['metric_binding'] = (bind_metric(request.metric_definition_id,
+                    request_principal.user_id, record) if request.metric_definition_id else None)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         _ensure_sessions_table()
     except ChatSchemaNotMigratedError as exc:
@@ -4875,7 +4885,8 @@ async def get_session(session_id: str, request: FastAPIRequest):
                         and str(pending_row.owner_user_id) == str(principal.user_id)):
                     pending_request_id = pending_row.request_id
             msgs = _attach_current_request(msgs, saved, principal, pending_request_id=pending_request_id)
-            task = saved.get('task_context') or saved.get('document_selection') or saved.get('data_context') or {}
+            task = {**(saved.get('document_selection') or {}), **(saved.get('data_context') or {}),
+                    **(saved.get('task_context') or {})}
             if task and _owner_id_from({'principal': saved.get('principal')}) == principal.user_id:
                 scope = resolve_document_retrieval_scope(principal)
                 references = task.get('requested_documents') or []
@@ -4886,6 +4897,8 @@ async def get_session(session_id: str, request: FastAPIRequest):
                         # detail into a 500 after an export attempt.
                         'dataFilename': task.get('filename') or '',
                         'documentFilenames': [item['filename'] for item in references],
+                        'metricBinding': task.get('metric_binding'),
+                        'dataVersionId': task.get('version_id') or '',
                         **({'origin': {'kind': 'alert', 'id': task.get('alert_id'), 'versionId': task.get('version_id') or ''}}
                            if task.get('alert_id') else {})}}
         if not _session_database_available():

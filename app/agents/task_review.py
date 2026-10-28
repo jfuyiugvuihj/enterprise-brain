@@ -305,6 +305,12 @@ def review_context(question: str, filename: str, previous: dict, dataset: dict,
             else:
                 saved['clarification'] = '请明确该题要修改的期间、状态或完整统计问题，例如“第二题的期间改为2026-04”；其他题尚未改动。'
             return _with_document_selection(saved, documents)
+        if saved.get('metric_binding') and re.search(
+                r'按.+(?:统计|汇总|计算)|(?:计算|统计).*(?:合计|均值|平均|记录数|最大|最小)|(?:合计|均值|平均值|最大值|最小值).*(?:多少|是)', question):
+            # A complete new metric question changes the goal, while keeping the
+            # already selected input version and server-side definition snapshot.
+            saved['analysis_question'] = question
+            return _with_document_selection(saved, documents)
         if explicit_scope:
             # A partial scope change must not silently discard earlier status criteria.
             date_range = r"\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*(?:至|到|~|～)\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}"

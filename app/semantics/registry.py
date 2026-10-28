@@ -200,9 +200,11 @@ class MetricDefinition:
         }
 
     def to_public(self) -> dict[str, Any]:
+        from app.semantics.execution import execution_support
         payload = self.to_context().model_dump()
         payload["status"] = self.status
         payload["provenance"] = self.provenance()
+        payload["execution"] = execution_support(self)
         return payload
 
 

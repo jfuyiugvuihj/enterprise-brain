@@ -25,7 +25,8 @@ const isQueryInput = row => row.parameters?.operation === 'query_data'
 const calculationRows = computed(() => {
   const seen = new Set()
   return props.calculations.filter(row => {
-    const key = JSON.stringify([row.parameters?.query, row.dataset_version_id, row.status, row.result?.analysis_scope])
+    const key = JSON.stringify([row.parameters?.query, row.dataset_version_id, row.metric_definition_id,
+      row.parameters?.metric_binding, row.status, row.result?.analysis_scope])
     if (seen.has(key)) return false
     seen.add(key)
     return true
@@ -72,6 +73,10 @@ const calculationRows = computed(() => {
           <p v-if="isQueryInput(row)" class="analysis-context__note">以下是查询前的输入范围。查询可能继续筛选或汇总，输入记录数和字段单位不代表查询结果的行数或单位。</p>
           <dl class="analysis-context__scope">
             <dt>数据版本</dt><dd>{{ row.dataset_version_id }}</dd>
+            <template v-if="row.parameters?.metric_binding">
+              <dt>指标口径</dt><dd>{{ row.parameters.metric_binding.metric_name }} · {{ row.parameters.metric_binding.definition_version }}</dd>
+              <dt>计算公式</dt><dd>{{ row.parameters.metric_binding.formula }}</dd>
+            </template>
             <dt>{{ isQueryInput(row) ? '输入期间' : '期间' }}</dt><dd>{{ row.result?.analysis_scope?.period || '此记录未单独保存期间，请核对原分析；未从正文推断' }}</dd>
             <dt>{{ isQueryInput(row) ? '输入筛选' : '筛选' }}</dt><dd>{{ row.result?.analysis_scope?.filter || row.result?.filter_note || '未单独保存' }}</dd>
             <dt>{{ isQueryInput(row) ? '输入字段单位' : '单位' }}</dt><dd><template v-if="row.result?.analysis_scope?.units?.length"><span v-for="metric in row.result.analysis_scope.units" :key="metric.column" style="display:block">{{ metric.column }}：{{ metric.unit }}</span></template><template v-else>未单独保存</template></dd>
