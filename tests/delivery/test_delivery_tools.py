@@ -81,14 +81,14 @@ def test_orchestration_plan_and_recovery_refuse_wrong_confirmation():
         "project": "eb-plan", "install_path": "/tmp/eb-plan",
         "env_file": "/tmp/private.env", "frontend_port": 18090,
         "backend_port": 18091, "backend_image": "backend:new",
-        "frontend_image": "frontend:new",
+        "frontend_image": "frontend:new", "ollama_volume": "models",
     })()
     report = orchestrate.plan(args)
     assert report["project"] == "eb-plan"
     assert report["frontend_port"] == 18090
     try:
         recovery.backup("eb-plan", "/tmp/private.env", "/secure/backup",
-                        "wrong", 18090, 18091)
+                        "wrong", 18090, 18091, "models", "/tmp/eb-plan")
     except ValueError as exc:
         assert "confirmation" in str(exc)
     else:

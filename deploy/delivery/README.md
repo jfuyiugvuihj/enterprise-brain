@@ -49,13 +49,15 @@ python scripts/delivery/orchestrate.py plan \
   --project eb-customer --env-file deploy/.env.server \
   --install-path /opt/enterprise-brain --frontend-port 18080 --backend-port 18081 \
   --backend-image enterprise-brain:local \
-  --frontend-image enterprise-brain-frontend:local
+  --frontend-image enterprise-brain-frontend:local \
+  --ollama-volume eb-customer_ollama
 
 python scripts/delivery/orchestrate.py apply \
   --project eb-customer --env-file deploy/.env.server \
   --install-path /opt/enterprise-brain --frontend-port 18080 --backend-port 18081 \
   --backend-image enterprise-brain:local \
   --frontend-image enterprise-brain-frontend:local \
+  --ollama-volume eb-customer_ollama \
   --images-archive /delivery/out/images.tar --confirm eb-customer:apply
 ```
 
@@ -73,6 +75,7 @@ python scripts/delivery/orchestrate.py upgrade \
   --install-path /opt/enterprise-brain --frontend-port 18080 --backend-port 18081 \
   --backend-image enterprise-brain:<new> \
   --frontend-image enterprise-brain-frontend:<new> \
+  --ollama-volume eb-customer_ollama \
   --backup-manifest /secure-evidence/customer-r1/recovery-manifest.json \
   --confirm eb-customer:upgrade
 ```
@@ -85,6 +88,7 @@ python scripts/delivery/orchestrate.py rollback \
   --install-path /opt/enterprise-brain --frontend-port 18080 --backend-port 18081 \
   --backend-image enterprise-brain:<previous> \
   --frontend-image enterprise-brain-frontend:<previous> \
+  --ollama-volume eb-customer_ollama \
   --confirm eb-customer:rollback
 ```
 
@@ -97,7 +101,9 @@ python scripts/delivery/recovery.py plan --project eb-customer \
   --backup-dir /secure-evidence/customer-r1
 python scripts/delivery/recovery.py backup \
   --project eb-customer --env-file deploy/.env.server \
+  --install-path /opt/enterprise-brain \
   --frontend-port 18080 --backend-port 18081 \
+  --ollama-volume eb-customer_ollama \
   --directory /secure-evidence/customer-r1 \
   --confirm eb-customer:backup
 ```
@@ -105,6 +111,21 @@ python scripts/delivery/recovery.py backup \
 恢复必须在不同目录、数据库和 Compose 项目中进行；`TARGET_DATABASE_URL` 只从受保护环境
 提供。Redis 队列字节不作为恢复点，恢复后先隔离待处理任务，再与 PostgreSQL 任务、
 检查点和审计对账，禁止误重放已完成或已取消动作。
+
+恢复仍由同一编排器执行，必须显式给安装根和目标库：
+
+```bash
+export TARGET_DATABASE_URL='postgresql://.../enterprise_brain_restore'
+python scripts/delivery/recovery.py restore \
+  --project eb-customer --env-file deploy/.env.server \
+  --install-path /opt/enterprise-brain \
+  --frontend-port 18080 --backend-port 18081 \
+  --ollama-volume eb-customer_ollama \
+  --directory /secure-evidence/customer-r1 \
+  --target-root /restore/customer-r1 \
+  --database-url-env TARGET_DATABASE_URL \
+  --confirm eb-customer:restore
+```
 
 恢复后核对原文件哈希、当前授权、会话、计算记录和历史 PDF 字节。该流程尚未在独立客户目标
 执行时，不得报告安装或恢复通过。

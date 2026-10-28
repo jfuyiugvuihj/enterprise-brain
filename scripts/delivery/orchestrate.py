@@ -9,9 +9,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+SOURCE_ROOT = Path(__file__).resolve().parents[2]
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
+
+
 def compose(install_path: str, project: str, env_file: str, *args: str,
             frontend_port: int, backend_port: int,
-            backend_image: str, frontend_image: str,
+            backend_image: str, frontend_image: str, ollama_volume: str,
             check: bool = True) -> subprocess.CompletedProcess:
     root = Path(install_path).resolve()
     override = root / "deploy" / "delivery" / "compose.override.yml"
@@ -21,11 +26,13 @@ def compose(install_path: str, project: str, env_file: str, *args: str,
     environment["DELIVERY_BACKEND_PORT"] = str(backend_port)
     environment["DELIVERY_BACKEND_IMAGE"] = backend_image
     environment["DELIVERY_FRONTEND_IMAGE"] = frontend_image
+    environment["DELIVERY_OLLAMA_VOLUME"] = ollama_volume
     return subprocess.run(
         ["docker", "compose", "--project-directory", str(root), "--project-name", project,
          "--env-file", env_file, "-f", str(root / "docker-compose.yml"),
          "-f", str(override), *args],
-        cwd=root, text=True, capture_output=True, check=check, env=environment,
+        cwd=root, text=True, encoding="utf-8", errors="replace",
+        capture_output=True, check=check, env=environment,
     )
 
 
@@ -39,6 +46,7 @@ def target(args) -> dict:
         "backend_port": args.backend_port,
         "backend_image": args.backend_image,
         "frontend_image": args.frontend_image,
+        "ollama_volume": args.ollama_volume,
         "compose_files": [str(install / "docker-compose.yml"),
                           str(install / "deploy" / "delivery" / "compose.override.yml")],
     }
@@ -80,15 +88,15 @@ def apply(args) -> dict:
     compose(args.install_path, args.project, args.env_file, "config", "--quiet",
             frontend_port=args.frontend_port, backend_port=args.backend_port,
             backend_image=args.backend_image,
-            frontend_image=args.frontend_image)
+            frontend_image=args.frontend_image, ollama_volume=args.ollama_volume)
     compose(args.install_path, args.project, args.env_file, "up", "-d", "--no-build", "--wait",
             frontend_port=args.frontend_port, backend_port=args.backend_port,
             backend_image=args.backend_image,
-            frontend_image=args.frontend_image)
+            frontend_image=args.frontend_image, ollama_volume=args.ollama_volume)
     ps = compose(args.install_path, args.project, args.env_file, "ps", "--format", "json",
                  frontend_port=args.frontend_port, backend_port=args.backend_port,
                  backend_image=args.backend_image,
-                 frontend_image=args.frontend_image)
+                 frontend_image=args.frontend_image, ollama_volume=args.ollama_volume)
     info.update(status="applied", readiness=readiness,
                 compose_ps=ps.stdout.strip())
     return info
@@ -116,7 +124,7 @@ def simple_action(args) -> dict:
     result = compose(args.install_path, args.project, args.env_file, *args_list,
                      frontend_port=args.frontend_port, backend_port=args.backend_port,
                      backend_image=args.backend_image,
-                     frontend_image=args.frontend_image)
+                     frontend_image=args.frontend_image, ollama_volume=args.ollama_volume)
     return {"status": args.command, "project": args.project,
             "command": [item for item in args_list], "stdout": result.stdout.strip(),
             "warning": ("Image rollback alone does not reverse schema migrations; restore the isolated backup when incompatible."
@@ -137,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--images-archive")
         p.add_argument("--backend-image", required=True)
         p.add_argument("--frontend-image", required=True)
+        p.add_argument("--ollama-volume", required=True)
         p.add_argument("--backup-manifest")
         p.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)

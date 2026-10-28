@@ -6,7 +6,12 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
+
+for candidate in (Path(__file__).resolve().parents[2], Path("/app")):
+    if candidate.is_dir() and str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
 
 from app.common.backup import create_backup, restore_backup
 from scripts.backup_database import backup_database, pair_globals_with_backup

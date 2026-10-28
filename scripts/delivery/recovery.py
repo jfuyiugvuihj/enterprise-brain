@@ -9,21 +9,29 @@ import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-OVERRIDE = ROOT / "deploy" / "delivery" / "compose.override.yml"
+DEFAULT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def compose(project: str, env_file: str, *args: str,
-            frontend_port: int, backend_port: int) -> subprocess.CompletedProcess:
+def compose(install_path: str, project: str, env_file: str, *args: str,
+            frontend_port: int, backend_port: int,
+            ollama_volume: str) -> subprocess.CompletedProcess:
+    root = Path(install_path).resolve()
+    override = root / "deploy" / "delivery" / "compose.override.yml"
     environment = os.environ.copy()
     environment["COMPOSE_PROJECT_NAME"] = project
     environment["DELIVERY_FRONTEND_PORT"] = str(frontend_port)
     environment["DELIVERY_BACKEND_PORT"] = str(backend_port)
+    environment["DELIVERY_BACKEND_IMAGE"] = os.environ.get(
+        "DELIVERY_BACKEND_IMAGE", "enterprise-brain:local")
+    environment["DELIVERY_FRONTEND_IMAGE"] = os.environ.get(
+        "DELIVERY_FRONTEND_IMAGE", "enterprise-brain-frontend:local")
+    environment["DELIVERY_OLLAMA_VOLUME"] = ollama_volume
     return subprocess.run(
-        ["docker", "compose", "--project-directory", str(ROOT), "--project-name", project,
-         "--env-file", env_file, "-f", str(ROOT / "docker-compose.yml"),
-         "-f", str(OVERRIDE), *args],
-        cwd=ROOT, text=True, capture_output=True, check=True, env=environment)
+        ["docker", "compose", "--project-directory", str(root), "--project-name", project,
+         "--env-file", env_file, "-f", str(root / "docker-compose.yml"),
+         "-f", str(override), *args],
+        cwd=root, text=True, encoding="utf-8", errors="replace",
+        capture_output=True, check=True, env=environment)
 
 
 def plan(project: str, backup_dir: str) -> dict:
@@ -45,52 +53,63 @@ def plan(project: str, backup_dir: str) -> dict:
 
 
 def backup(project: str, env_file: str, directory: str, confirm: str,
-           frontend_port: int, backend_port: int) -> dict:
+           frontend_port: int, backend_port: int, ollama_volume: str,
+           install_path: str = str(DEFAULT_ROOT)) -> dict:
     expected = f"{project}:backup"
     if confirm != expected:
         raise ValueError(f"confirmation token must be {expected!r}")
+    root = Path(install_path).resolve()
     host_directory = Path(directory).resolve()
-    compose(project, env_file, "stop", "backend", "worker", "scheduler",
-            frontend_port=frontend_port, backend_port=backend_port)
+    compose(root, project, env_file, "stop", "backend", "worker", "scheduler",
+            frontend_port=frontend_port, backend_port=backend_port,
+            ollama_volume=ollama_volume)
     try:
-        proc = compose(project, env_file, "run", "--rm", "--no-deps", "-T", "backend",
-                       "--volume", f"{ROOT / 'scripts'}:/app/delivery-scripts:ro",
+        proc = compose(root, project, env_file, "run", "--rm", "--no-deps", "-T",
+                       "--volume", f"{root / 'scripts'}:/app/delivery-scripts:ro",
                        "--volume", f"{host_directory}:/backup",
+                       "backend",
                        "python", "/app/delivery-scripts/delivery/recovery_worker.py", "backup",
                        "--directory", "/backup", frontend_port=frontend_port,
-                       backend_port=backend_port)
+                       backend_port=backend_port, ollama_volume=ollama_volume)
     finally:
-        compose(project, env_file, "start", "backend", "worker", "scheduler",
-                frontend_port=frontend_port, backend_port=backend_port)
+        compose(root, project, env_file, "start", "backend", "worker", "scheduler",
+                frontend_port=frontend_port, backend_port=backend_port,
+                ollama_volume=ollama_volume)
     return {"status": "backup_complete", "project": project,
             "result": proc.stdout.strip()}
 
 
 def restore(project: str, env_file: str, directory: str, target_root: str,
             target_database_url_env: str, confirm: str,
-            frontend_port: int, backend_port: int) -> dict:
+            frontend_port: int, backend_port: int, ollama_volume: str,
+            install_path: str = str(DEFAULT_ROOT)) -> dict:
     expected = f"{project}:restore"
     if confirm != expected:
         raise ValueError(f"confirmation token must be {expected!r}")
     if target_database_url_env != "TARGET_DATABASE_URL":
         raise ValueError("restore credentials must be supplied through TARGET_DATABASE_URL")
+    root = Path(install_path).resolve()
     host_directory = Path(directory).resolve()
-    compose(project, env_file, "stop", "backend", "worker", "scheduler", "frontend",
-            frontend_port=frontend_port, backend_port=backend_port)
+    compose(root, project, env_file, "stop", "backend", "worker", "scheduler", "frontend",
+            frontend_port=frontend_port, backend_port=backend_port,
+            ollama_volume=ollama_volume)
     completed = False
     try:
-        proc = compose(project, env_file, "run", "--rm", "--no-deps", "-T", "backend",
-                       "--volume", f"{ROOT / 'scripts'}:/app/delivery-scripts:ro",
+        proc = compose(root, project, env_file, "run", "--rm", "--no-deps", "-T",
+                       "--volume", f"{root / 'scripts'}:/app/delivery-scripts:ro",
                        "--volume", f"{host_directory}:/backup:ro",
                        "-e", "TARGET_DATABASE_URL",
+                       "backend",
                        "python", "/app/delivery-scripts/delivery/recovery_worker.py", "restore",
                        "--directory", "/backup", "--target-root", target_root,
-                       frontend_port=frontend_port, backend_port=backend_port)
+                       frontend_port=frontend_port, backend_port=backend_port,
+                       ollama_volume=ollama_volume)
         completed = True
     finally:
         if completed:
-            compose(project, env_file, "start", "backend", "worker", "scheduler", "frontend",
-                    frontend_port=frontend_port, backend_port=backend_port)
+            compose(root, project, env_file, "start", "backend", "worker", "scheduler", "frontend",
+                    frontend_port=frontend_port, backend_port=backend_port,
+                    ollama_volume=ollama_volume)
     return {"status": "restore_complete", "project": project,
             "result": proc.stdout.strip(),
             "warning": "Redis queue bytes were intentionally not restored; reconcile before admitting work.",
@@ -111,6 +130,8 @@ def main(argv=None) -> int:
         child.add_argument("--confirm")
         child.add_argument("--frontend-port", type=int, required=True)
         child.add_argument("--backend-port", type=int, required=True)
+        child.add_argument("--ollama-volume", required=True)
+        child.add_argument("--install-path", default=str(DEFAULT_ROOT))
         if name == "restore":
             child.add_argument("--target-root", required=True)
             child.add_argument("--database-url-env", default="TARGET_DATABASE_URL")
@@ -120,11 +141,13 @@ def main(argv=None) -> int:
             report = plan(args.project, args.backup_dir)
         elif args.command == "backup":
             report = backup(args.project, args.env_file, args.directory, args.confirm,
-                            args.frontend_port, args.backend_port)
+                            args.frontend_port, args.backend_port, args.ollama_volume,
+                            args.install_path)
         else:
             report = restore(args.project, args.env_file, args.directory,
                              args.target_root, args.database_url_env, args.confirm,
-                             args.frontend_port, args.backend_port)
+                             args.frontend_port, args.backend_port, args.ollama_volume,
+                             args.install_path)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"recovery {args.command} failed: {exc}", file=sys.stderr)
         return 2
