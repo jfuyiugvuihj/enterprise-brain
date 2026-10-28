@@ -1,0 +1,21 @@
+{
+  "assets": [
+    {
+      "id": "backend-image",
+      "kind": "docker-image",
+      "reference": "enterprise-brain:local",
+      "platform": "linux/amd64",
+      "digest": "",
+      "license": "customer-owned build",
+      "purpose": "FastAPI, worker, scheduler and migration"
+    },
+    {
+      "id": "ollama-model-archive",
+      "kind": "file",
+      "path": "models/ollama-model.tar",
+      "size_bytes": 0,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "purpose": "local model bytes"
+    }
+  ]
+}

@@ -5,9 +5,14 @@
 
 ## 启动
 
+以下命令统一从**仓库根目录**执行；`deploy/.env.server` 和
+`deploy/.env.server.example` 都是相对仓库根的路径。
+
 ```bash
-cp .env.server.example .env.server   # 填写 JWT、数据库、Redis 口令与 CORS 白名单
-python ../scripts/check_deployment_env.py .env.server
+cp deploy/.env.server.example deploy/.env.server   # 填写 JWT、数据库、Redis 口令与 CORS 白名单
+python scripts/check_deployment_env.py deploy/.env.server
+python scripts/check_host_readiness.py --env-file deploy/.env.server --install-path . \
+  --port 80 --port 8001  # 按实际端口修改；只读，JSON 加 --json
 docker compose --env-file deploy/.env.server config          # 只做插值校验，不构建
 docker compose --env-file deploy/.env.server build migrate   # 应用镜像，单独一次
 docker compose --env-file deploy/.env.server build frontend  # 前端镜像，单独一次
@@ -169,7 +174,8 @@ scripts/r575_vector_restore_drill.py，恢复判据里包含 chunk_vectors 的�
 
    ```bash
    # bash / Git Bash
-   docker compose --env-file deploy/.env.server build
+   docker compose --env-file deploy/.env.server build migrate
+   docker compose --env-file deploy/.env.server build frontend
    docker compose --env-file deploy/.env.server pull --ignore-buildable || true
    docker save -o images.tar $(docker compose --env-file deploy/.env.server config --images | sort -u)
    ```

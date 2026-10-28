@@ -1,0 +1,14 @@
+# Isolated deployment overlay. It references the repository root Compose file.
+services:
+  backend:
+    image: ${DELIVERY_BACKEND_IMAGE:-enterprise-brain:local}
+    ports:
+      - "127.0.0.1:${DELIVERY_BACKEND_PORT:?set DELIVERY_BACKEND_PORT}:8001"
+  worker:
+    image: ${DELIVERY_BACKEND_IMAGE:-enterprise-brain:local}
+  scheduler:
+    image: ${DELIVERY_BACKEND_IMAGE:-enterprise-brain:local}
+  frontend:
+    image: ${DELIVERY_FRONTEND_IMAGE:-enterprise-brain-frontend:local}
+    ports:
+      - "${DELIVERY_FRONTEND_PORT:?set DELIVERY_FRONTEND_PORT}:80"
