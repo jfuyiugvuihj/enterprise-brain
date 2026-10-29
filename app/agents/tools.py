@@ -843,6 +843,8 @@ def _answer_query(
                 'labels': [label for label, _ in result['groups']],
                 'values': [value for _, value in result['groups']], 'unit': result['binding']['unit']})
         return [metric_answer(result)]
+    requested = _require_requested_metric(df, query)
+    num_cols = [column for column in num_cols if not requested or column in requested]
     results = []
 
     q_lower = query.lower()
@@ -2714,22 +2716,31 @@ def _export_terminal_error_code(text: object) -> str:
     return _public_error_code(match.group(1) if match else "", "internal_error")
 
 
-def _require_requested_metric(df, question: str) -> None:
+def _require_requested_metric(df, question: str) -> list[str]:
     """An explicit named metric cannot silently fall back to every numeric column."""
     columns = [str(column) for column in df.select_dtypes(include=['number']).columns]
+    requested = []
     generic = {'全部', '所有', '总', '本月', '当月', '上月', '记录', '数据', '各月', '各部门'}
     for phrase in re.findall(r'([\u4e00-\u9fffA-Za-z_（）()%]+?)(?:合计|总计|均值|平均值)', question):
         phrase = re.split(r'统计|计算|汇总|查看|请|仅|只|的', phrase)[-1].strip()
+        # Remove only a leading source reference; retain an actual column and an unknown metric suffix.
+        if not any(phrase in column for column in columns):
+            phrase = re.sub(r'^(?:这份|这张|该|当前|所选|本次)?(?:经营)?(?:数据表|数据|表格|表)(?:中|里|内)',
+                            '', phrase).strip()
         names = [phrase] if any(phrase in column for column in columns) else re.split(r'以及|和|与|及', phrase)
         for name in names:
             if name.startswith('按') and name[1:] in df.columns:
                 continue
-            if not name or name in generic or any(name in column for column in columns):
+            if not name or name in generic:
                 continue
-            if name in {'费用', '金额', '总金额', '报销', '报销金额'} and any(
-                    re.search(r'金额|费用', column) for column in columns):
+            matches = [name] if name in columns else [column for column in columns if name in column]
+            if not matches and name in {'费用', '金额', '总金额', '报销', '报销金额'}:
+                matches = [column for column in columns if re.search(r'金额|费用', column)]
+            if matches:
+                requested.extend(matches)
                 continue
             raise ValueError(f'所选资料没有可计算的「{name}」字段，未改用其他指标。请补充对应列或确认指标名称。')
+    return list(dict.fromkeys(requested))
 
 
 def _calculation_scope(df, question: str) -> dict:
@@ -2748,11 +2759,10 @@ def _report_data_facts(filename: str, df, question: str, *, version_id: str = ""
     """Compute report claims directly from the authorized, filtered frame."""
     import pandas as pd
     from app.insights.alert_evidence import additive_metric, metric_unit
-    if not df.attrs.get('metric_result'):
-        _require_requested_metric(df, question)
+    requested = _require_requested_metric(df, question) if not df.attrs.get('metric_result') else []
     numeric = [column for column in df.select_dtypes(include=['number']).columns if additive_metric(column)]
     named = [column for column in numeric if str(column) in question]
-    chosen = named or numeric
+    chosen = [column for column in (requested or named or numeric) if column in numeric]
     dimension = _named_dimension_column(question, [str(c) for c in df.columns])
     if not dimension:
         # A general report can use a real time column without asking the model
@@ -2967,7 +2977,8 @@ def _report_sections(facts: list[dict], analysis: str, original_body: str) -> li
             {'label': '缺失输入', 'value': str(result['missing']), 'hint': '空值未按零值填充'}]}
         return [summary, *_analysis_body_sections(original_body or _verified_data_answer(facts))]
     if original_body:
-        return _analysis_body_sections(original_body)
+        summary = [{'type': 'summary', 'period': facts[0]['period'], 'cards': []}] if facts else []
+        return summary + _analysis_body_sections(original_body)
     if any(source.get('metric_result') for source in facts):
         return _analysis_body_sections(_verified_data_answer(facts))
     sections = _verified_report_sections(facts, analysis)

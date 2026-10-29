@@ -47,6 +47,14 @@ def test_summary_explains_mean_denominator_and_unconfirmed_unit(report_output):
     assert '400.00' in text and '200.00' in text
 
 
+def test_short_verified_answer_pdf_keeps_content_without_a_separate_cover(report_output):
+    from app.agents.tools import _report_sections
+    sections = _report_sections([{'period': '2026-01 至 2026-02'}], '', '金额合计35元，原分析内容。')
+    reader = PdfReader(export.generate_pdf_report('经营分析简报', sections))
+    assert len(reader.pages) == 1
+    assert '金额合计35元' in reader.pages[0].extract_text()
+
+
 def test_management_template_starts_with_metrics_and_renders_numeric_table(report_output):
     path = export.generate_pdf_report("费用管理简报", [
         {"type": "summary", "period": "2026-10-01 至 2026-10-09", "cards": [

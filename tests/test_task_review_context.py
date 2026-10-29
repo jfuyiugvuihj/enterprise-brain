@@ -262,6 +262,18 @@ def test_missing_requested_metric_never_becomes_another_metric():
         _report_data_facts('经营.csv', business, '收入和预算合计')
 
 
+@pytest.mark.parametrize('prefix', ['这份数据中', '所选表格里'])
+def test_source_reference_is_not_part_of_the_requested_metric(prefix):
+    from app.agents.tools import _report_data_facts
+    frame = pd.DataFrame({'金额（元）': [10, 20, 5], '利润': [1, 2, 3]})
+    facts = _report_data_facts('费用.csv', frame, f'请统计{prefix}金额合计')
+    assert [(item['column'], item['sum']) for item in facts['metrics']] == [('金额（元）', 35)]
+    with pytest.raises(ValueError, match='预算金额'):
+        _report_data_facts('费用.csv', frame, f'请统计{prefix}预算金额合计')
+    frame = pd.DataFrame({'收入': [10], '其他收入': [999]})
+    assert [item['column'] for item in _report_data_facts('经营.csv', frame, '收入合计')['metrics']] == ['收入']
+
+
 def test_calculation_scope_preserves_actual_period_unit_and_row_count():
     from app.agents.tools import _calculation_scope
     from app.tools.excel import filter_explicit_categories
