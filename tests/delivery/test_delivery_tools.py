@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from scripts.delivery import bundle, diagnose, longrun, orchestrate, recovery
@@ -139,3 +140,7 @@ def test_compose_ps_ndjson_is_parsed_as_service_rows():
     rows = diagnose._json_rows('{"Name":"a","Service":"backend"}\n'
                                '{"Name":"b","Service":"worker"}\n')
     assert [row["Service"] for row in rows] == ["backend", "worker"]
+
+
+def test_longrun_pid_probe_recognizes_the_current_process():
+    assert longrun._pid_alive(os.getpid())

@@ -41,6 +41,16 @@ def check_health(url: str, timeout: float) -> dict:
 def _pid_alive(pid: int | None) -> bool:
     if not pid:
         return False
+    if os.name == "nt":
+        import ctypes
+        process_query_limited_information = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(
+            process_query_limited_information, False, int(pid)
+        )
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
     try:
         os.kill(int(pid), 0)
         return True
