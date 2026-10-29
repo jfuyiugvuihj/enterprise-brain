@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.delivery import bundle, longrun, orchestrate, recovery
+from scripts.delivery import bundle, diagnose, longrun, orchestrate, recovery
+from scripts import restore_database
 
 
 def test_bundle_plan_reports_destination_without_writing(tmp_path):
@@ -93,3 +94,48 @@ def test_orchestration_plan_and_recovery_refuse_wrong_confirmation():
         assert "confirmation" in str(exc)
     else:
         raise AssertionError("wrong recovery token was accepted")
+
+
+def test_restore_refuses_the_source_project_as_its_target():
+    try:
+        recovery.restore(
+            "eb-source", "/tmp/private.env", "/secure/backup", "/app",
+            "DATABASE_URL", "eb-source:restore", 18090, 18091, "models",
+            "/tmp/eb-source", "eb-source",
+        )
+    except ValueError as exc:
+        assert "must differ" in str(exc)
+    else:
+        raise AssertionError("source project was accepted as the restore target")
+
+
+def test_cross_version_restore_removes_only_pg17_transaction_timeout():
+    assert restore_database.compatible_sql_line("SET transaction_timeout = 0;\n") == ""
+    assert restore_database.compatible_sql_line("SET statement_timeout = 0;\n") == (
+        "SET statement_timeout = 0;\n"
+    )
+
+
+def test_model_import_refuses_a_nonempty_volume(tmp_path, monkeypatch):
+    archive = tmp_path / "models.tar"
+    archive.write_bytes(b"archive")
+    calls = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(argv)
+        return type("Result", (), {"returncode": 1 if "test -z" in argv[-1] else 0})()
+
+    monkeypatch.setattr(orchestrate.subprocess, "run", fake_run)
+    try:
+        orchestrate.import_models("customer-models", str(archive), "backend:test")
+    except ValueError as exc:
+        assert "not empty" in str(exc)
+    else:
+        raise AssertionError("nonempty model volume was overwritten")
+    assert len(calls) == 2
+
+
+def test_compose_ps_ndjson_is_parsed_as_service_rows():
+    rows = diagnose._json_rows('{"Name":"a","Service":"backend"}\n'
+                               '{"Name":"b","Service":"worker"}\n')
+    assert [row["Service"] for row in rows] == ["backend", "worker"]

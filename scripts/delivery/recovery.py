@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def compose(install_path: str, project: str, env_file: str, *args: str,
@@ -21,6 +22,8 @@ def compose(install_path: str, project: str, env_file: str, *args: str,
     environment["COMPOSE_PROJECT_NAME"] = project
     environment["DELIVERY_FRONTEND_PORT"] = str(frontend_port)
     environment["DELIVERY_BACKEND_PORT"] = str(backend_port)
+    environment["HTTP_PORT"] = str(frontend_port)
+    environment["BACKEND_HOST_PORT"] = str(backend_port)
     environment["DELIVERY_BACKEND_IMAGE"] = os.environ.get(
         "DELIVERY_BACKEND_IMAGE", "enterprise-brain:local")
     environment["DELIVERY_FRONTEND_IMAGE"] = os.environ.get(
@@ -65,7 +68,7 @@ def backup(project: str, env_file: str, directory: str, confirm: str,
             ollama_volume=ollama_volume)
     try:
         proc = compose(root, project, env_file, "run", "--rm", "--no-deps", "-T",
-                       "--volume", f"{root / 'scripts'}:/app/delivery-scripts:ro",
+                       "--volume", f"{SCRIPT_ROOT}:/app/delivery-scripts:ro",
                        "--volume", f"{host_directory}:/backup",
                        "backend",
                        "python", "/app/delivery-scripts/delivery/recovery_worker.py", "backup",
@@ -82,38 +85,82 @@ def backup(project: str, env_file: str, directory: str, confirm: str,
 def restore(project: str, env_file: str, directory: str, target_root: str,
             target_database_url_env: str, confirm: str,
             frontend_port: int, backend_port: int, ollama_volume: str,
-            install_path: str = str(DEFAULT_ROOT)) -> dict:
+            install_path: str = str(DEFAULT_ROOT),
+            source_project: str = "") -> dict:
     expected = f"{project}:restore"
     if confirm != expected:
         raise ValueError(f"confirmation token must be {expected!r}")
-    if target_database_url_env != "TARGET_DATABASE_URL":
-        raise ValueError("restore credentials must be supplied through TARGET_DATABASE_URL")
+    if source_project and source_project == project:
+        raise ValueError("restore target project must differ from the source project")
+    if target_database_url_env not in ("DATABASE_URL", "TARGET_DATABASE_URL"):
+        raise ValueError(
+            "restore credentials must be supplied through the target container's "
+            "DATABASE_URL or TARGET_DATABASE_URL"
+        )
     root = Path(install_path).resolve()
     host_directory = Path(directory).resolve()
-    compose(root, project, env_file, "stop", "backend", "worker", "scheduler", "frontend",
+    if not host_directory.is_dir():
+        raise ValueError(f"backup directory does not exist: {host_directory}")
+
+    # Start only the empty target database first.  A nonempty public schema is refused:
+    # restoring over a live or partially initialized target is not an isolated drill.
+    compose(root, project, env_file, "up", "-d", "--pull", "never",
+            "--wait", "postgres",
             frontend_port=frontend_port, backend_port=backend_port,
             ollama_volume=ollama_volume)
+    existing_tables = compose(
+        root, project, env_file, "exec", "-T", "postgres",
+        "sh", "-c",
+        "psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -tAc "
+        "\"SELECT count(*) FROM pg_tables WHERE schemaname = 'public';\"",
+        frontend_port=frontend_port, backend_port=backend_port,
+        ollama_volume=ollama_volume,
+    ).stdout.strip()
+    try:
+        table_count = int(existing_tables.splitlines()[-1].strip())
+    except (IndexError, ValueError) as exc:
+        raise ValueError(
+            f"could not prove the restore target database is empty: {existing_tables!r}"
+        ) from exc
+    if table_count:
+        raise ValueError(
+            f"restore target public schema is not empty ({table_count} tables); "
+            "choose a new Compose project or clean it explicitly"
+        )
+
     completed = False
     try:
         proc = compose(root, project, env_file, "run", "--rm", "--no-deps", "-T",
-                       "--volume", f"{root / 'scripts'}:/app/delivery-scripts:ro",
+                       "--volume", f"{SCRIPT_ROOT}:/app/delivery-scripts:ro",
                        "--volume", f"{host_directory}:/backup:ro",
-                       "-e", "TARGET_DATABASE_URL",
                        "backend",
                        "python", "/app/delivery-scripts/delivery/recovery_worker.py", "restore",
                        "--directory", "/backup", "--target-root", target_root,
+                       "--database-url-env", target_database_url_env,
                        frontend_port=frontend_port, backend_port=backend_port,
                        ollama_volume=ollama_volume)
         completed = True
+    except BaseException:
+        try:
+            compose(root, project, env_file, "stop", "frontend", "backend",
+                    "worker", "scheduler", "postgres",
+                    frontend_port=frontend_port, backend_port=backend_port,
+                    ollama_volume=ollama_volume)
+        except subprocess.CalledProcessError:
+            pass
+        raise
     finally:
         if completed:
-            compose(root, project, env_file, "start", "backend", "worker", "scheduler", "frontend",
+            # This also creates a fresh target-specific Redis volume.
+            compose(root, project, env_file, "up", "-d", "--no-build",
+                    "--pull", "never", "--wait",
                     frontend_port=frontend_port, backend_port=backend_port,
                     ollama_volume=ollama_volume)
     return {"status": "restore_complete", "project": project,
+            "source_project": source_project,
             "result": proc.stdout.strip(),
             "warning": "Redis queue bytes were intentionally not restored; reconcile before admitting work.",
-            "services_left_stopped_on_failure": True}
+            "target_services_left_stopped_on_failure": True}
 
 
 def main(argv=None) -> int:
@@ -134,7 +181,8 @@ def main(argv=None) -> int:
         child.add_argument("--install-path", default=str(DEFAULT_ROOT))
         if name == "restore":
             child.add_argument("--target-root", required=True)
-            child.add_argument("--database-url-env", default="TARGET_DATABASE_URL")
+            child.add_argument("--database-url-env", default="DATABASE_URL")
+            child.add_argument("--source-project", required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == "plan":
@@ -147,7 +195,7 @@ def main(argv=None) -> int:
             report = restore(args.project, args.env_file, args.directory,
                              args.target_root, args.database_url_env, args.confirm,
                              args.frontend_port, args.backend_port, args.ollama_volume,
-                             args.install_path)
+                             args.install_path, args.source_project)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"recovery {args.command} failed: {exc}", file=sys.stderr)
         return 2

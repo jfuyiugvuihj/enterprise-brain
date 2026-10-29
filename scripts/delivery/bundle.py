@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -29,14 +30,17 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _code_evidence() -> dict:
-    evidence = {"code_version": "unknown", "migration_manifest_sha256": "unknown",
+def _code_evidence(product_baseline: str) -> dict:
+    evidence = {"code_version": product_baseline,
+                "code_version_source": "declared-product-baseline",
+                "migration_manifest_sha256": "unknown",
                 "migration_count": None, "uv_lock_sha256": "unknown",
                 "frontend_lock_sha256": "unknown"}
     try:
         evidence["code_version"] = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True,
             timeout=10, check=True).stdout.strip()
+        evidence["code_version_source"] = "git-head"
     except (OSError, subprocess.SubprocessError):
         pass
     manifest = ROOT / "migrations" / "manifest.json"
@@ -57,6 +61,31 @@ def _code_evidence() -> dict:
     return evidence
 
 
+def _image_evidence(reference: str) -> dict:
+    proc = subprocess.run(
+        ["docker", "image", "inspect", reference, "--format",
+         "{{.Id}}|{{.Os}}|{{.Architecture}}|{{.Size}}|{{json .RepoDigests}}"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=20, check=True,
+    )
+    image_id, operating_system, architecture, size_bytes, raw_digests = (
+        proc.stdout.strip().split("|", 4)
+    )
+    return {
+        "image_id": image_id,
+        "platform": f"{operating_system}/{architecture}",
+        "size_bytes": int(size_bytes),
+        "digests": json.loads(raw_digests or "[]"),
+    }
+
+
+def _free_space(destination: Path) -> int:
+    candidate = destination
+    while not candidate.exists() and candidate.parent != candidate:
+        candidate = candidate.parent
+    return shutil.disk_usage(candidate).free
+
+
 def plan(manifest: str | Path, output: str | Path,
          product_baseline: str = PRODUCT_BASELINE) -> dict:
     _, assets = load_manifest(manifest)
@@ -65,16 +94,23 @@ def plan(manifest: str | Path, output: str | Path,
               "bytes": row["_file"].stat().st_size if row["_file"].is_file() else 0}
              for row in assets if row["kind"] == "file"]
     images = [str(row["reference"]) for row in assets if row["kind"] == "docker-image"]
+    image_evidence = [_image_evidence(reference) for reference in images]
+    declared_file_bytes = sum(row["bytes"] for row in files)
+    declared_image_bytes = sum(row["size_bytes"] for row in image_evidence)
     return {
         "status": "plan",
         "destination": str(destination),
         "destination_exists": destination.exists(),
         "files": files,
         "images": images,
-        "code_evidence": _code_evidence(),
+        "image_evidence": image_evidence,
+        "code_evidence": _code_evidence(product_baseline),
         "product_baseline": product_baseline,
         "assets_without_license": [row["id"] for row in assets if not row.get("license")],
-        "declared_file_bytes": sum(row["bytes"] for row in files),
+        "declared_file_bytes": declared_file_bytes,
+        "declared_image_bytes": declared_image_bytes,
+        "declared_total_bytes": declared_file_bytes + declared_image_bytes,
+        "free_space_bytes": _free_space(destination),
         "next_action": "Run apply with the same manifest and an explicit confirmation token.",
     }
 
@@ -103,9 +139,15 @@ def apply(manifest: str | Path, output: str | Path, *, confirm: str,
         target = files_dir / source.name
         if target.exists():
             raise ValueError(f"duplicate bundle filename: {source.name}")
-        shutil.copy2(source, target)
+        storage = "copy"
+        try:
+            os.link(source, target)
+            storage = "hardlink"
+        except OSError:
+            shutil.copy2(source, target)
         copied.append({"id": asset["id"], "name": source.name,
-                       "bytes": target.stat().st_size, "sha256": _sha256(target)})
+                       "bytes": target.stat().st_size, "sha256": _sha256(target),
+                       "storage": storage})
     images = [asset for asset in verification["assets"] if asset.get("kind") == "docker-image"]
     image_archive = None
     if images:
@@ -121,10 +163,17 @@ def apply(manifest: str | Path, output: str | Path, *, confirm: str,
         "manifest": verification["manifest"],
         "product_baseline": product_baseline,
         "files": copied,
-        "images": [{"id": row["id"], "reference": row["reference"],
-                    "platform": row["platform"]} for row in images],
+        "images": [
+            {
+                "id": row["id"],
+                "reference": row["reference"],
+                "platform": row["platform"],
+                **_image_evidence(row["reference"]),
+            }
+            for row in images
+        ],
         "image_archive": image_archive,
-        "code_evidence": _code_evidence(),
+        "code_evidence": _code_evidence(product_baseline),
         "license_summary": [
             {"id": row["id"], "license": row.get("license") or "unknown"}
             for row in verification["assets"]

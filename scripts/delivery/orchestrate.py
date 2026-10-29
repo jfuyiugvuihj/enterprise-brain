@@ -24,6 +24,8 @@ def compose(install_path: str, project: str, env_file: str, *args: str,
     environment["COMPOSE_PROJECT_NAME"] = project
     environment["DELIVERY_FRONTEND_PORT"] = str(frontend_port)
     environment["DELIVERY_BACKEND_PORT"] = str(backend_port)
+    environment["HTTP_PORT"] = str(frontend_port)
+    environment["BACKEND_HOST_PORT"] = str(backend_port)
     environment["DELIVERY_BACKEND_IMAGE"] = backend_image
     environment["DELIVERY_FRONTEND_IMAGE"] = frontend_image
     environment["DELIVERY_OLLAMA_VOLUME"] = ollama_volume
@@ -59,11 +61,46 @@ def plan(args) -> dict:
         "validate env and readiness",
         "require explicit confirmation token",
         "optionally docker load the offline image archive",
+        "optionally import the model archive into the named empty Ollama volume",
         "run one-time migrate service",
         "start backend, worker, scheduler, frontend",
         "check API health and record image IDs",
     ]
     return info
+
+
+def import_models(volume: str, archive: str, backend_image: str) -> dict:
+    """Create an empty model volume and unpack a verified model archive into it."""
+    source = Path(archive).resolve()
+    if not source.is_file():
+        raise ValueError(f"model archive does not exist: {source}")
+    subprocess.run(["docker", "volume", "create", volume], check=True,
+                   capture_output=True, text=True, encoding="utf-8")
+    probe = subprocess.run(
+        [
+            "docker", "run", "--rm", "-v", f"{volume}:/models:ro",
+            "--entrypoint", "sh", backend_image, "-c",
+            "test -z \"$(find /models -mindepth 1 -print -quit)\"",
+        ],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if probe.returncode != 0:
+        raise ValueError(
+            f"Ollama volume {volume!r} is not empty; refusing to overwrite model bytes"
+        )
+    subprocess.run(
+        [
+            "docker", "run", "--rm",
+            "-v", f"{volume}:/models",
+            "-v", f"{source.parent}:/bundle:ro",
+            "--entrypoint", "tar", "redis:7-alpine",
+            "-C", "/models", "-xf", f"/bundle/{source.name}",
+        ],
+        check=True, capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    return {"status": "imported", "volume": volume,
+            "archive": str(source), "bytes": source.stat().st_size}
 
 
 def apply(args) -> dict:
@@ -85,11 +122,17 @@ def apply(args) -> dict:
         raise ValueError("host readiness has blocking failures")
     if args.images_archive:
         subprocess.run(["docker", "load", "-i", args.images_archive], check=True)
+    model_import = None
+    if getattr(args, "model_archive", None):
+        model_import = import_models(
+            args.ollama_volume, args.model_archive, args.backend_image
+        )
     compose(args.install_path, args.project, args.env_file, "config", "--quiet",
             frontend_port=args.frontend_port, backend_port=args.backend_port,
             backend_image=args.backend_image,
             frontend_image=args.frontend_image, ollama_volume=args.ollama_volume)
-    compose(args.install_path, args.project, args.env_file, "up", "-d", "--no-build", "--wait",
+    compose(args.install_path, args.project, args.env_file, "up", "-d", "--no-build",
+            "--pull", "never", "--wait",
             frontend_port=args.frontend_port, backend_port=args.backend_port,
             backend_image=args.backend_image,
             frontend_image=args.frontend_image, ollama_volume=args.ollama_volume)
@@ -98,7 +141,7 @@ def apply(args) -> dict:
                  backend_image=args.backend_image,
                  frontend_image=args.frontend_image, ollama_volume=args.ollama_volume)
     info.update(status="applied", readiness=readiness,
-                compose_ps=ps.stdout.strip())
+                compose_ps=ps.stdout.strip(), model_import=model_import)
     return info
 
 
@@ -114,11 +157,11 @@ def simple_action(args) -> dict:
         backup = json.loads(Path(args.backup_manifest).read_text(encoding="utf-8"))
         if backup.get("schema") != "enterprise-brain-recovery-point/v1":
             raise ValueError("backup manifest has the wrong schema")
-        args_list = ["up", "-d", "--no-build", "--wait"]
+        args_list = ["up", "-d", "--no-build", "--pull", "never", "--wait"]
     elif args.command == "rollback":
         if not args.backend_image or not args.frontend_image:
             raise ValueError("previous backend and frontend images are required for rollback")
-        args_list = ["up", "-d", "--no-build", "--wait"]
+        args_list = ["up", "-d", "--no-build", "--pull", "never", "--wait"]
     else:
         raise ValueError("unsupported action")
     result = compose(args.install_path, args.project, args.env_file, *args_list,
@@ -143,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--backend-port", type=int, required=True)
         p.add_argument("--confirm")
         p.add_argument("--images-archive")
+        p.add_argument("--model-archive")
         p.add_argument("--backend-image", required=True)
         p.add_argument("--frontend-image", required=True)
         p.add_argument("--ollama-volume", required=True)

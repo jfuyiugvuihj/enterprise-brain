@@ -4,18 +4,43 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import sys
 from pathlib import Path
 
-for candidate in (Path(__file__).resolve().parents[2], Path("/app")):
+for candidate in reversed((
+    Path(__file__).resolve().parents[1],
+    Path(__file__).resolve().parents[2],
+    Path("/app"),
+)):
     if candidate.is_dir() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
 from app.common.backup import create_backup, restore_backup
-from scripts.backup_database import backup_database, pair_globals_with_backup
-from scripts.restore_database import restore_backup_with_globals
+
+
+def _load_script_module(module_name: str, filename: str):
+    """Load the matched delivery script, not a possibly older image copy."""
+    script_dir = Path(__file__).resolve().parents[1]
+    source = script_dir / filename
+    if not source.is_file():
+        source = Path("/app/scripts") / filename
+    spec = importlib.util.spec_from_file_location(module_name, source)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load recovery module {filename} from {source}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+restore_book = _load_script_module("scripts.restore_database", "restore_database.py")
+backup_book = _load_script_module("scripts.backup_database", "backup_database.py")
+backup_database = backup_book.backup_database
+pair_globals_with_backup = backup_book.pair_globals_with_backup
+restore_backup_with_globals = restore_book.restore_backup_with_globals
 
 
 def digest(path: Path) -> str:
@@ -84,13 +109,16 @@ def main(argv=None) -> int:
     r.add_argument("--directory", required=True)
     r.add_argument("--target-root", required=True)
     r.add_argument("--database-url", default="")
+    r.add_argument("--database-url-env", default="DATABASE_URL")
     args = parser.parse_args(argv)
     if args.command == "backup":
         report = backup(Path(args.directory))
     else:
-        database_url = args.database_url or os.environ.get("TARGET_DATABASE_URL", "")
+        database_url = args.database_url or os.environ.get(args.database_url_env, "")
         if not database_url:
-            raise ValueError("--database-url or TARGET_DATABASE_URL is required")
+            raise ValueError(
+                f"--database-url or target environment {args.database_url_env} is required"
+            )
         report = restore(Path(args.directory), Path(args.target_root), database_url)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
