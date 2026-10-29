@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib import request
 
 WINDOW_SECONDS = 72 * 60 * 60
+MAX_GAP_INTERVALS = 2
 
 
 def now() -> float:
@@ -68,6 +69,21 @@ def _pid_alive(pid: int | None) -> bool:
         return False
 
 
+def schedule_gap(checks: list[dict], interval_seconds: float) -> dict | None:
+    """Return the first missing check window that breaks continuous observation."""
+    allowed = max(60.0, float(interval_seconds)) * MAX_GAP_INTERVALS
+    for previous, current in zip(checks, checks[1:]):
+        gap = float(current.get("epoch", 0)) - float(previous.get("epoch", 0))
+        if gap > allowed:
+            return {
+                "reason": "check_gap",
+                "previous_utc": previous.get("utc"),
+                "current_utc": current.get("utc"),
+                "gap_seconds": gap,
+            }
+    return None
+
+
 def start(state_file: Path, args, *, spawn: bool = True) -> dict:
     if state_file.exists():
         raise ValueError("state file already exists; use status or resume")
@@ -110,6 +126,25 @@ def tick(state_file: Path, timeout: float) -> dict:
         return state
     state["worker_pid"] = os.getpid()
     checked = now()
+    previous = (state.get("checks") or [])[-1] if state.get("checks") else None
+    if previous and checked - float(previous["epoch"]) > max(
+        60.0, float(state["interval_seconds"])
+    ) * MAX_GAP_INTERVALS:
+        interruption = {
+            "detected_at": datetime.fromtimestamp(checked, timezone.utc).isoformat(),
+            "previous_deadline_epoch": state["deadline_epoch"],
+            "reason": "check_gap",
+            "previous_utc": previous.get("utc"),
+            "gap_seconds": checked - float(previous["epoch"]),
+        }
+        state.setdefault("interruptions", []).append(interruption)
+        state["status"] = "interrupted"
+        state["next_action"] = (
+            "Run resume with the same state file to start a new continuous "
+            "72-hour window; this interval is not counted."
+        )
+        save(state_file, state)
+        return state
     health = check_health(state["health_url"], timeout)
     state["checks"].append({"epoch": checked, "utc": datetime.fromtimestamp(
         checked, timezone.utc).isoformat(), **health})
@@ -166,6 +201,20 @@ def main(argv: list[str] | None = None) -> int:
         last_check = (report.get("checks") or [{}])[-1]
         report["business_available"] = bool(last_check.get("ok"))
         report["observation_complete"] = report.get("status") in {"passed", "failed"}
+        gap = schedule_gap(report.get("checks") or [], report.get("interval_seconds", 300))
+        if gap and report.get("status") == "running":
+            report["status"] = "interrupted"
+            report["worker_alive"] = _pid_alive(report.get("worker_pid"))
+            report["next_action"] = (
+                "Run resume with the same state file to start a new continuous "
+                "72-hour window; this interval is not counted."
+            )
+            report.setdefault("interruptions", []).append({
+                "detected_at": datetime.now(timezone.utc).isoformat(),
+                "previous_deadline_epoch": report["deadline_epoch"],
+                **gap,
+            })
+            save(path, report)
     else:
         report = resume(path)
         while True:

@@ -58,6 +58,13 @@ def test_longrun_state_is_resumable_and_does_not_shorten_window(tmp_path, monkey
     monkeypatch.setattr(longrun, "now", lambda: original_start + 60)
     ticked = longrun.tick(state_path, 1)
     assert ticked["status"] == "running"
+    ticked["checks"].append({
+        "epoch": original_start + longrun.WINDOW_SECONDS - 301,
+        "utc": "continuous-before-deadline",
+        "ok": True,
+        "summary": "synthetic",
+    })
+    longrun.save(state_path, ticked)
     monkeypatch.setattr(longrun, "now", lambda: original_start + longrun.WINDOW_SECONDS - 1)
     assert longrun.tick(state_path, 1)["status"] == "running"
     monkeypatch.setattr(longrun, "now", lambda: original_start + longrun.WINDOW_SECONDS)
@@ -144,3 +151,15 @@ def test_compose_ps_ndjson_is_parsed_as_service_rows():
 
 def test_longrun_pid_probe_recognizes_the_current_process():
     assert longrun._pid_alive(os.getpid())
+
+
+def test_longrun_detects_a_gap_in_continuous_checks():
+    checks = [
+        {"epoch": 100.0, "utc": "a", "ok": True},
+        {"epoch": 250.0, "utc": "b", "ok": True},
+    ]
+    assert longrun.schedule_gap(checks, 100) is None
+    checks.append({"epoch": 1000.0, "utc": "c", "ok": True})
+    gap = longrun.schedule_gap(checks, 100)
+    assert gap["reason"] == "check_gap"
+    assert gap["gap_seconds"] == 750.0
