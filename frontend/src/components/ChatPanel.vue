@@ -928,7 +928,9 @@ async function reuseAnalysis(record) {
   const filename = activeDataFilename.value || record.parameters?.filename
   const originalSession = activeId.value
   try {
-    const response = await http.get(`/data-files/${encodeURIComponent(filename)}/preview`)
+    const calculationRunId = record?.calculation_run_id
+    if (!calculationRunId) throw new Error('原计算缺少编号，无法复用')
+    const response = await http.get(`/calculations/${encodeURIComponent(calculationRunId)}/reuse`)
     const draft = analysisReuseDraft(record, response.data)
     if (loading.value || hitl.value || input.value.trim() || activeId.value !== originalSession
         || (activeDataFilename.value && activeDataFilename.value !== filename)) {
@@ -943,15 +945,20 @@ async function reuseAnalysis(record) {
       session_id: activeId.value,
       filename: draft.filename,
       version_id: draft.version_id,
-      definition_id: '',
-      label: '',
+      definition_id: draft.metric_binding?.definition_id || '',
+      label: draft.metric_binding
+        ? `${draft.metric_binding.metric_name} · ${draft.metric_binding.definition_version} · ${draft.metric_binding.formula}`
+        : '',
+      expected_sha256: draft.metric_binding_sha256 || '',
       cancelled: false,
       explicit: true,
     }
     taskOrigin.value = null
     referenceDocuments.value = []
     chooseLane('')
-    reuseStatus.value = `已准备新任务，使用当前版本 ${draft.version_id}。原期间和条件保持不变；本次为普通分析，不继承原指标口径。请检查问题后发送。文档依据请重新选择。`
+    reuseStatus.value = draft.metric_binding
+      ? `已准备新任务，当前资料版本 ${draft.version_id}。原指标口径已保留：${metricBinding.value.label}。原期间和条件保持不变；请检查问题后发送。文档依据请重新选择。`
+      : `已准备新任务，当前资料版本 ${draft.version_id}。原计算为普通分析，本次仍按普通分析准备；原期间和条件保持不变。请检查问题后发送。文档依据请重新选择。`
     syncActive()
     await nextTick()
     focusQuestion()
@@ -1193,6 +1200,8 @@ async function send(dataFilename = activeDataFilename.value) {
           expected_data_version_id: reusePin?.version_id || bindingForSend.version_id,
         } : {}),
         ...(bindingForSend?.explicit ? { metric_definition_id: bindingForSend.definition_id || '' } : {}),
+        ...(bindingForSend?.explicit && bindingForSend.definition_id && bindingForSend.expected_sha256
+          ? { expected_metric_binding_sha256: bindingForSend.expected_sha256 } : {}),
         document_filenames: [...referenceDocuments.value],
         ...(effectiveOrigin.value?.kind === 'alert' && effectiveOrigin.value.versionId ? {
           alert_id: Number(effectiveOrigin.value.id), alert_version_id: effectiveOrigin.value.versionId,
@@ -1203,10 +1212,14 @@ async function send(dataFilename = activeDataFilename.value) {
       }),
     })
 
-    if (reusePin && response.status === 409) {
+    if ((reusePin || bindingForSend?.expected_sha256) && [400, 409].includes(response.status)) {
       const problem = await response.clone().json().catch(() => ({}))
-      if (problem.detail === 'dataset_version_changed') {
-        aiMsg.content = '资料在准备问题后又有更新，本轮未开始计算。请核对当前版本和字段，再发起分析。'
+      const metricChanged = typeof problem.detail === 'string' && problem.detail !== 'dataset_version_changed'
+        && Boolean(bindingForSend?.definition_id && bindingForSend?.expected_sha256)
+      if (problem.detail === 'dataset_version_changed' || metricChanged) {
+        aiMsg.content = metricChanged
+          ? `${problem.detail} 本轮未开始计算。请重新选择口径，或取消口径后检查问题再发送。`
+          : '资料在准备问题后又有更新，本轮未开始计算。请核对当前版本和字段，再发起分析。'
         input.value = text
         reuseStatus.value = aiMsg.content
         note(aiMsg.content, 'warn')

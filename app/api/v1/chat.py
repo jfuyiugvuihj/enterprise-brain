@@ -1514,6 +1514,7 @@ class AskRequest(BaseModel):
     alert_version_id: str | None = None
     expected_data_version_id: str | None = None
     metric_definition_id: str | None = None
+    expected_metric_binding_sha256: str | None = None
     _alert_context: dict = PrivateAttr(default_factory=dict)
     _data_context: dict = PrivateAttr(default_factory=dict)
     idempotency_key: str = ""
@@ -3022,6 +3023,8 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
     _require_valid_lane(request)
     if request.metric_definition_id is not None and (not request.data_filename or not request.expected_data_version_id):
         raise HTTPException(status_code=400, detail='选择指标口径时须同时指定数据文件与预览版本。')
+    if request.expected_metric_binding_sha256 is not None and not request.metric_definition_id:
+        raise HTTPException(status_code=400, detail='核对指标口径时须指定原指标。')
     if request.expected_data_version_id is not None:
         from app.api.v1.data import _authorized_dataset
         from app.common.permissions import ACTION_ANALYZE
@@ -3031,12 +3034,15 @@ async def ask(request: AskRequest, http_request: FastAPIRequest = None):
         request._data_context = {'filename': record.filename, 'version_id': record.version_id,
             'sha256': record.content_sha256, 'query': request.message}
         if request.metric_definition_id is not None:
-            from app.semantics.execution import bind_metric
+            from app.semantics.execution import bind_metric, binding_digest
             try:
                 request._data_context['metric_binding'] = (bind_metric(request.metric_definition_id,
                     request_principal.user_id, record) if request.metric_definition_id else None)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if (request.expected_metric_binding_sha256 is not None
+                    and binding_digest(request._data_context['metric_binding']) != request.expected_metric_binding_sha256):
+                raise HTTPException(status_code=409, detail='指标口径在准备后已发生变化，请重新选择并核对。')
     try:
         _ensure_sessions_table()
     except ChatSchemaNotMigratedError as exc:

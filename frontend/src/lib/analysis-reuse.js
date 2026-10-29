@@ -18,5 +18,21 @@ export function analysisReuseDraft(record, preview) {
   const missing = required.find(name => !available.has(name))
   if (missing) throw new Error(`当前数据版本缺少字段「${missing}」，无法复用`)
 
-  return { question, filename, version_id: preview.version_id }
+  const draft = { question, filename, version_id: preview.version_id }
+  const originalBinding = record?.parameters?.metric_binding
+  const originalDefinitionId = record?.metric_definition_id || originalBinding?.definition_id
+  if (record?.metric_definition_id || originalBinding) {
+    const reuse = preview?.reuse
+    const binding = reuse?.metric_binding
+    const calculationRunId = record?.calculation_run_id
+    if (!calculationRunId || reuse?.calculation_run_id !== calculationRunId
+        || !binding || typeof binding !== 'object'
+        || typeof reuse?.metric_binding_sha256 !== 'string' || !reuse.metric_binding_sha256.trim()
+        || !originalDefinitionId || binding.definition_id !== originalDefinitionId) {
+      throw new Error('原指标口径未能完整核对，无法复用')
+    }
+    draft.metric_binding = binding
+    draft.metric_binding_sha256 = reuse.metric_binding_sha256
+  }
+  return draft
 }
