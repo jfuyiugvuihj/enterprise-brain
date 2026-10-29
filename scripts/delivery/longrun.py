@@ -10,6 +10,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib import request
 
 WINDOW_SECONDS = 72 * 60 * 60
 
@@ -31,11 +32,20 @@ def save(path: Path, state: dict) -> None:
 
 def check_health(url: str, timeout: float) -> dict:
     try:
-        proc = subprocess.run(["curl", "-fsS", "--max-time", str(timeout), url],
-                              capture_output=True, text=True, timeout=timeout + 1, check=False)
-        return {"ok": proc.returncode == 0, "summary": f"http_exit={proc.returncode}"}
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"ok": False, "summary": type(exc).__name__}
+        with request.urlopen(url, timeout=timeout) as response:
+            body = response.read(65536)
+            status_code = response.status
+        payload = json.loads(body.decode("utf-8"))
+        business_status = str(payload.get("status") or "unknown")
+        return {
+            "ok": status_code == 200 and business_status == "ok",
+            "http_status": status_code,
+            "business_status": business_status,
+            "summary": f"http={status_code} business={business_status}",
+        }
+    except Exception as exc:
+        return {"ok": False, "http_status": None, "business_status": "unknown",
+                "summary": type(exc).__name__}
 
 
 def _pid_alive(pid: int | None) -> bool:
@@ -65,6 +75,7 @@ def start(state_file: Path, args, *, spawn: bool = True) -> dict:
     state = {
         "schema": "enterprise-brain-longrun/v1",
         "status": "running",
+        "phase": "observation",
         "started_at": datetime.fromtimestamp(started, timezone.utc).isoformat(),
         "deadline_epoch": started + WINDOW_SECONDS,
         "project": args.project,
@@ -146,10 +157,15 @@ def main(argv: list[str] | None = None) -> int:
         report = start(path, args)
     elif args.command == "status":
         report = load(path)
-        if report.get("status") == "running" and not _pid_alive(report.get("worker_pid")):
+        worker_alive = _pid_alive(report.get("worker_pid"))
+        report["worker_alive"] = worker_alive
+        if report.get("status") == "running" and not worker_alive:
             report["status"] = "interrupted"
             report["next_action"] = "Run resume with the same state file; the interrupted interval is not counted."
             save(path, report)
+        last_check = (report.get("checks") or [{}])[-1]
+        report["business_available"] = bool(last_check.get("ok"))
+        report["observation_complete"] = report.get("status") in {"passed", "failed"}
     else:
         report = resume(path)
         while True:
