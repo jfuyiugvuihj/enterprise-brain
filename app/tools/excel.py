@@ -3,9 +3,11 @@ Day 7-8: Excel 数据处理
 优化 #4 CSV编码, #5 大文件, #6 合并单元格, #1 Excel画像, #2 pandas纠错, #22 沙箱
 """
 import ast
+import datetime as _datetime
 import os
 import io
 import re
+import math
 import importlib.util
 import pandas as pd
 import openpyxl
@@ -656,6 +658,94 @@ def _query_chart_series(result) -> dict | None:
     if not all(math.isfinite(value) for value in numbers):
         return None
     return {'labels': labels, 'values': numbers, 'dimension': str(dimension or '结果项')}
+
+
+def compile_explicit_aggregate(df: pd.DataFrame, query: str) -> str | None:
+    """Compile a fully specified single-column aggregate question to safe_query syntax."""
+    if not isinstance(query, str) or not isinstance(df, pd.DataFrame):
+        return None
+    text = query.strip()
+    period = re.match(
+        r"^(?P<first>\d{4}-\d{2}(?:-\d{2})?)(?:\s*(?:至|到)\s*"
+        r"(?P<last>\d{4}-\d{2}(?:-\d{2})?))?\s*",
+        text,
+    )
+    if period:
+        first, last = period.group("first"), period.group("last")
+        if last and len(first) != len(last):
+            return None
+        # The existing scope filter handles a month or a complete day range only.
+        if (len(first) == 10 and not last) or (len(first) == 7 and last):
+            return None
+        for value in (first, last):
+            if value is None:
+                continue
+            try:
+                _datetime.datetime.strptime(value, "%Y-%m-%d" if len(value) == 10 else "%Y-%m")
+            except ValueError:
+                return None
+        text = text[period.end():]
+    elif re.match(r"^\d{4}-\d{2}(?:-\d{2})?", text):
+        # A date-looking but incomplete/invalid prefix must not be reinterpreted as prose.
+        return None
+
+    columns = list(df.columns)
+    try:
+        if len(columns) != len(set(columns)):
+            return None
+    except TypeError:
+        return None
+    numeric_columns = []
+    for column in columns:
+        if not isinstance(column, str):
+            continue
+        dtype = df[column].dtype
+        if pd.api.types.is_numeric_dtype(dtype) and not pd.api.types.is_bool_dtype(dtype):
+            numeric_columns.append(column)
+    if not numeric_columns:
+        return None
+
+    aggregate_names = {
+        "中位数": "median", "平均值": "mean", "均值": "mean",
+        "合计": "sum", "总计": "sum", "记录数": "count",
+    }
+    verbs = ("分组", "列出", "计算", "统计")
+    number = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
+    suffix = r"(?:是多少|为多少|多少)?[？?]?"
+    group_columns = [None, *sorted((c for c in columns if isinstance(c, str)), key=len, reverse=True)]
+
+    expressions = set()
+    for metric in sorted(numeric_columns, key=len, reverse=True):
+        for group in group_columns:
+            prefix = r"按" + re.escape(group) if group is not None else ""
+            for verb in ("", *verbs):
+                pattern = re.compile(
+                    r"^" + prefix + re.escape(verb) + re.escape(metric)
+                    + r"(?:的)?(?P<aggregate>中位数|平均值|均值|合计|总计|记录数)"
+                    + r"(?P<multiplier>(?:乘以?|\*)" + number + r")?"
+                    + suffix + r"$"
+                )
+                match = pattern.fullmatch(text)
+                if not match:
+                    continue
+                multiplier = match.group("multiplier")
+                factor = None
+                if multiplier:
+                    raw = re.sub(r"^(?:乘以?|\*)", "", multiplier)
+                    try:
+                        factor = float(raw)
+                    except (ValueError, OverflowError):
+                        return None
+                    if not math.isfinite(factor):
+                        return None
+                aggregate = aggregate_names[match.group("aggregate")]
+                arguments = 'min_count=1' if aggregate == 'sum' else ''
+                if group is None:
+                    expression = f"df[{metric!r}].{aggregate}({arguments})"
+                else:
+                    expression = f"df.groupby({group!r}, dropna=False)[{metric!r}].{aggregate}({arguments})"
+                expressions.add(f"({expression}) * {factor!r}" if factor is not None else expression)
+    return expressions.pop() if len(expressions) == 1 else None
 
 
 def safe_query(df: pd.DataFrame, code: str, max_retries: int = 3) -> dict[str, Any]:

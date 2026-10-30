@@ -2084,7 +2084,7 @@ def _query_data(query: str, config: RunnableConfig, *, expression: str | None = 
         # A generated expression cannot replace the formula the user selected.
         return _analyze_data(query, config)
     from app.common.rbac import filter_dataframe_rows_with_scope
-    from app.tools.excel import load_excel, safe_query
+    from app.tools.excel import compile_explicit_aggregate, load_excel, safe_query
     from app.tools.excel import filter_explicit_categories
     context = _tool_context(config)
     if context is None:
@@ -2144,7 +2144,10 @@ def _query_data(query: str, config: RunnableConfig, *, expression: str | None = 
             return f"{df.attrs.get('filter_note', '')}筛选后没有符合条件的记录。"
         attempted += 1
         try:
-            code = expression if expression is not None else _llm_pandas_code(df, query)
+            if expression is not None:
+                code = expression
+            else:
+                code = compile_explicit_aggregate(df, question or query) or _llm_pandas_code(df, query)
             res = safe_query(df, code)
             if res.get('error') is not None and expression is None:
                 if conf.get('cancel_event') is not None:

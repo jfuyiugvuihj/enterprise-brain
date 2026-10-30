@@ -191,3 +191,107 @@ def test_default_str_alone_does_not_fix_tuple_keys():
 
     flat = tools._flatten_query_tuple_keys(raw)
     assert json.dumps(flat, ensure_ascii=False, default=str) == '{"华北 | Q1": 10.0}'
+
+AGG_FRAME = pd.DataFrame({
+    "状态": ["已批准", "已批准", "已支付", "已支付"],
+    "金额（元）": [100, 200, 300, 600],
+    "预算（元）": [9000, 8000, 7000, 6000],
+    "其他指标": [1, 2, 3, 4],
+})
+
+
+def test_explicit_grouped_median_uses_exact_unit_column_and_multiplier():
+    from app.tools.excel import compile_explicit_aggregate, safe_query
+
+    code = compile_explicit_aggregate(
+        AGG_FRAME, "按状态列出金额（元）的中位数乘3是多少？"
+    )
+    assert code is not None
+    result = safe_query(AGG_FRAME, code)
+    assert result["error"] is None, result
+    assert result["result"] == {"已批准": 450.0, "已支付": 1350.0}
+
+
+def test_explicit_aggregate_accepts_negative_decimal_multiplier_and_plain_mean():
+    from app.tools.excel import compile_explicit_aggregate, safe_query
+
+    code = compile_explicit_aggregate(
+        AGG_FRAME, "按状态统计金额（元）的平均值乘以-0.5是多少"
+    )
+    assert code is not None
+    result = safe_query(AGG_FRAME, code)
+    assert result["error"] is None, result
+    assert result["result"] == {"已批准": -75.0, "已支付": -225.0}
+    mean_code = compile_explicit_aggregate(AGG_FRAME, "金额（元）的均值是多少？")
+    assert mean_code is not None
+    mean_result = safe_query(AGG_FRAME, mean_code)
+    assert mean_result["error"] is None, mean_result
+    assert mean_result["result"] == 300.0
+
+
+@pytest.mark.parametrize("query", [
+    "按状态列出金额（元）的中位数并排名是多少？",
+    "按状态列出金额（元）的中位数并筛选已批准是多少？",
+    "按状态列出不存在金额的中位数是多少？",
+    "按状态列出金额（元）的中位数和预算（元）的均值是多少？",
+    "2026-01-01至2026-02按状态列出金额（元）的中位数是多少？",
+    "2026-01-01金额（元）的中位数是多少？",
+    "2026-01至2026-02金额（元）的中位数是多少？",
+])
+def test_explicit_aggregate_declines_ambiguous_or_incomplete_queries(query):
+    from app.tools.excel import compile_explicit_aggregate
+
+    assert compile_explicit_aggregate(AGG_FRAME, query) is None
+
+
+def test_explicit_sum_does_not_turn_missing_values_into_zero():
+    from app.tools.excel import compile_explicit_aggregate, safe_query
+    df = pd.DataFrame({'金额（元）': [float('nan'), float('nan')]})
+    result = safe_query(df, compile_explicit_aggregate(df, '金额（元）的合计是多少？'))
+    assert pd.isna(result['result'])
+
+
+def test_overlapping_column_names_do_not_choose_between_scalar_and_grouped_results():
+    from app.tools.excel import compile_explicit_aggregate
+    df = pd.DataFrame({'状态': ['甲', '甲', '乙'], '金额': [100, 200, 300], '按状态金额': [1, 2, 3]})
+    assert compile_explicit_aggregate(df, '按状态金额合计') is None
+
+
+def test_query_data_prefers_explicit_aggregate_and_records_expression_version(
+    monkeypatch, query_files
+):
+    from app.storage import calculations, datasets
+
+    monkeypatch.setattr(
+        tools, "_llm_pandas_code",
+        lambda df, query: (_ for _ in ()).throw(AssertionError("LLM path was called")),
+    )
+    query_files["configurable"]["request_id"] = "r462-explicit-aggregate"
+    out = tools._query_data("按区域列出销售额的平均值是多少？", query_files)
+    assert out.startswith("📊 费用明细.xlsx 工作表「Sheet1」 查询结果:"), out
+
+    principal = query_files["configurable"]["principal"]
+    rows = calculations.calculation_storage.list_for(
+        principal, request_id="r462-explicit-aggregate"
+    )
+    assert len(rows) == 1, rows
+    record = rows[0]
+    expected_version = datasets.dataset_registry.get_active_by_filename("费用明细.xlsx").version_id
+    assert record["dataset_version_id"] == expected_version
+    assert record["result"]["expression"] == (
+        "df.groupby('区域', dropna=False)['销售额'].mean()"
+    )
+    assert record["result"]["query_result"] == {"华北": 15.0, "华东": 35.0}
+
+
+def test_model_rewording_cannot_replace_the_authoritative_calculation_question(monkeypatch, query_files):
+    from app.storage import calculations
+    from uuid import uuid4
+    query_files['configurable'].update(data_question='销售额合计', request_id='authoritative-'+uuid4().hex)
+    monkeypatch.setattr(tools, '_llm_pandas_code', lambda *_: (_ for _ in ()).throw(AssertionError('unexpected model')))
+    tools._query_data('2026-01销售额均值', query_files)
+    row = calculations.calculation_storage.list_for(query_files['configurable']['principal'],
+        request_id=query_files['configurable']['request_id'])[0]
+    assert row['parameters']['query'] == '销售额合计'
+    assert row['result']['expression'] == "df['销售额'].sum(min_count=1)"
+    assert float(row['result']['query_result']) == 100.0
