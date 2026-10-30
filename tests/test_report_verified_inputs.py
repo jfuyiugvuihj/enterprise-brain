@@ -46,6 +46,24 @@ def test_query_report_chart_cannot_use_another_questions_verified_result(monkeyp
     assert '2026-01' in drawn[0][1]
 
 
+def test_mixed_query_and_mean_report_keeps_one_verified_chart_per_question(monkeypatch):
+    import pandas as pd
+    from app.agents.tools import _report_charts_from_queries, _report_data_facts
+    drawn = []
+    monkeypatch.setattr('app.tools.chart.bar_chart', lambda labels, values, **kw: drawn.append((values, kw['title'])) or 'chart.png')
+    first, second = '2026-01按状态金额（元）的中位数', '2026-02按状态金额（元）的平均值'
+    records = [{'parameters': {'query': first}, 'result': {'query_chart':
+        {'labels': ['A', 'B'], 'values': [450, 1350], 'dimension': '状态'}}}]
+    facts = [_report_data_facts('合成.csv', pd.DataFrame({'状态': ['A','A','B','B'],
+        '金额（元）': [200,500,600,900]}), second)]
+    assert _report_charts_from_queries(records, '①'+first+'？②'+second+'？', facts) == ['chart.png','chart.png']
+    assert [item[0] for item in drawn] == [[450,1350],[350,750]]
+    assert '2026-01' in drawn[0][1] and '2026-02' in drawn[1][1]
+    drawn.clear()
+    assert _report_charts_from_queries(records, '①'+first+'？②2026-03按状态金额（元）的平均值？', facts) == []
+    assert not drawn
+
+
 def test_query_report_keeps_the_calculated_result_instead_of_the_input_sum():
     from app.agents.tools import _query_result_body
     body = _query_result_body({'dataset_version_id': 'finance:v2',

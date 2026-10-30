@@ -2771,7 +2771,7 @@ def _report_data_facts(filename: str, df, question: str, *, version_id: str = ""
         # A general report can use a real time column without asking the model
         # to invent a grouping. Keep explicit dimensions from the question first.
         dimension = next((str(c) for c in df.columns if "月份" in str(c) or "日期" in str(c)), None)
-    facts = {"filename": filename, "version_id": version_id, "sha256": sha256,
+    facts = {"filename": filename, "version_id": version_id, "sha256": sha256, 'question': question.strip(),
         "rows": len(df), "sheet": df.attrs.get("sheet_name", ""),
         "filter": df.attrs.get("filter_note", ""), "period": "未提供日期字段", "observed_period": "未提供日期字段", "metrics": [],
         'non_additive_columns': [str(c) for c in df.select_dtypes(include=['number']).columns if not additive_metric(c)],
@@ -3029,7 +3029,7 @@ def _report_chart_from_facts(facts: list[dict], question: str = '') -> str:
     return ""
 
 
-def _report_charts_from_queries(records: list[dict], question: str) -> list[str]:
+def _report_charts_from_queries(records: list[dict], question: str, facts: list[dict] | None = None) -> list[str]:
     """Only query results revalidated during this export may supply chart values."""
     from app.tools.chart import bar_chart
     from app.agents.task_review import independent_period_questions, requires_query_calculation
@@ -3037,19 +3037,29 @@ def _report_charts_from_queries(records: list[dict], question: str) -> list[str]
     items = independent_period_questions(question)
     prefix = question.split(items[0][0], 1)[0] if items and items[0][0] in question else ''
     expected = [(prefix + ' ' + item).strip() for _, item in items] if items else [question.strip()]
-    selected = [next((row for row in reversed(records)
-                     if str(row['parameters'].get('query', '')).strip() == query), None)
-                for query in expected if requires_query_calculation(query)]
+    selected = []
+    for query in expected:
+        if requires_query_calculation(query):
+            row = next((row for row in reversed(records)
+                if str(row['parameters'].get('query', '')).strip() == query), None)
+            series = row['result'].get('query_chart') if row else None
+            ylabel = '查询结果（单位依本题运算口径）'
+        else:
+            scoped = [source for source in (facts or []) if source.get('question', '').strip() == query]
+            metric, groups, operation = _report_chart_metric(scoped, query)
+            series = {'labels': [label for label, _ in groups], 'values': [value for _, value in groups],
+                'dimension': metric['dimension']} if metric else None
+            ylabel = _column_with_unit(metric['column'], metric['unit']) + operation if metric else ''
+        if not series:
+            return []
+        selected.append((query, series, ylabel))
     charts = []
-    if not selected or any(row is None or not row['result'].get('query_chart') for row in selected):
-        return charts
-    for row in selected:
-        series = row['result']['query_chart']
-        title = '\n'.join(textwrap.wrap(row['parameters']['query'].strip(), 28)[:3])
-        if len(row['parameters']['query'].strip()) > 84:
+    for query, series, ylabel in selected:
+        title = '\n'.join(textwrap.wrap(query, 28)[:3])
+        if len(query) > 84:
             title += '…'
         charts.append(bar_chart(series['labels'], series['values'], title='查询结果：' + title,
-            xlabel=series['dimension'], ylabel='查询结果（单位依本题运算口径）'))
+            xlabel=series['dimension'], ylabel=ylabel))
     return charts
 
 
@@ -3137,7 +3147,7 @@ def _analyze_report_inputs(question: str, config, bag: dict) -> tuple[str, str]:
                 bag.setdefault(key, []).extend(rows)
     sources = {(row['filename'], row['version_id'], row.get('sha256') or '')
                for row in bag['report_facts']}
-    answers.append('### 编制依据\n\n' + '\n\n'.join(
+    answers.insert(0, '### 编制依据\n\n' + '\n\n'.join(
         f'来源：{name}；版本：{version}。\nSHA-256：{digest or "未记录"}'
         for name, version, digest in sorted(sources)))
     body = '\n\n'.join(answers)
@@ -3398,7 +3408,11 @@ def _export_report(report_title: str, sections_json: str,
                 original_body += '\n\n' + '\n\n'.join(f'来源文件SHA-256：{digest}' for digest in dict.fromkeys(source.get('sha256') or '未记录' for source in facts))
             sections = _report_sections(facts, analysis, original_body)
             if combined_body or conf.get('report_part_key'):
-                sections.insert(0, {'type': 'summary', 'period': '各项期间分别列示，见分题结果' if combined_body else facts[0]['period'], 'cards': []})
+                summary = {'type': 'summary', 'period': '各项期间分别列示，见分题结果' if combined_body else facts[0]['period'], 'cards': []}
+                if sections and sections[0].get('type') == 'summary':
+                    sections[0] = summary
+                else:
+                    sections.insert(0, summary)
                 for section in sections:
                     if section['type'] == 'text' and re.fullmatch(r'[①②③④⑤⑥⑦⑧⑨⑩]\s+[^\n]+', section['content']):
                         section.update(type='heading', level=3)
@@ -3454,7 +3468,7 @@ def _export_report(report_title: str, sections_json: str,
             if requires_query_calculation(data_question):
                 if not verified_bag.get('verified_queries'):
                     _verified_report_query(data_question, verified_config, facts)
-                charts = _report_charts_from_queries(verified_bag.get('verified_queries', []), data_question)
+                charts = _report_charts_from_queries(verified_bag.get('verified_queries', []), data_question, facts)
             else:
                 derived_chart = _report_chart_from_facts(facts, data_question)
                 if derived_chart:
@@ -3488,8 +3502,16 @@ def _export_report(report_title: str, sections_json: str,
                 sections = [by_id[section['artifact_id']] if section.get('type') == 'chart_slot' and section.get('artifact_id') in by_id
                             else section for section in sections]
             else:
-                slot = next((i for i, section in enumerate(sections) if section.get("type") == "chart_slot"), len(sections))
-                sections[slot:slot + (slot < len(sections))] = chart_sections
+                question_heads = [i for i, section in enumerate(sections)
+                    if section.get('type') == 'heading' and re.match(r'^第\d+项 · ', section.get('content', ''))]
+                if combined_body and len(question_heads) == len(chart_sections):
+                    for index, chart_section in reversed(list(zip(question_heads, chart_sections))):
+                        slot = next((i for i in range(index + 1, len(sections))
+                            if sections[i].get('type') == 'heading'), len(sections))
+                        sections.insert(slot, chart_section)
+                else:
+                    slot = next((i for i, section in enumerate(sections) if section.get("type") == "chart_slot"), len(sections))
+                    sections[slot:slot + (slot < len(sections))] = chart_sections
             charts = []
         asked = [item.strip() for item in re.split(r"[,;，；\n]", str(include_charts or "")) if item.strip()]
         logger.info("[R726ExportCharts] leg=export round_charts=%d asked=%d", len(charts), len(asked))

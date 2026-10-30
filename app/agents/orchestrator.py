@@ -858,6 +858,19 @@ def route_main(state: AgentState, config=None):
     if enforce_prohibition and re.search(r"(?:不|不要|无需|别)(?:再)?(?:(?:导出|下载)(?:PDF|pdf)?(?:报告)?|生成(?:PDF|pdf|报告))", raw_intent_text):
         prohibited.add("export")
     workers = [worker for worker in workers if worker not in prohibited]
+    # Embedded multi-question report charts are built from each revalidated result
+    # by export; a separate chart worker would treat all periods as one query.
+    from app.agents.task_review import independent_period_questions, report_delivery
+    source_context = state.get('task_context') or state.get('data_context') or {}
+    chartless_intent = re.sub(r'(?:含图|带图)\s*(?:PDF\s*)?(?:报告|简报)', '报告', intent_text, flags=re.I)
+    if (state.get('data_filename') and report_delivery(intent_text) in ('combined', 'separate')
+            and chartless_intent != intent_text and not re.search(
+                r'(?:生成|绘制|画|导出|下载|保存)\s*(?:一[张幅个]|[两二三\d]+[张幅个])?\s*(?:独立|单独)?'
+                r'(?:柱状图|折线图|饼图|图表|图片|图件|雷达图|思维导图|甘特图|图)', chartless_intent)
+            and len(independent_period_questions(source_context.get('analysis_question') or source_context.get('query') or user_msg)) > 1):
+        workers = [worker for worker in workers if worker != 'chart']
+        if 'export' not in workers and 'export' not in prohibited:
+            workers.append('export')
     # A supplied tree with an explicit no-lookup request needs only drawing.
     # Running a free-form analysis first can claim an image exists before HITL.
     if (re.search(r'思维导图|mindmap', intent_text, re.I)

@@ -2,6 +2,25 @@ import pandas as pd
 import pytest
 
 
+def test_multiquestion_embedded_chart_report_does_not_dispatch_an_unscoped_chart():
+    from app.agents.orchestrator import _initial_execution_state, route_main
+    from langchain_core.messages import AIMessage
+    question = '①2026-01按状态金额中位数？②2026-02按状态金额平均值？'
+    state = _initial_execution_state(question, thread_id='embedded', user={'data_filename': '费用.csv'},
+        request_id='embedded', trace_id='embedded', task_id='embedded')
+    state['data_filename'] = '费用.csv'
+    state['data_context'] = {'analysis_question': question, 'execution_question': '将以上两题合成一份含图PDF报告。'}
+    state['worker_results'] = {'data': '已按题计算'}
+    state['plan'] = [{'worker': 'data'}, {'worker': 'chart'}]
+    state['messages'].append(AIMessage(content='', tool_calls=[
+        {'name': 'dispatch', 'id': 'embedded', 'args': {'workers': ['chart']}}]))
+    assert [step.node for step in route_main(state) if hasattr(step, 'node')] == ['export']
+    state['data_context']['execution_question'] += '图上注明各题期间。'
+    assert [step.node for step in route_main(state) if hasattr(step, 'node')] == ['export']
+    state['data_context']['execution_question'] += '另外单独生成柱状图。'
+    assert [step.node for step in route_main(state) if hasattr(step, 'node')] == ['chart']
+
+
 def test_policy_review_uses_each_questions_period_instead_of_the_combined_span():
     from app.agents.task_review import policy_question_reviews
     docs = [dict(source_name=f'{month}月制度.txt', version_id=str(month), index_version_id=f'idx{month}',
