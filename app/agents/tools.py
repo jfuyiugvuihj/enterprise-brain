@@ -2247,12 +2247,23 @@ def _discard_unregistrable_chart(path: object) -> None:
     也只可能是本函数这一次调用刚交回来的路径：私有化部署的机器上，一枚没有台账行、因而没有任何
     权限判定管得着它的 PNG/HTML，留着就是留着一个人人可读、系统却不认的原件。
     """
+    _discard_unregistered_file(path)
+
+
+def _discard_unregistered_file(path: object) -> None:
+    """A failed post-registration audit must never remove a registered file."""
     if not path:
         return
     try:
+        from app.storage.artifacts import artifact_registry
+        target = os.path.normcase(os.path.realpath(str(path)))
+        if any(os.path.normcase(os.path.realpath(record.storage_path)) == target
+               for record in artifact_registry.list_active()):
+            return
         os.remove(str(path))
-    except OSError as exc:
-        logger.warning(f"[Tool] unregistered chart left on disk: {exc}")
+    except Exception as exc:
+        # An unavailable registry cannot establish that deleting the file is safe.
+        logger.warning('[Tool] could not safely remove unregistered output: %s', type(exc).__name__)
 
 
 def _chart_terminal_error_code(text: object) -> str:
@@ -2653,7 +2664,11 @@ def _generate_chart(
                 code="department_scope_required",
                 head=_CHART_REGISTRATION_REFUSED_HEAD,
             )
+        except Exception:
+            _discard_unregistrable_chart(path)
+            raise
         if urls is None:
+            _discard_unregistrable_chart(path)
             _record_denial(
                 config, tool="generate_chart", code="authorization_required", status="rejected"
             )
@@ -2700,12 +2715,7 @@ def _discard_unregistrable_report(path: object) -> None:
     这里删的也只可能是本函数这一次调用刚交回来的路径：私有化部署的机器上，一枚没有台账行、
     因而没有任何权限判定管得着它的 PDF，留着就是留着一个人人可读、系统却不认的原件。
     """
-    if not path:
-        return
-    try:
-        os.remove(str(path))
-    except OSError as exc:
-        logger.warning(f"[Tool] unregistered report left on disk: {exc}")
+    _discard_unregistered_file(path)
 
 
 def _export_terminal_error_code(text: object) -> str:
@@ -3528,7 +3538,11 @@ def _export_report(report_title: str, sections_json: str,
                 code="department_scope_required",
                 head=_EXPORT_REGISTRATION_REFUSED_HEAD,
             )
+        except Exception:
+            _discard_unregistrable_report(path)
+            raise
         if urls is None:
+            _discard_unregistrable_report(path)
             _record_denial(
                 config, tool="export_report", code="authorization_required", status="rejected"
             )
