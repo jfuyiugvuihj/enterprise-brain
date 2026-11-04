@@ -1368,9 +1368,18 @@ async function confirmCancel() {
   }
 
   if (awaitingHitl) {
-    // 取消标记不等于拒绝决定，保留卡片供服务端重新核实。
-    hitl.value = { ...hitl.value, interrupted: true }
-    note(`${streamNote.value} 待确认动作仍保留，请明确选择执行或取消。`, 'warn')
+    // 取消不是拒绝。先读服务端账：本轮已 abandoned 就收卡并恢复输入；
+    // 只有账仍为 awaiting 时，才保留卡片让员工明确决定。
+    let ledger = ''
+    for (let attempt = 0; attempt < 10 && hitl.value; attempt += 1) {
+      ledger = await refreshPendingDecision()
+      if (!hitl.value || ledger !== 'awaiting') break
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    if (hitl.value) {
+      hitl.value = { ...hitl.value, interrupted: true }
+      note(`${streamNote.value} 待确认动作仍保留，请明确选择执行或取消。`, 'warn')
+    }
   }
   syncActive()
   persist()

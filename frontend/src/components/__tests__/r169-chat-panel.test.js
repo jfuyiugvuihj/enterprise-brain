@@ -399,6 +399,7 @@ describe('R169 Q3 · 取消是两步，且四种结果四张脸（跑真 request
     messages.value = [{ role: 'assistant', content: '', mid: 'm7' }]
     activeId.value = 'r169-q3i'
     hitl.value = { pending: { action: 'export_report' }, labels: { 'export_report': '生成报告' }, interrupted: false }
+    mockDecisionLookup('awaiting')
     authedFetch.mockResolvedValue(jsonResponse({ cancelled: true }))
     await b.confirmCancel()
     await settled()
@@ -406,6 +407,21 @@ describe('R169 Q3 · 取消是两步，且四种结果四张脸（跑真 request
     expect(hitl.value.interrupted).toBe(true)
     expect(b.streamNote.value).toContain('待确认动作仍保留')
     hitl.value = null
+  })
+
+  it('取消后服务端账已 abandoned：收掉过期卡片并恢复输入', async () => {
+    installDomStubs()
+    const b = await mountPanel()
+    messages.value = [{ role: 'assistant', content: '', mid: 'm7-abandoned' }]
+    activeId.value = 'r169-q3-abandoned'
+    hitl.value = { pending: { action: 'export_report' }, labels: { export_report: '生成报告' }, interrupted: false }
+    mockDecisionLookup('abandoned')
+    authedFetch.mockResolvedValue(jsonResponse({ cancelled: true }))
+    await b.confirmCancel()
+    await settled()
+    expect(hitl.value).toBe(null)
+    expect(loading.value).toBe(false)
+    expect(b.streamNote.value).toContain('服务端已结束本次待确认状态')
   })
 })
 

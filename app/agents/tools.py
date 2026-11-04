@@ -63,8 +63,11 @@ def _tool_principal(config):
     """
     conf = (config or {}).get("configurable", {}) or {}
     if conf.get('cancel_event') is not None:
-        from app.agents.orchestrator import _raise_if_cancelled
-        _raise_if_cancelled(conf['cancel_event'])
+        from app.agents.orchestrator import RequestCancelled, _raise_if_cancelled
+        try:
+            _raise_if_cancelled(conf['cancel_event'])
+        except RequestCancelled:
+            raise
     try:
         from app.common.identity import Principal
 
@@ -109,6 +112,30 @@ def _tool_context(config) -> dict | None:
     except PermissionError as exc:
         logger.warning("[Tool] %s", exc)
         return None
+
+
+_CURRENT_ACCESS_DENIED_TEXT = (
+    "当前账号在执行过程中权限或身份已变化，本轮结果未交付"
+    "（error_code=permission_denied）"
+)
+
+
+def _require_current_principal(config, *, tool: str, calculation_id: str | None = None) -> str:
+    """Re-read authority at a side-effect boundary; cancellation is not an auth failure."""
+    from app.agents.orchestrator import RequestCancelled
+    try:
+        _tool_principal(config)
+    except RequestCancelled:
+        _fail_calculation(calculation_id, "task_cancelled")
+        raise
+    except PermissionError:
+        _fail_calculation(calculation_id, "permission_denied")
+        record_tool_status(
+            bag_from_config(config), tool=tool, status="rejected",
+            error_code="permission_denied",
+        )
+        return _CURRENT_ACCESS_DENIED_TEXT
+    return ""
 
 
 # 错误码词表的唯一来源是 ErrorEnvelope.code，这里派生一份集合、不抄第二份手抄码表
@@ -801,7 +828,10 @@ def _named_row_hits(df, query: str, txt_cols: list[str]) -> list[tuple[str, str,
     return [(item[2], item[3], item[4]) for item in hits[:_MAX_NAMED_HITS]]
 
 
-def _record_series(series_out: list | None, *, kind: str, dimension: str, column: str, labels, values) -> None:
+def _record_series(
+    series_out: list | None, *, kind: str, dimension: str, column: str,
+    labels, values, operation: str | None = None,
+) -> None:
     """把算好的一串数交给缓冲；只在调用方要的时候记，正文那几行一个字都不动。"""
     if series_out is None:
         return
@@ -817,15 +847,16 @@ def _record_series(series_out: list | None, *, kind: str, dimension: str, column
             return
         pairs.append((label, number))
     if pairs:
-        series_out.append(
-            {
-                "kind": kind,
-                "dimension": str(dimension or ""),
-                "column": str(column or ""),
-                "labels": [item[0] for item in pairs],
-                "values": [item[1] for item in pairs],
-            }
-        )
+        row = {
+            "kind": kind,
+            "dimension": str(dimension or ""),
+            "column": str(column or ""),
+            "labels": [item[0] for item in pairs],
+            "values": [item[1] for item in pairs],
+        }
+        if operation:
+            row["operation"] = operation
+        series_out.append(row)
 
 
 def _answer_query(
@@ -1005,8 +1036,12 @@ def _answer_query(
     if not group_col:
         group_col = _named_dimension_column(query, txt_cols)
     if group_col and num_cols:
-        agg = df.groupby(group_col)[num_cols[:3]].sum()
-        lines = [f"📋 按 {group_col} 分组汇总:"]
+        mean_groups = bool(
+            re.search(r'平均|均值', query)
+            and not re.search(r'合计|总计|总额|求和|汇总', query)
+        )
+        agg = df.groupby(group_col)[num_cols[:3]].mean() if mean_groups else df.groupby(group_col)[num_cols[:3]].sum()
+        lines = [f"📋 按 {group_col} 分组{'平均值' if mean_groups else '汇总'}:"]
         total_groups = len(agg)
         for idx, row in agg.head(_MAX_GROUP_ROWS).iterrows():
             vals = ", ".join(f"{c}={v:.1f}" for c, v in row.items())
@@ -1026,6 +1061,7 @@ def _answer_query(
                 column=_col,
                 labels=[str(item) for item in shown.index],
                 values=shown[_col].tolist(),
+                operation="MEAN" if mean_groups else None,
             )
         results.append("\n".join(lines))
 
@@ -1624,6 +1660,11 @@ def search_docs(query: str, config: RunnableConfig) -> str:
             span.finish("retrieval_unavailable", error_code=code)
             return f"文档检索不可用（error_code={code}）"
 
+        access_error = _require_current_principal(config, tool="search_docs")
+        if access_error:
+            span.finish("rejected", error_code="permission_denied")
+            return access_error
+
         if not docs:
             span.finish("empty", summary={"hit_count": 0, "rewrite_count": len(rewrites or [])})
             return f"未找到与'{query}'相关的文档信息。建议尝试以下改写角度的关键词：{', '.join(rewrites[:3])}"
@@ -1820,6 +1861,7 @@ def _row_scope_denial_text(
 
 
 def _analyze_data(query: str, config: RunnableConfig) -> str:
+    from app.agents.orchestrator import RequestCancelled
     from app.common.rbac import filter_dataframe_rows_with_scope
     from app.tools.excel import load_excel, profile_dataframe, select_text_columns
     from app.tools.excel import filter_explicit_categories
@@ -1850,6 +1892,11 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
             question = str(conf.get("data_question") or "")
             calculation_id = _start_calculation(config, fname, question or query, operation="analyze_data")
             df = load_excel(file_path, query=question) if question else load_excel(file_path)
+            access_error = _require_current_principal(
+                config, tool="analyze_data", calculation_id=calculation_id
+            )
+            if access_error:
+                return access_error
             category_frame = df
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
@@ -1898,6 +1945,11 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
             try:
                 series: list[dict] = []
                 ai_parts = _answer_query(df, question or query, numeric_cols, text_cols, series_out=series)
+                access_error = _require_current_principal(
+                    config, tool="analyze_data", calculation_id=calculation_id
+                )
+                if access_error:
+                    return access_error
                 _finish_calculation(calculation_id, {
                     "rows": int(len(df)), "columns": list(map(str, df.columns)),
                     "analysis_scope": _calculation_scope(df, question or query),
@@ -1914,6 +1966,8 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                     from app.insights.alert_evidence import metric_unit
                     item.setdefault("unit", metric_unit(item.get("column") or ""))
                 record_chart_series(bag_from_config(config), series)
+            except RequestCancelled:
+                raise
             except _CalculationPersistenceError:
                 raise
             except Exception:
@@ -1951,6 +2005,8 @@ def _analyze_data(query: str, config: RunnableConfig) -> str:
                 )
             except Exception:
                 pass
+        except RequestCancelled:
+            raise
         except _CalculationPersistenceError as exc:
             return _denial_text(config, tool="analyze_data", code="internal_error", head=str(exc))
         except ValueError as exc:
@@ -2079,6 +2135,7 @@ def _flatten_query_tuple_keys(value: Any) -> Any:
 
 
 def _query_data(query: str, config: RunnableConfig, *, expression: str | None = None) -> str:
+    from app.agents.orchestrator import RequestCancelled
     from app.semantics.execution import binding_from_config
     if binding_from_config(config):
         # A generated expression cannot replace the formula the user selected.
@@ -2114,6 +2171,11 @@ def _query_data(query: str, config: RunnableConfig, *, expression: str | None = 
             question = str(conf.get("data_question") or "")
             calculation_id = _start_calculation(config, fname, question or query, operation="query_data")
             df = load_excel(file_path, query=question) if question else load_excel(file_path)
+            access_error = _require_current_principal(
+                config, tool="query_data", calculation_id=calculation_id
+            )
+            if access_error:
+                return access_error
             category_frame = df
             df, scope_info = filter_dataframe_rows_with_scope(df, role=role, department=dept)
             if df.empty:
@@ -2125,6 +2187,8 @@ def _query_data(query: str, config: RunnableConfig, *, expression: str | None = 
                 elif int(scope_info.get("rows_in") or 0) <= 0:
                     empty_files += 1
                 continue
+        except RequestCancelled:
+            raise
         except _CalculationPersistenceError as exc:
             return _denial_text(config, tool="query_data", code="internal_error", head=str(exc))
         except Exception:
@@ -2158,11 +2222,18 @@ def _query_data(query: str, config: RunnableConfig, *, expression: str | None = 
                     + '\n请修正表达式并保持原问题的指标与条件；布尔比较各自用括号。df已应用权限及显式筛选，不得扩大范围。')
                 code = _llm_pandas_code(df, correction)
                 res = safe_query(df, code)
+        except RequestCancelled:
+            raise
         except Exception:
             _fail_calculation(calculation_id, "internal_error")
             raise
         if res.get("error") is None:
             result = res["result"]
+            access_error = _require_current_principal(
+                config, tool="query_data", calculation_id=calculation_id
+            )
+            if access_error:
+                return access_error
             _finish_calculation(calculation_id, {"rows": int(len(df)),
                 "columns": list(map(str, df.columns)),
                 "analysis_scope": dict(_calculation_scope(df, ''), kind='query_input'),

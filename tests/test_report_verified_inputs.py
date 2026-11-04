@@ -266,3 +266,32 @@ def test_group_chart_for_a_mean_question_does_not_plot_group_sums():
     metric, groups, operation = _report_chart_metric([facts], '按状态平均金额（元）')
     assert dict(groups) == {'已支付': 200, '已批准': 900} and operation == '平均值'
     assert metric['unit'] == '元'
+
+
+def test_group_mean_answer_and_chart_series_use_the_same_group_means():
+    import pandas as pd
+    from app.agents.tools import _answer_query
+    from app.tools.excel import filter_explicit_categories, select_text_columns
+    frame = pd.DataFrame([
+        ('2026-01-05', '财务部', 100, '已支付'),
+        ('2026-01-12', '财务部', 200, '已支付'),
+        ('2026-01-18', '财务部', 300, '已批准'),
+        ('2026-01-22', '财务部', 600, '已批准'),
+        ('2026-02-05', '财务部', 200, '已支付'),
+        ('2026-02-12', '财务部', 500, '已支付'),
+        ('2026-02-18', '财务部', 600, '已批准'),
+        ('2026-02-22', '财务部', 900, '已批准'),
+    ], columns=['日期', '部门', '金额（元）', '状态'])
+    question = '2026-02-01至2026-02-28按状态列出金额（元）的平均值是多少？'
+    filtered = filter_explicit_categories(frame, question)
+    series = []
+    answer = '\n'.join(_answer_query(
+        filtered, question, ['金额（元）'], select_text_columns(filtered),
+        series_out=series,
+    ))
+    group = next(item for item in series if item.get('kind') == 'group')
+    assert dict(zip(group['labels'], group['values'])) == {'已批准': 750, '已支付': 350}
+    assert group.get('operation') == 'MEAN'
+    assert '已批准: 金额（元）=750.0' in answer
+    assert '已支付: 金额（元）=350.0' in answer
+    assert '1500' not in answer and '700' not in answer
