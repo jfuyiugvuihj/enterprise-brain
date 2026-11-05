@@ -34,6 +34,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 from urllib.parse import unquote, urlparse
 
 from dotenv import load_dotenv
@@ -543,12 +544,32 @@ def restore_database(
     database_url: str,
     *,
     pg_restore_path: str = "pg_restore",
+    psql_path: str = "psql",
 ) -> str:
     """Restore into the database named by ``database_url`` and return that name."""
     environment, database_name = _pg_environment(database_url)
     source = Path(archive).resolve()
     if not source.is_file() or source.stat().st_size == 0:
         raise ValueError("backup archive is missing or empty")
+    server_major = int(_read_one(
+        database_url,
+        "SELECT current_setting('server_version_num')",
+        psql_path=psql_path,
+        label="server version",
+    )) // 10000
+    restore_version = _run(
+        [pg_restore_path, "--version"], environment, capture=True
+    ).stdout or ""
+    match = re.search(r"\(PostgreSQL\)\s+(\d+)", restore_version)
+    if not match:
+        raise RuntimeError(f"could not read {pg_restore_path} version from {restore_version!r}")
+    restore_major = int(match.group(1))
+    if restore_major > server_major:
+        _restore_newer_client_sql(
+            source, database_name, environment,
+            pg_restore_path=pg_restore_path, psql_path=psql_path,
+        )
+        return database_name
     _run(
         [
             pg_restore_path,
@@ -561,6 +582,65 @@ def restore_database(
         environment,
     )
     return database_name
+
+
+def compatible_sql_line(line: str) -> str:
+    """Remove session settings added only by newer pg_restore clients.
+
+    PostgreSQL 17's pg_restore emits ``SET transaction_timeout = 0`` before the
+    archive contents.  PostgreSQL 16 rejects that parameter and aborts before a
+    single archive object is created.  This is the only cross-version statement
+    currently observed by the delivery stack; the archive bytes themselves stay
+    unchanged and every other SQL line is passed through verbatim.
+    """
+    if re.fullmatch(r"SET transaction_timeout = [^;]+;\s*", line):
+        return ""
+    return line
+
+
+def _restore_newer_client_sql(
+    source: Path,
+    database_name: str,
+    environment: dict[str, str],
+    *,
+    pg_restore_path: str,
+    psql_path: str,
+) -> None:
+    """Restore through filtered plain SQL when the client is newer than the server."""
+    with tempfile.TemporaryDirectory(prefix="enterprise-brain-pg-restore-") as temp:
+        rendered = Path(temp) / "restore.sql"
+        cleaned = Path(temp) / "restore-compatible.sql"
+        try:
+            subprocess.run(
+                [pg_restore_path, "--no-owner", "--file", str(rendered), str(source)],
+                env=environment,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or "").strip()
+            raise RuntimeError(f"pg_restore SQL rendering failed: {detail[-500:]}") from exc
+        with rendered.open(encoding="utf-8") as reader, cleaned.open(
+            "w", encoding="utf-8", newline=""
+        ) as writer:
+            for line in reader:
+                writer.write(compatible_sql_line(line))
+        _run_psql(
+            [
+                psql_path,
+                "--dbname", database_name,
+                "--no-psqlrc",
+                "--quiet",
+                "--single-transaction",
+                "--variable=ON_ERROR_STOP=1",
+                "--file", str(cleaned),
+            ],
+            environment,
+            label="cross-version restore",
+        )
 
 
 def apply_globals(database_url: str, payload: dict, *, psql_path: str = "psql") -> dict:
@@ -672,7 +752,9 @@ def restore_backup_with_globals(
     对账比的都是施加之后的现读值。
     """
     payload = read_globals_pair(archive)
-    database_name = restore_database(archive, database_url, pg_restore_path=pg_restore_path)
+    database_name = restore_database(
+        archive, database_url, pg_restore_path=pg_restore_path, psql_path=psql_path
+    )
     applied = apply_globals(database_url, payload, psql_path=psql_path)
     report = reconcile_globals(database_url, payload, psql_path=psql_path)
     if report["problems"]:

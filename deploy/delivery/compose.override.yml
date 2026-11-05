@@ -1,0 +1,17 @@
+# Isolated deployment overlay. It references the repository root Compose file.
+services:
+  migrate:
+    image: ${DELIVERY_BACKEND_IMAGE:-enterprise-brain:local}
+  backend:
+    image: ${DELIVERY_BACKEND_IMAGE:-enterprise-brain:local}
+  worker:
+    image: ${DELIVERY_BACKEND_IMAGE:-enterprise-brain:local}
+  scheduler:
+    image: ${DELIVERY_BACKEND_IMAGE:-enterprise-brain:local}
+  frontend:
+    image: ${DELIVERY_FRONTEND_IMAGE:-enterprise-brain-frontend:local}
+
+volumes:
+  ollama:
+    external: true
+    name: ${DELIVERY_OLLAMA_VOLUME:?set DELIVERY_OLLAMA_VOLUME}
