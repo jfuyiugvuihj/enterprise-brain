@@ -2,6 +2,20 @@
 
 ## 2026-10-25 企业使用体验与历史测试收尾（执行中）
 
+### 2026-11-10 新业务组合离线包、升级与隔离恢复
+
+组合工作树为 `codex/customer-delivery-integration`，合并业务分支与交付分支后的精确版本为 `d5d198797126d4da8a6e604529c36009a5344e18`。使用旧镜像 `enterprise-brain:delivery-724b8e0`／`enterprise-brain-frontend:delivery-724b8e0` 建立升级前源站，在禁用构建网络的条件下生成后端 `enterprise-brain:combo-d5d1987`（`sha256:5c078e5c855d96b2903f34515a685a5aadf1e4fc55f976f06b30b68e5c167f5d`）与前端 `enterprise-brain-frontend:combo-d5d1987`（`sha256:8bfe9b3d7be128edb29ce10eb9443dc171df8610a13d6f674a8fe8cb8a4b732c`）。容器内核对同时存在业务均值修复和交付工具；从源码完全离线重建因基础/依赖缓存缺失而失败，因此正式组合镜像以已验旧镜像为本地基座覆盖 `app`、`scripts`、`deploy`，不下载依赖。
+
+真实源站链路：旧镜像登录、上传六行合成 CSV、计算 2,100、生成并下载两页 PDF，PDF 31,949 字节、SHA-256 `26d40c7c2dec4d0a7fa8a55cd87e8f109adc2d1db3254fdda8ba6a3b46bac916`。联合恢复点包含 161,205 字节 PostgreSQL dump、6 个 workspace 文件和 paired globals；随后正式执行 `orchestrate.py upgrade`，新组合 backend／worker／scheduler／frontend 全部健康，migrate 输出 `applied=0`（该组合没有新迁移）。升级后浏览器重新登录，2,100 答案、两条完成计算、会话和原 PDF 均可读取，PDF 重下载字节与 SHA-256 不变；新组合上另行完成二月状态均值 750／350，正文、计算记录和 PNG 图序列一致。
+
+正式 `recovery.py restore` 在全新项目 `eb-combo-restore2-20261105`、独立数据库/文件卷和端口 18186／18187 完成，命令返回 `restore_complete`；源站与恢复站数据文件同为 173 字节、SHA-256 `978c49c0eb7d42430d5ac45981d342b62f81581f1e3bc2d9eb0cd4e58acb8d00`，会话、两条计算和历史 PDF 均恢复，PDF 字节哈希保持。恢复站 Redis `DBSIZE=0`、queue 键 0，未复制或重放源队列。匿名访问数据列表与历史 PDF 下载均为 401。两页 PDF 已实际渲染检查，封面和正文页内容、期间、筛选、明细、来源与页码可读。
+
+镜像回滚另行演练：切回旧 backend/frontend 后服务健康，历史会话、计算和 PDF 仍可读且哈希不变；随后重新装回新组合。明确该演练只证明镜像切换，数据库回滚由上述独立恢复点证明。交付工具与主机检查定点 17 项通过。源站与正式恢复站的脱敏诊断均为 `overall=pass`，迁移清单 23 项、最新 0023。
+
+正式离线包已生成到 `output/combo-delivery-d5d1987/`，版本固定为 `d5d1987`。`images.tar` 为 7,330,315,776 字节、SHA-256 `3a442772eb8ee16198aa0cf2c32388f9a48644d387f5e7b955b4d5cc3cd32b5d`，包含新后端、新前端、PGVector、Redis 和 Ollama；模型归档 6,825,162,240 字节、哈希 `ab17d29b268f12cdfb093813740a6571bf7195ca83e8e9387ee330100d1cf96e`，交付支持文件 55,056 字节、哈希 `f1657b001060d4e1e587c8c3e6635bdb2f6dad4bef330f2e0fef5440fed14eaf`。`bundle-manifest.json` 已记录准确镜像 ID、平台、迁移与依赖锁摘要及许可限制，字节核验为 true。
+
+本条链路、数据、内容、呈现在本机 Windows Docker Desktop 的独立源站／恢复站通过。**尚未验证**：把该新 `images.tar` 导入另一台干净 Docker daemon 并从零安装；客户 Linux 主机安装；真实企业 SSO、真实员工资料、生产规模并发和真实手机。模型与 Redis 许可仍需法务确认。证据位于 `output/combo-recovery/`、`output/recovery-before-upgrade/`、`output/combo-delivery-d5d1987/`，均属于本机私有验收材料，未提交、未推送。
+
 ### 2026-11-04 业务接手：取消、权限与均值图收口
 
 接管工作树为 `codex/business-takeover-20261104`，基于主线交接 `1657590`，先审查并保留候选 `d739a8f`，最终产品补丁为 `e7094a736eb60425403ed8bf89db43fc738f6968`。该提交新增分析、查询和检索返回后的当前身份复核，取消仍落 `task_cancelled`、撤权落 `permission_denied`；另修复已批准动作取消后服务端账已 `abandoned`、页面却保留旧确认卡并恢复不了输入的问题。实际隔离栈为 Windows 11 + Edge、现有交付镜像加本次 `app/**` 只读挂载、真实 PostgreSQL／PGVector、Redis 和本地 Ollama，远端回退关闭；未使用第二套业务实现，也未操作主站或共享数据。
