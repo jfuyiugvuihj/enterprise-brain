@@ -1,0 +1,745 @@
+"""Execution spans recorded at the live model and tool boundaries.
+
+A span only becomes a persisted record when the surrounding execution carries an
+authenticated owner. Anonymous spans are dropped rather than attributed to an
+invented principal, which keeps ``owner_id`` meaningful in every execution table.
+"""
+from __future__ import annotations
+
+from contextvars import ContextVar, Token
+import contextlib
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+import time
+from typing import Any
+from uuid import uuid4
+
+from app.agents.evidence import bag_from_config
+from app.common.logger import logger
+from app.trace.store import default_trace_store
+
+_UNSET = object()
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _owner_id(config: Any) -> str:
+    configurable = _configurable(config)
+    principal = configurable.get("principal")
+    if principal is None:
+        return ""
+    user_id = getattr(principal, "user_id", None)
+    if user_id is None and isinstance(principal, dict):
+        user_id = principal.get("user_id")
+    return str(user_id or "").strip()
+
+
+def _configurable(config: Any) -> dict[str, Any]:
+    if not isinstance(config, dict):
+        return {}
+    configurable = config.get("configurable")
+    return configurable if isinstance(configurable, dict) else {}
+
+
+def span_identity(config: Any) -> dict[str, str]:
+    """Resolve the identifiers a span belongs to, without inventing an owner."""
+    configurable = _configurable(config)
+    owner_id = _owner_id(config)
+    trace_id = str(configurable.get("trace_id") or "").strip()
+    step_id = str(configurable.get("step_id") or "").strip()
+    if not step_id and owner_id and trace_id:
+        worker = str(configurable.get("worker") or "").strip()
+        step_id = f"{trace_id}:worker:{worker}" if worker else ""
+    return {
+        "owner_id": owner_id,
+        "request_id": str(configurable.get("request_id") or "").strip(),
+        "trace_id": trace_id,
+        "task_id": str(configurable.get("task_id") or "").strip(),
+        "worker": str(configurable.get("worker") or "").strip(),
+        "agent_run_id": f"{trace_id}:orchestrator" if trace_id else "",
+        "agent_step_id": step_id,
+        "lane": str(configurable.get("lane") or "").strip(),
+        "tier": str(configurable.get("tier") or "").strip(),
+        "rule": str(configurable.get("rule") or "").strip(),
+        "lane_source": str(configurable.get("lane_source") or "").strip(),
+    }
+
+
+#: The config of the request being answered right here, for the legs that cannot take one.
+#: ``app/api/v1/chat.py::_rewrite_followup`` is replaced across the regression suite by
+#: doubles that accept exactly ``(session_id, user_msg)``, so R695 sends that leg its round
+#: identity through the execution context instead of the argument list -- the shape
+#: ``app/rag/retrieval_pipeline.py::arm_retrieval_trace`` already uses for retrieval traces.
+#: An account with no owner still writes no bytes: ``ExecutionSpan.active`` is the only gate.
+_TURN_IDENTITY: ContextVar[Any] = ContextVar("enterprise_brain_turn_identity", default=None)
+
+
+def arm_turn_identity(config: Any) -> Token[Any] | None:
+    """Hang this round's config on the current execution context.
+
+    Refuses an anonymous round and returns ``None`` rather than arming an invented owner:
+    a caller that cannot prove who is asking gets no account, exactly as ``span_identity``
+    already refuses to invent one. The token has to go back to :func:`reset_turn_identity`
+    in a ``finally`` -- a leaked token would hand this request's owner to the next request
+    that reuses the context.
+    """
+    identity = span_identity(config)
+    if not identity["owner_id"] or not identity["trace_id"]:
+        return None
+    return _TURN_IDENTITY.set(config)
+
+
+def current_turn_identity() -> Any:
+    """The armed round's config, or ``None`` when no owned request runs in this context."""
+    return _TURN_IDENTITY.get()
+
+
+def reset_turn_identity(token: Token[Any] | None) -> None:
+    """Put the context back the way it was. ``None`` (never armed) is a no-op."""
+    if token is not None:
+        _TURN_IDENTITY.reset(token)
+
+
+@dataclass
+class ExecutionSpan:
+    """Base span: records lifecycle events plus one structured execution row."""
+
+    record_kind: str
+    record_id: str
+    identity: dict[str, str]
+    started_event: str
+    finished_event: str
+    base_payload: dict[str, Any] = field(default_factory=dict)
+    bag: dict[str, Any] | None = None
+    started_at: str = field(default_factory=_utc_now)
+    monotonic_start: float = field(default_factory=time.monotonic)
+    first_token_at: str | None = None
+    finished: bool = False
+
+    @property
+    def active(self) -> bool:
+        return bool(self.identity.get("owner_id")) and bool(self.identity.get("trace_id"))
+
+    def mark_first_token(self) -> None:
+        if self.first_token_at is None:
+            self.first_token_at = _utc_now()
+
+    def _record_boundary_status(self, status: str, error_code: str) -> None:
+        """Tell the execution evidence bag which terminal state this boundary saw."""
+        if self.bag is None:
+            return
+        from app.agents.evidence import record_model_status, record_tool_status
+
+        try:
+            if self.record_kind == "tool_calls":
+                record_tool_status(
+                    self.bag,
+                    tool=str(self.base_payload.get("tool_name") or ""),
+                    status=status,
+                    error_code=error_code or status,
+                )
+            elif status != "completed":
+                record_model_status(self.bag, status, error_code or status)
+        except Exception as exc:  # evidence collection must never break a call
+            logger.warning("[Trace] span status was not recorded: %s", exc)
+
+    def record(self, event_type: str, status: str, payload: dict[str, Any]) -> None:
+        if not self.active:
+            return
+        try:
+            default_trace_store().record_event(
+                trace_id=self.identity["trace_id"],
+                request_id=self.identity["request_id"],
+                task_id=self.identity["task_id"],
+                event_type=event_type,
+                status=status,
+                payload={**self.base_payload, **payload, "owner_id": self.identity["owner_id"]},
+            )
+        except Exception as exc:  # a span must never change the business answer
+            logger.warning("[Trace] %s span event failed: %s", event_type, exc)
+
+    def begin(self) -> "ExecutionSpan":
+        self.record(
+            self.started_event,
+            "running",
+            {"started_at": self.started_at, "record_id": self.record_id},
+        )
+        return self
+
+    def __enter__(self) -> "ExecutionSpan":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if self.finished:
+            return False
+        if exc_type is None:
+            self.finish("completed")
+        else:
+            self.finish("failed", error_code=error_code_for(exc))
+        return False
+
+    def finish(
+        self,
+        status: str,
+        *,
+        error_code: str = "",
+        summary: dict[str, Any] | None = None,
+        record_evidence: bool = True,
+    ) -> dict[str, Any]:
+        """Close the span. ``record_evidence`` is the R110 switch, and it is the only one.
+
+        A call the consumer threw away is over, so its ``*.finished`` event and its R51
+        stage sample have to exist like any other exit. What must not happen is the
+        execution evidence bag hearing about it: ``_record_boundary_status`` feeds
+        ``model_statuses``, and ``evidence._terminal_status`` reads that list. A word it has
+        never met is inert only for as long as none of its branches matches it -- the day one
+        does, a stream the caller chose to stop reading buys the customer a warning sentence,
+        or turns a ``success`` into a ``partial``. So the close skips the bag instead of
+        betting on the branch table: the event bytes, the payload keys and the ledger sample
+        are identical either way, and the round keeps the judgement it would have kept had
+        the stream run to the end.
+        """
+        if self.finished:
+            return {}
+        self.finished = True
+        if record_evidence:
+            self._record_boundary_status(status, error_code)
+        duration_ms = int((time.monotonic() - self.monotonic_start) * 1000)
+        payload = {
+            "record_id": self.record_id,
+            "record_kind": self.record_kind,
+            "status": status,
+            "started_at": self.started_at,
+            "first_token_at": self.first_token_at,
+            "completed_at": _utc_now(),
+            "duration_ms": duration_ms,
+            "error_code": error_code or None,
+            "summary": dict(summary or {}),
+        }
+        self.record(self.finished_event, status, payload)
+        self._observe_stage(payload)
+        return payload
+
+    def _observe_stage(self, payload: dict[str, Any]) -> None:
+        """Hand the finished duration to the R51 stage ledger.
+
+        This is a consumer of what ``finish`` had already produced, not another step in
+        the request: it sees the same ``duration_ms`` the event carries, and only for a
+        span the store would accept (no owner, no record -- the rule that already guards
+        ``record``). Anything it raises is swallowed and logged, because a collector that
+        can fail a business answer is the failure judgement 3 forbids.
+        """
+        if not self.active:
+            return
+        try:
+            from app.common.stage_timing import record_stage_sample, stage_timing_enabled
+
+            if not stage_timing_enabled():
+                return
+            base = self.base_payload
+            record_stage_sample(
+                stage=str(base.get("stage") or ""),
+                tool_name=str(base.get("tool_name") or ""),
+                tier=str(base.get("model_tier") or ""),
+                lane=str(base.get("lane") or self.identity.get("lane") or ""),
+                rule=str(base.get("rule") or self.identity.get("rule") or ""),
+                lane_source=str(base.get("lane_source") or self.identity.get("lane_source") or "unknown"),
+                worker=str(base.get("worker") or ""),
+                duration_ms=payload.get("duration_ms"),
+                trace_id=self.identity.get("trace_id", ""),
+                request_id=self.identity.get("request_id", ""),
+                task_id=self.identity.get("task_id", ""),
+                status=str(payload.get("status") or ""),
+                source=self.record_kind,
+                label=str(base.get("stage") or base.get("tool_name") or base.get("model_tier") or self.record_kind),
+                started_at=payload.get("started_at"),
+                completed_at=payload.get("completed_at"),
+            )
+        except Exception as exc:  # noqa: BLE001 - telemetry stays invisible
+            logger.warning("[Trace] stage observation failed: %s", exc)
+
+
+def _canonical_stage_name(stage: Any) -> str:
+    """The one literal of ``CANONICAL_STAGES`` a label names, or ``""`` for "invented".
+
+    R688 判据①: a stage event has to carry the literal the five-segment ledger already
+    knows. A name outside that vocabulary is a row no ruler can compare, so it is refused
+    here rather than trusted -- the same "no self-invented stage" rule
+    ``app/common/stage_timing.py::classify_stage`` applies to samples.
+    """
+    from app.common.stage_timing import CANONICAL_STAGES
+
+    label = str(stage or "").strip().lower()
+    return label if label in CANONICAL_STAGES else ""
+
+
+def _refuse_stage_name(stage: Any) -> dict[str, Any]:
+    """Refuse a name the ledger cannot attribute, and make the refusal leave a number.
+
+    Nothing is persisted. The failure still has to be countable, because "a dropped
+    segment is how a stage sum fakes a match" is the first design rule of
+    ``app/common/stage_timing.py`` -- so the drop is recorded as a collector failure
+    (judgement 3: silent, never raised) instead of looking like an empty vocabulary.
+    """
+    try:
+        from app.common.stage_timing import default_stage_ledger
+
+        default_stage_ledger().failures += 1
+    except Exception:  # noqa: BLE001 - counting must not outrank the refusal
+        pass
+    logger.warning("[Trace] stage event refused: %r is not a canonical segment", stage)
+    return {}
+
+
+def record_stage_event(
+    config: Any,
+    *,
+    stage: str,
+    duration_ms: float,
+    status: str = "completed",
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    tier: str = "",
+    summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist one segment that is neither a model call nor a tool call.
+
+    Not every segment R51 names has a span to inherit: ``reflect`` is a rule pass, and
+    the query rewriter lives behind a file this ticket may not touch. This is the additive
+    entry point those call sites can adopt with one line, and it goes through the same
+    ``ExecutionSpan`` primitives so the "no owner, no record" rule still applies. It
+    deliberately does not touch the evidence bag: writing a duration must not change what
+    the answer cites.
+
+    R688 made this the entry point the product actually calls, and it refuses a label that
+    is not in ``app/common/stage_timing.py::CANONICAL_STAGES``: an invented segment writes
+    no event and no sample, and is counted as a collector failure.
+    """
+    label = _canonical_stage_name(stage)
+    if not label:
+        return _refuse_stage_name(stage)
+    identity = span_identity(config)
+    span = ExecutionSpan(
+        record_kind="stage_windows",
+        record_id=f"{identity.get('trace_id') or 'trace'}:stage:{uuid4().hex}",
+        identity=identity,
+        started_event="stage.started",
+        finished_event="stage.finished",
+        base_payload={
+            "stage": label,
+            "agent_run_id": identity["agent_run_id"],
+            "agent_step_id": identity["agent_step_id"],
+            "worker": identity["worker"],
+            "model_tier": tier,
+            "lane": identity.get("lane", ""),
+            "rule": identity.get("rule", ""),
+            "lane_source": identity.get("lane_source", ""),
+        },
+    )
+    payload = {
+        "record_id": span.record_id,
+        "record_kind": span.record_kind,
+        "status": status,
+        "started_at": started_at or span.started_at,
+        "completed_at": completed_at or _utc_now(),
+        "duration_ms": int(duration_ms),
+        "summary": dict(summary or {}),
+    }
+    span.record(span.finished_event, status, payload)
+    span._observe_stage(payload)
+    return payload
+
+
+@contextlib.contextmanager
+def stage_account(
+    config: Any,
+    *,
+    stage: str,
+    tier: str = "",
+    summary: dict[str, Any] | None = None,
+):
+    """Time one block of product code and land exactly one ``stage.finished`` event.
+
+    This is the shape R688 needed: a segment with no span of its own -- a rule node, or a
+    node whose model call carries no owner, so ``ExecutionSpan.active`` is false and
+    ``record()`` returns early -- gets its duration from the boundary that actually runs
+    it. One call site writes one event plus one ledger sample, never a second meter for
+    work a model or tool span already timed: two accounts over one interval is exactly
+    what ``app/common/stage_timing.py::aggregate_stage_latency`` cannot resolve, and the
+    stage-sum gate is the number this instrumentation exists to serve.
+
+    Timing discipline (R688 判据⑤): the cost on the caller thread is two
+    ``time.monotonic()`` reads, two stamps, and the one journal append ``record()`` has
+    always made. Nothing here can fail a business answer -- a collector that raises is
+    the failure R51 judgement 3 forbids -- so the write is guarded and logged.
+    """
+    started = time.monotonic()
+    started_at = _utc_now()
+    status = "completed"
+    try:
+        yield
+    except BaseException:
+        status = "failed"
+        raise
+    finally:
+        try:
+            record_stage_event(
+                config,
+                stage=stage,
+                duration_ms=(time.monotonic() - started) * 1000.0,
+                status=status,
+                started_at=started_at,
+                tier=tier,
+                summary=summary,
+            )
+        except Exception as exc:  # noqa: BLE001 - telemetry never reaches the request
+            logger.warning("[Trace] stage account was not recorded: %s", exc)
+
+
+def _reported_count(value: Any) -> int | None:
+    """One rule for "the server counted this": an int, or ``None``.
+
+    Shared by both reply shapes on purpose, because both failure modes of the old code lived
+    in the gap between them: a count the server never reported had to stay ``None`` (a 0 here
+    reads as "counted zero", and NULL is a different fact), and a count the server *did*
+    report had to survive whatever object shape it arrived in. Nothing in here estimates:
+    ``app.common.model_budget.estimate_prompt_tokens`` sizes clocks and budgets, and following
+    跟进单 §21（「不得估算冒充实测 token 数」）it is not allowed to become a metered number.
+    """
+    return value if isinstance(value, int) else None
+
+
+#: R38 registered this string as the name of a fact -- "the native leg reports no cached
+#: tokens". R29's captured frames refute it: the native ``/api/chat`` done frame really does
+#: carry ``prompt_eval_cached_count`` (the four verbatim frames in
+#: ``tests/test_r29_thinking_tax.py`` section D report 148 / 1 / 3 of them). The literal stays
+#: here only because ``tests/test_r38_cached_tokens_honesty.py:81`` and the contract row at
+#: ``docs/api/contract-v1.md:850`` pin it, and it stays as a labelled historical marker: R146
+#: corrects the sentence, R142 owns the contract prose. Nothing below treats it as a reading.
+REFUTED_CACHED_TOKEN_CLAIM = "native_leg_reports_no_cached_tokens"
+
+
+def _cached_token_count(usage: Any, response: Any) -> int | None:
+    """The cached-token count this reply actually carries, or ``None`` when it carries none.
+
+    Three names for one server-side fact, all three readings rather than derivations:
+
+    * ``usage_metadata["input_token_details"]["cache_read"]`` -- the name LangChain gives the
+      compatible leg's ``usage.prompt_tokens_details.cached_tokens``. Checked against
+      ``langchain_openai.chat_models.base._create_usage_metadata``, which drops a ``None``
+      detail and keeps a reported 0, so "key present" means "the server said a number".
+      Measured on this host: all 9 usage-bearing rows of ``docs/perf/raw/think_off.jsonl`` report
+      ``cached_tokens`` 257 against a 506--510 prompt, and ``docs/perf/raw/prodpath.jsonl`` reports
+      292 of 543, 257 of 769, plus one honest 0 of 116.
+    * ``usage["prompt_tokens_details"]["cached_tokens"]`` -- the same field on an OpenAI-shaped
+      ``usage`` mapping that never passed LangChain's renamer.
+    * ``response.cached_tokens`` -- the seam for the native leg, and the seam is connected:
+      ``app/common/model_handler.py:613`` reads ``prompt_eval_cached_count`` off the ``done``
+      frame and ``:631`` hands it to ``ModelReply``, which grows the attribute only when the
+      server counted one (``:248`` defaults the parameter to ``None``, ``:266-267`` assigns
+      it only when that parameter is not ``None``). What this bullet used to claim -- that
+      ``model_handler.py:394-395`` copied only ``prompt_eval_count`` and ``eval_count``, so
+      nothing ever set it -- was R38's true sentence, and R43a superseded it on 2026-09-22:
+      ``:394-395`` is ``default_model_budget()`` today. Nothing in this function needs a
+      second change to meter the field.
+
+    ``None`` means "there is no reading", and the caller drops the key rather than writing a
+    zero. ``prompt_eval_count - cached`` and every similar subtraction is arithmetic done to a
+    reading, not a reading: 跟进单 §21（「不得估算冒充实测 token 数」）keeps it out of the ledger.
+    """
+    if isinstance(usage, dict):
+        for block_name, field in (
+            ("input_token_details", "cache_read"),
+            ("prompt_tokens_details", "cached_tokens"),
+        ):
+            block = usage.get(block_name)
+            if isinstance(block, dict):
+                counted = _reported_count(block.get(field))
+                if counted is not None:
+                    return counted
+    return _reported_count(getattr(response, "cached_tokens", None))
+
+
+def model_token_counts(response: Any) -> dict[str, Any]:
+    """The token counts this call came back with, or ``None`` for "not reported".
+
+    R38: exactly two reply shapes are read, and both now reach ``model_calls`` through
+    ``app/trace/store.py``.
+
+    * the provider object of the LangChain/OpenAI leg -- ``usage_metadata`` (LangChain) or a
+      ``usage`` mapping, keyed ``input_tokens`` / ``output_tokens``;
+    * :class:`app.common.model_handler.ModelReply` -- the attributes a leg carries after this
+      ticket, ``input_tokens`` (native ``prompt_eval_count``) and ``output_tokens`` (native
+      ``eval_count``). Before R38 this shape matched neither branch, so a reply that had been
+      counted came back as two ``None`` values.
+
+    A third key, ``cached_tokens``, joins them **only on a call whose reply really reported
+    one**; with no reading the key stays absent rather than becoming a zero. R38 withheld any
+    third key for reasons the shipping host contradicts, and R146 keeps the withholding rule
+    while correcting the reason, shape by shape:
+
+    * a reply that carries a LangChain ``usage_metadata`` (or a bare OpenAI-shaped ``usage``
+      mapping) -- which is exactly what the two ``_ResilientModel.invoke`` exits hand this
+      function (``app/agents/nodes.py:370`` and ``:505``), because those calls go out without
+      streaming. That shape reports
+      ``usage.prompt_tokens_details.cached_tokens``, and it is metered here for the first
+      time in R146.
+    * the query rewriter (``app/rag/retrieval_pipeline.py:214-217``) is evidence about the
+      server, not an entry point here: it is non-streaming too, but it answers through
+      ``app/common/model_handler.py`` and never reaches this function. Its readings -- and
+      ``docs/perf/raw/prodpath.jsonl`` -- are what prove the server reports a cached count on
+      a non-streaming call, which is the half R38 got wrong.
+    * native leg ``/api/chat`` -- the ``done`` frame reports ``prompt_eval_cached_count``
+      and this process no longer drops it: ``app/common/model_handler.py:613`` reads it,
+      ``:631`` puts it on the reply, and :func:`_cached_token_count` meters it. The copy R38
+      named as missing at this spot, ``model_handler.py:394-395``, was written by R43a, and
+      those two lines are ``default_model_budget()`` now. An absent key on a native round
+      therefore means the frame did not count a cached prefix -- never "the cache did not hit",
+      and no longer "a field this process threw away". R523 then built the landing side:
+      ``0018_prompt_cache_tokens.sql`` adds ``model_calls.cached_tokens`` (nullable, no default,
+      no backfill), ``app/trace/schema.py`` declares it, ``app/trace/projections.py`` hands it to
+      the row, and the PostgreSQL adapter's own column tuple
+      (``app/storage/persistence.py``) names it, so the INSERT the adapter builds carries it.
+      What that closes is a round trip on the checked-in in-memory double
+      ``tests/_r250_fake_postgres.py`` -- it proves the value travels out of this process into
+      the row and comes back, not that the shipping host's cache hits anything: a measured
+      ``cached_tokens`` for product traffic is still owed by the next open-window readout.
+    * compatible leg, **streaming** -- the answer leg, and the one this bullet list exists to
+      describe: its frames carry no ``usage`` object at all, so nothing about tokens is
+      measurable from a stream, neither the two counters nor a cached count. That is why
+      ``model_calls.input_tokens``/``output_tokens`` are NULL on streamed rounds; it is a fact
+      about the frame shape, pinned by the verbatim frames in
+      ``tests/test_r29_thinking_tax.py`` section D and by the host readings at
+      ``app/common/model_budget.py:377-379``. 🔴 A streamed round with no ``cached_tokens``
+      therefore means "the stream could not say", never "the prefix cache did not hit" -- the
+      cache can be warm and the stream still silent. Anyone who wants a measured cached count
+      has to ask on a non-streaming shape, which is the condition R43 判据② (实测 cached_tokens
+      > 0) has to be stated against.
+
+    Nothing in here estimates: ``app.common.model_budget.estimate_prompt_tokens`` sizes clocks
+    and budgets, and following 跟进单 §21（「不得估算冒充实测 token 数」）it is not allowed to
+    become a metered number -- not as a count, not as a subtraction, not as a zero.
+    """
+    usage = getattr(response, "usage_metadata", None)
+    if not isinstance(usage, dict):
+        usage = getattr(response, "usage", None) if isinstance(getattr(response, "usage", None), dict) else None
+    if usage:
+        counts = {
+            "input_tokens": _reported_count(usage.get("input_tokens")),
+            "output_tokens": _reported_count(usage.get("output_tokens")),
+        }
+    else:
+        counts = {
+            "input_tokens": _reported_count(getattr(response, "input_tokens", None)),
+            "output_tokens": _reported_count(getattr(response, "output_tokens", None)),
+        }
+    cached = _cached_token_count(usage, response)
+    if cached is not None:
+        counts["cached_tokens"] = cached
+    return counts
+
+
+#: The spellings one server reading arrives under, per wire shape. The compatible leg names
+#: them ``prompt_tokens`` / ``completion_tokens``, the native leg names them
+#: ``prompt_eval_count`` / ``eval_count``, LangChain renames them ``input_tokens`` /
+#: ``output_tokens``, and the cached side is ``usage.prompt_tokens_details.cached_tokens``,
+#: ``usage.input_token_details.cache_read`` or ``prompt_eval_cached_count``. One fact, several
+#: spellings: the meter below only ever selects a spelling the block actually carries. It
+#: never converts one into another, never subtracts one from another, never defaults one.
+USAGE_INPUT_KEYS = ("input_tokens", "prompt_tokens", "prompt_eval_count")
+USAGE_OUTPUT_KEYS = ("output_tokens", "completion_tokens", "eval_count")
+USAGE_CACHED_KEYS = ("cached_tokens", "cache_read", "prompt_eval_cached_count")
+USAGE_DETAIL_BLOCKS = ("input_token_details", "prompt_tokens_details")
+
+
+def _usage_block(usage: Any) -> dict[str, Any] | None:
+    """The usage block as a mapping, whether the client handed back a dict or a model.
+
+    ``openai`` hands a streamed chunk a ``CompletionUsage`` object; the frames captured off
+    the wire are plain dicts. Both are the same server fact, so losing a reading over that
+    difference would be a defect in this meter rather than a fact about the round.
+    """
+    if isinstance(usage, dict):
+        return usage
+    dump = getattr(usage, "model_dump", None)
+    if callable(dump):
+        dumped = dump()
+        if isinstance(dumped, dict):
+            return dumped
+    return None
+
+
+def _first_reported(block: dict[str, Any], names: tuple[str, ...]) -> int | None:
+    """The first of these spellings the block really reports, or ``None`` for "not said".
+
+    :func:`_reported_count` is what makes "present" mean "the server said a number": a
+    reported 0 stays a 0, an absent key stays ``None``. 跟进单 §21（「不得估算冒充实测 token
+    数」）keeps the gap between those two answers out of the ledger, and it is the same rule
+    ``app/common/model_handler.py`` states for ``cached_tokens``.
+    """
+    for name in names:
+        counted = _reported_count(block.get(name))
+        if counted is not None:
+            return counted
+    return None
+
+
+def stream_usage_counts(usage: Any) -> dict[str, Any]:
+    """Meter the usage block one **streamed** round reports, and name what it never said.
+
+    R670 opened this seam because the legacy ``POST /api/v1/chat`` leg never handed
+    :func:`model_token_counts` a reply object: it consumes a stream, and a stream carries its
+    counters (when it carries them at all) on one tail frame that no reply shape covers. The
+    two answers are two different facts, and the empty answer is a fact too.
+
+    * **no usage block** -- both counters come back ``None`` and ``usage_keys`` comes back as
+      the empty list. That is the frame shape speaking: the compatible leg stays silent on a
+      stream unless the request opts into ``stream_options.include_usage``, which is measured
+      here, not theorised (R31 探针, landed in ``docs/perf/latency-budget-2026-09-16.md`` and
+      in the R31 account in the follow-up sheet; the ``/ask`` answer legs already ask for it,
+      through ``app/agents/nodes.py::_answer_leg_tap``). A ``model_calls.input_tokens`` of NULL
+      on such a round means "this round could not say" -- never "the cache did not hit", never
+      a smoothed 0.
+    * **a block that counted** -- the columns take the server's own numbers under whichever
+      spelling that block uses, and ``usage_keys`` holds the sorted key names of the block as
+      the server sent it, so a reader can see which shape metered without re-guessing it.
+    * **a block that counted one side only** -- the other side stays ``None``. Selecting a
+      spelling is not arithmetic.
+
+    ``cached_tokens`` joins the dict only when a reading exists, the rule
+    :func:`model_token_counts` already follows; ``app/trace/projections.py::_span_metadata``
+    then decides what the row's ``metadata`` says about the shape, and the column keeps its
+    NULL when the key is absent.
+    """
+    block = _usage_block(usage)
+    if block is None:
+        return {"input_tokens": None, "output_tokens": None, "usage_keys": []}
+    counts: dict[str, Any] = {
+        "input_tokens": _first_reported(block, USAGE_INPUT_KEYS),
+        "output_tokens": _first_reported(block, USAGE_OUTPUT_KEYS),
+    }
+    cached = _first_reported(block, USAGE_CACHED_KEYS)
+    if cached is None:
+        for block_name in USAGE_DETAIL_BLOCKS:
+            details = block.get(block_name)
+            if isinstance(details, dict):
+                cached = _first_reported(details, USAGE_CACHED_KEYS)
+                if cached is not None:
+                    break
+    if cached is not None:
+        counts["cached_tokens"] = cached
+    counts["usage_keys"] = sorted(str(key) for key in block)
+    return counts
+
+def start_model_call(
+    config: Any,
+    *,
+    provider: str,
+    model_name: str,
+    queue_wait_ms: int | None = None,
+    stage: str = "",
+    model_tier: str = "",
+) -> ExecutionSpan:
+    """Open the span for one model call.
+
+    R51 added ``stage`` and ``model_tier``. Both are optional and both are written
+    only when the caller passes them: an event written by a call site that says
+    nothing keeps the exact bytes it kept before, which is what lets judgement 3
+    ("observation must not change behaviour") be tested against the old shape.
+    """
+    identity = span_identity(config)
+    base_payload = {
+        "provider": provider,
+        "model_name": model_name,
+        "agent_run_id": identity["agent_run_id"],
+        "agent_step_id": identity["agent_step_id"],
+        "worker": identity["worker"],
+        "queue_wait_ms": queue_wait_ms,
+        "lane": identity.get("lane", ""),
+        "rule": identity.get("rule", ""),
+        "lane_source": identity.get("lane_source", ""),
+    }
+    if stage:
+        base_payload["stage"] = stage
+    if model_tier:
+        base_payload["model_tier"] = model_tier
+    span = ExecutionSpan(
+        bag=bag_from_config(config),
+        record_kind="model_calls",
+        record_id=f"{identity.get('trace_id') or 'trace'}:model:{uuid4().hex}",
+        identity=identity,
+        started_event="model.started",
+        finished_event="model.finished",
+        base_payload=base_payload,
+    )
+    return span.begin()
+
+
+def start_tool_call(
+    config: Any,
+    *,
+    tool_name: str,
+    arguments: dict[str, Any] | None = None,
+) -> ExecutionSpan:
+    identity = span_identity(config)
+    span = ExecutionSpan(
+        bag=bag_from_config(config),
+        record_kind="tool_calls",
+        record_id=f"{identity.get('trace_id') or 'trace'}:tool:{uuid4().hex}",
+        identity=identity,
+        started_event="tool_call.started",
+        finished_event="tool_call.finished",
+        base_payload={
+            "tool_name": tool_name,
+            "agent_run_id": identity["agent_run_id"],
+            "agent_step_id": identity["agent_step_id"],
+            "worker": identity["worker"],
+            "lane": identity.get("lane", ""),
+            "rule": identity.get("rule", ""),
+            "lane_source": identity.get("lane_source", ""),
+            "arguments": _summarize_arguments(arguments),
+        },
+    )
+    return span.begin()
+
+
+def _summarize_arguments(arguments: dict[str, Any] | None) -> dict[str, Any]:
+    from app.common.tracing import sanitize_trace_event
+
+    if not isinstance(arguments, dict):
+        return {}
+    summary = {}
+    for key, value in list(arguments.items())[:12]:
+        if isinstance(value, (int, float, bool)) or value is None:
+            summary[key] = value
+        else:
+            summary[key] = str(value)[:500]
+    return sanitize_trace_event(summary)
+
+
+def error_code_for(exc: BaseException) -> str:
+    from app.common.model_budget import ModelBudgetExhausted
+
+    if isinstance(exc, ModelBudgetExhausted):
+        return ModelBudgetExhausted.code
+    if isinstance(exc, TimeoutError):
+        return "task_timeout"
+    return "internal_error"
+
+
+__all__ = [
+    "ExecutionSpan",
+    "arm_turn_identity",
+    "current_turn_identity",
+    "reset_turn_identity",
+    "record_stage_event",
+    "stage_account",
+    "model_token_counts",
+    "stream_usage_counts",
+    "error_code_for",
+    "span_identity",
+    "start_model_call",
+    "start_tool_call",
+]

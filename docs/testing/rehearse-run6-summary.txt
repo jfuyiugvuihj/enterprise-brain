@@ -1,0 +1,59 @@
+=== R107 预演汇总（全部由本件当场从源码算出，出处见文件头）===
+baseline=4f96cb6 rows=105
+MODEL_MIN_ANSWER_TOKENS 现值=1536  DEFAULT=1536
+no_provenance_rows=29（主口径 corpus=documents/*.txt 95 篇）
+no_provenance_rows_pdf_caliber=未算（加 --pdf-caliber 才算）；口径差异见 provenance() docstring
+no_provenance_ids=approval-03 approval-05 chat-02 chat-08 chat-09 chat-11 chat-12 data-07 data-08 data-12 doc-07 doc-14 doc-15 doc-17 insight-05 insight-06 insight-07 report-03 report-07 report-08 report-09 scope-03 scope-04 scope-06 tool-03 unsupported-01 unsupported-02 unsupported-03 unsupported-04
+tier_counts={"问答": 50, "分析": 35, "报告": 20}
+advice={"照跑": 69, "人工盯": 36} 跳过=0（见 note:coverage）
+parked_any=7 ['insight-07', 'chart-01', 'chart-02', 'chart-03', 'chart-04', 'approval-05', 'tool-04']
+parked_only=2 ['chart-01', 'tool-04']
+no_doc_leg=27 ['metric-04', 'metric-05', 'metric-06', 'metric-07', 'metric-08', 'metric-09', 'metric-14', 'metric-15', 'metric-17', 'data-01', 'data-02', 'data-03', 'data-04', 'data-08', 'data-12', 'insight-06', 'insight-07', 'chart-01', 'chart-02', 'chart-03', 'chart-04', 'scope-04', 'tool-01', 'tool-02', 'tool-04', 'report-01', 'report-11']
+evidence_gate_expected_fail=23 ['metric-04', 'metric-05', 'metric-06', 'metric-07', 'metric-08', 'metric-09', 'metric-14', 'metric-15', 'metric-17', 'data-01', 'data-02', 'data-03', 'data-04', 'data-08', 'data-12', 'insight-06', 'insight-07', 'chart-01', 'chart-02', 'chart-03', 'chart-04', 'report-01', 'report-11']
+rewrite_triggered=5 ['chat-02', 'chat-06', 'chat-07', 'chat-12', 'insight-04']
+approval_leg_zero_model_call=5 ['doc-03', 'doc-12', 'approval-01', 'approval-02', 'approval-03']
+analysis_tier=46
+request_budget_at_risk=0 []
+max_high_legs=6 ⇒ 高界秒数=223.8s vs 请求预算 300.0s
+legs_distribution={"2-4": 94, "3-5": 5, "3-6": 6}
+false_green_rows=11
+   FALSEGREEN approval-01: approval_missing_amount,approval_missing_both,approval_missing_standard,offline_reimburse
+   FALSEGREEN chart-01: park_both,park_chart
+   FALSEGREEN chart-02: park_both,park_chart
+   FALSEGREEN chart-03: no_answer
+   FALSEGREEN chat-04: approval_missing_amount,approval_missing_both,offline_reimburse
+   FALSEGREEN chat-05: approval_missing_amount,approval_missing_both,approval_missing_standard,offline_reimburse
+   FALSEGREEN data-05: offline_reimburse
+   FALSEGREEN data-06: offline_analysis
+   FALSEGREEN doc-02: offline_reimburse
+   FALSEGREEN insight-03: offline_generic
+   FALSEGREEN tool-04: park_both,park_chart
+plan_shapes={"doc": 71, "data": 21, "doc+approval": 5, "data+chart": 4, "chart": 2, "data+doc": 1, "doc+chart": 1}
+route_class={"doc": 76, "data": 27, "mixed": 2}
+lane_tier={"qa/chat": 59, "analysis/analysis": 26, "report/analysis": 20}
+route_divergent=61 ['doc-03', 'doc-07', 'doc-09', 'doc-10', 'doc-12', 'doc-13', 'doc-14', 'doc-15', 'doc-16', 'doc-17', 'chat-01', 'chat-02', 'chat-03', 'chat-04', 'chat-05', 'chat-06', 'chat-07', 'chat-09', 'chat-10', 'chat-11', 'metric-02', 'metric-06', 'metric-07', 'metric-08', 'metric-09', 'metric-10', 'metric-11', 'metric-12', 'metric-13', 'metric-16', 'metric-17', 'metric-18', 'metric-19', 'data-04', 'data-07', 'data-08', 'data-09', 'data-10', 'data-11', 'data-12', 'insight-01', 'insight-02', 'insight-03', 'insight-04', 'insight-07', 'approval-01', 'approval-02', 'approval-03', 'approval-04', 'approval-06', 'scope-01', 'scope-03', 'scope-06', 'unsupported-01', 'unsupported-02', 'unsupported-03', 'unsupported-04', 'report-01', 'report-03', 'report-06', 'report-08']
+route_kw_fallback_empty=48 ['doc-07', 'doc-09', 'doc-10', 'doc-13', 'doc-14', 'doc-15', 'doc-16', 'doc-17', 'chat-01', 'chat-02', 'chat-03', 'chat-04', 'chat-05', 'chat-06', 'chat-07', 'chat-09', 'chat-10', 'chat-11', 'metric-02', 'metric-06', 'metric-07', 'metric-08', 'metric-09', 'metric-16', 'metric-17', 'metric-18', 'metric-19', 'data-09', 'data-10', 'data-11', 'data-12', 'insight-01', 'insight-02', 'insight-03', 'insight-04', 'insight-07', 'approval-04', 'approval-06', 'scope-01', 'scope-03', 'scope-06', 'unsupported-01', 'unsupported-02', 'unsupported-03', 'unsupported-04', 'report-03', 'report-06', 'report-08']
+export_leg_any_path=13 ['scope-02', 'scope-05', 'tool-01', 'tool-02', 'tool-03', 'report-02', 'report-04', 'report-05', 'report-07', 'report-09', 'report-10', 'report-11', 'report-12']
+parked_any_path=20 ['insight-07', 'chart-01', 'chart-02', 'chart-03', 'chart-04', 'approval-05', 'scope-02', 'scope-05', 'tool-01', 'tool-02', 'tool-03', 'tool-04', 'report-02', 'report-04', 'report-05', 'report-07', 'report-09', 'report-10', 'report-11', 'report-12']
+data_leg_any_path=30 ['metric-04', 'metric-05', 'metric-06', 'metric-07', 'metric-08', 'metric-09', 'metric-10', 'metric-11', 'metric-12', 'metric-13', 'metric-14', 'metric-15', 'metric-17', 'data-01', 'data-02', 'data-03', 'data-04', 'data-07', 'data-08', 'data-12', 'insight-06', 'insight-07', 'chart-02', 'chart-03', 'chart-04', 'scope-04', 'tool-01', 'tool-02', 'report-01', 'report-11']
+requires_evidence_true=83
+evidence_coverage_ceiling=82/105 =0.781（[算术] 23 行结构上不可能有 document 来源）
+rows_with_no_failure_mode=16 ['doc-01', 'doc-03', 'doc-04', 'doc-05', 'doc-06', 'doc-08', 'doc-11', 'doc-12', 'doc-18', 'doc-19', 'metric-01', 'metric-03', 'metric-10', 'metric-11', 'approval-02', 'scope-02']
+no_provenance_in_table=29
+
+=== 档位预算静态结论 ===
+{"tier": "chat", "declared": 256, "floor": 1536, "ceiling": 120.0, "affordable_max": 834, "self_decode_seconds": 32.0, "needed_worst_seconds": 163.0, "read_timeout_worst_seconds": 120.0, "clamp_possible": false, "always_unaffordable": false, "unaffordable_above_prompt_tokens": 2532.2}
+{"tier": "plan", "declared": 256, "floor": 1536, "ceiling": 120.0, "affordable_max": 834, "self_decode_seconds": 32.0, "needed_worst_seconds": 163.0, "read_timeout_worst_seconds": 120.0, "clamp_possible": false, "always_unaffordable": false, "unaffordable_above_prompt_tokens": 2532.2}
+{"tier": "compress", "declared": 512, "floor": 1536, "ceiling": 120.0, "affordable_max": 834, "self_decode_seconds": 64.0, "needed_worst_seconds": 191.4, "read_timeout_worst_seconds": 120.0, "clamp_possible": false, "always_unaffordable": false, "unaffordable_above_prompt_tokens": 1412.2}
+{"tier": "rewrite", "declared": 256, "floor": 1536, "ceiling": 120.0, "affordable_max": 834, "self_decode_seconds": 32.0, "needed_worst_seconds": 163.0, "read_timeout_worst_seconds": 120.0, "clamp_possible": false, "always_unaffordable": false, "unaffordable_above_prompt_tokens": 2532.2}
+{"tier": "code", "declared": 512, "floor": 1536, "ceiling": 120.0, "affordable_max": 834, "self_decode_seconds": 64.0, "needed_worst_seconds": 191.4, "read_timeout_worst_seconds": 120.0, "clamp_possible": false, "always_unaffordable": false, "unaffordable_above_prompt_tokens": 1412.2}
+{"tier": "alert", "declared": 384, "floor": 1536, "ceiling": 120.0, "affordable_max": 834, "self_decode_seconds": 48.0, "needed_worst_seconds": 177.2, "read_timeout_worst_seconds": 120.0, "clamp_possible": false, "always_unaffordable": false, "unaffordable_above_prompt_tokens": 1972.2}
+{"tier": "analysis", "declared": 1536, "floor": 1536, "ceiling": 120.0, "affordable_max": 834, "self_decode_seconds": 192.0, "needed_worst_seconds": 304.9, "read_timeout_worst_seconds": 120.0, "clamp_possible": false, "always_unaffordable": true, "unaffordable_above_prompt_tokens": -3067.8}
+
+=== [推算] 用的算式与参数 ===
+legs_min = 1 + len(计划中会产生模型调用的腿) (+1 若追问改写)；legs_max = 2 + 2*len(同类腿) (+1 改写)；approval 腿记 0 次模型调用（app/agents/orchestrator.py:729-841 是纯规则 worker）
+每题秒数 ≈ legs × 37.3s（跟进单§42 表#6：compat+thinking off+1536 = 37.3s/发）
+整窗 [秒] ≈ Σ(legs_min) × 37.3 + 105 × 7.0 间隔（上界同理换 Σ(legs_max)）
+平均下界腿数=2.10 ⇒ 整窗≈2.49 h；上界=4.73 h
+限流：10 次/分钟/用户，适配器最小间隔 7.0s ⇒ 任意 60s 窗内最多 9 发 < 10 ⇒ 不入队道
+答案缓存：键=md5(scope)[:12]+md5(问题.strip())[:12]（app/common/cache.py:194-195），TTL=1800s；105 题题面互不重复⇒单趟自相捂热=0

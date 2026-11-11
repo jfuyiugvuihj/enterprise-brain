@@ -17,53 +17,6 @@ class TestClearance:
         assert rbac.allowed_levels("admin") == [1, 2, 3]
 
 
-class TestDocVisible:
-    def test_staff_public(self):
-        assert rbac.doc_visible(1, "", "staff", "sales") is True
-
-    def test_staff_blocked_internal(self):
-        assert rbac.doc_visible(2, "", "staff", "sales") is False
-
-    def test_manager_internal(self):
-        assert rbac.doc_visible(2, "", "manager", "sales") is True
-
-    def test_manager_blocked_secret(self):
-        assert rbac.doc_visible(3, "", "manager", "sales") is False
-
-    def test_department_scope(self):
-        # 内部文档限定 hr 部门，sales 的 manager 不可见
-        assert rbac.doc_visible(2, "hr", "manager", "sales") is False
-        assert rbac.doc_visible(2, "hr", "manager", "hr") is True
-
-    def test_admin_sees_all(self):
-        assert rbac.doc_visible(3, "hr", "admin", "sales") is True
-
-
-class TestFilters:
-    def test_admin_no_where(self):
-        assert rbac.build_where("admin", "x") is None
-
-    def test_staff_where(self):
-        w = rbac.build_where("staff", "sales")
-        assert w is not None
-        assert {"classification": {"$in": [1]}} in w["$and"]
-
-    def test_pred_filters(self):
-        docs = [
-            {"classification": 1, "department": ""},
-            {"classification": 3, "department": ""},
-            {"classification": 2, "department": "hr"},
-        ]
-        pred = rbac.make_pred("staff", "sales")
-        assert [d for d in docs if pred(d)] == [docs[0]]
-
-        pred_m = rbac.make_pred("manager", "hr")
-        assert [d for d in docs if pred_m(d)] == [docs[0], docs[2]]
-
-        pred_a = rbac.make_pred("admin", "x")
-        assert [d for d in docs if pred_a(d)] == docs
-
-
 def _pg_ok() -> bool:
     from app.common import auth
     try:

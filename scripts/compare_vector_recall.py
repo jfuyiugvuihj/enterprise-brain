@@ -1,0 +1,541 @@
+#!/usr/bin/env python
+"""R58 判据④：Chroma 召回 vs PGVector 召回的逐题只读对比脚本。
+
+本脚本一行都不写：连上 PostgreSQL 后立刻把会话设成 READ ONLY，Chroma 侧只调 get / query。
+它回答的是"镜像能不能当读路径"（R59 的前置），不在本机证明任何事。
+
+跑法（业主真机；已跑 migrations/0010_pgvector_chunks.sql，且双写开关开过一整轮重建）：
+
+    python scripts/compare_vector_recall.py --k 5 --out /tmp/r58_recall_diff.json
+
+    # 只看语料级差集、不给题目算向量（不需要 Ollama 在场）：
+    python scripts/compare_vector_recall.py --skip-questions
+
+前置（缺一条就别读结论）：
+  1. 应用侧停写，或两侧都指只读副本 / 目录快照：Chroma 的 PersistentClient 对同一目录是
+     单写者锁，服务在跑时这里要么报锁错误、要么读到半写状态。
+  2. 已跑 0010：vector_scope 里有 schema_version=1 那一行，且列宽等于声明维度。
+  3. VECTOR_DUAL_WRITE=on 之下完整重建过一次索引，否则两边数量天然不等，差异表读出来的
+     是"没同步过"而不是"两个引擎不同"。
+  4. 算逐题召回时本机 Ollama 在位、模型与 EMBEDDING_MODEL 一致：题向量必须由生产侧同一
+     模型产出，否则比的不是同一件事（R22 口径）。本脚本不改模型、不改维度、不加重排。
+
+退出码（R269 判据④ 归真）：
+  0 = 跑成了，两侧无差异
+  1 = 跑成了，且**检出差异**（正常结论，交人判读）—— 这个码只允许由「有差异」发出
+  2 = 前置不满足 / 量具自己没跑成：未迁移、目录缺失、取不到 collection、空库测不起、
+      距离口径判读不出、口径漂移，以及脚本自身抛出的任何异常。此时不输出召回结论，
+      且 stderr 首行必带「[前置不满足]」，让照退出码分诊的自动化能分开两种读数。
+本文件历史上有九处 `raise SystemExit("字符串")`（:100/:135/:148/:156/:166/:181/:185/:190/
+:376），Python 对字符串参数一律给退出码 1，与「1 = 有差异」撞车：那九条「根本没跑成」
+的路径在自动化眼里全是「跑成了、有差异」。现在九处统一走 fail_precondition()。
+契约钉：tests/test_r269_exit_codes.py（含反证钉：目录真实、集合名对、count=0 的空库）。
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.db.connection import open_connection, parse_database_settings  # noqa: E402
+from app.rag import pg_store  # noqa: E402
+
+DESCRIPTION = "R58 双写镜像逐题召回对比（只读，不写一行业务数据）"
+
+#: R269 判据④：退出码只有这三个语义，且 1  exclusively 表示"检出差异"。
+EXIT_NO_DIFFERENCE = 0
+EXIT_DIFFERENCE = 1
+EXIT_PRECONDITION = 2
+#: stderr 首行的固定前缀：自动化据此把"没跑成"与"跑成了"分开记账。
+PRECONDITION_PREFIX = "[前置不满足] "
+
+
+def fail_precondition(reason: str):
+    """前置不满足的唯一出口：原因进 stderr（首行带前缀），退出码 2，绝不借用 1。
+
+    为什么不是 `raise SystemExit("字符串")`：那种写法把消息交给解释器打印，退出码固定为
+    1，而 1 在本脚本里已经属于"跑成了、检出差异"。R264 就是被这条撞车读反过一次。
+    """
+    print(PRECONDITION_PREFIX + str(reason), file=sys.stderr, flush=True)
+    raise SystemExit(EXIT_PRECONDITION)
+
+#: 本脚本只发 SELECT。读 vector_scope 的语句在这里重写一遍而不复用镜像的探测常量，是因为
+#: 那些常量属于写路径；一个承诺只读的工具不该依赖写路径的内部形状。表名、schema_version、
+#: 口径判定仍然 import 复用，一个数字都不重抄。
+_READ_SCOPE_SQL = (
+    "SELECT embedding_model, dimension, distance_function "
+    "FROM vector_scope WHERE schema_version = %s"
+)
+_READ_COLUMN_TYPE_SQL = (
+    "SELECT format_type(atttypid, atttypmod) FROM pg_attribute "
+    "WHERE attrelid = %s::regclass AND attname = 'embedding' "
+    "AND attnum > 0 AND NOT attisdropped"
+)
+_READ_VECTOR_ROWS_SQL = "SELECT vector_id, index_version_id, vector_dims(embedding) AS dims FROM "
+_COUNT_ALL_ZERO_SQL = "SELECT count(*) FROM "
+_COUNT_CHUNK_ROWS_SQL = "SELECT count(*) FROM chunks"
+_COUNT_CHUNK_EMBEDDED_SQL = "SELECT count(embedding) FROM chunks"
+
+#: 与 0010 建向量索引时用的距离一一对应，不靠猜
+DISTANCE_OPERATORS = {"cosine": "<=>", "l2": "<->", "inner_product": "<#>"}
+_CHROMA_SPACES = {"l2": "l2", "euclidean": "l2", "cosine": "cosine", "ip": "inner_product"}
+_TABLE_NAME = re.compile(r"[a-z_][a-z0-9_]*\Z")
+
+DEFAULT_FIXTURES = (
+    "tests/fixtures/business_evaluation_30.jsonl",
+    "tests/fixtures/business_evaluation_100.jsonl",
+)
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
+    parser.add_argument("--database-url", default=os.getenv("DATABASE_URL", "") or None)
+    parser.add_argument("--chroma-dir", default=os.getenv("CHROMA_DIR", "./chroma_db"))
+    # R120：默认 collection 名必须就是生产在写的那一个。写入侧叫它 enterprise_docs
+    # （app/rag/retriever.py 里 get_or_create_collection("enterprise_docs")），而这里原先
+    # 抄的是 Postgres 的库名 enterprise_brain —— 两个名字长得像，不是一回事。业主照手册
+    # 第一步跑就会死在 open_chroma() 的"取不到 collection"上（退出码 2，不带任何对比结论）。
+    # tests/test_r120_p3_collection_default.py 把两侧名字钉在一起，防止以后再各写各的。
+    parser.add_argument("--collection",
+                        default=os.getenv("CHROMA_COLLECTION", "enterprise_docs"))
+    parser.add_argument("--vector-table", default=pg_store.DEFAULT_VECTOR_TABLE)
+    parser.add_argument("--k", type=int, default=5)
+    parser.add_argument("--fixture", action="append", default=None,
+                        help="逐题对比的题集 jsonl，可重复；默认用仓内两份评测集")
+    parser.add_argument("--skip-questions", action="store_true",
+                        help="只做语料级差集，不算逐题召回（不需要 embedding 模型在场）")
+    parser.add_argument("--all", action="store_true", help="打印每一题，而不只打印有差异的题")
+    parser.add_argument("--out", default=None, help="把结论写成 JSON，便于贴进交付说明")
+    return parser.parse_args(argv)
+
+
+def _safe_table(name: str) -> str:
+    """表名进 SQL 之前先过白名单：这是给业主用的工具，不接受手滑带进来的引号。"""
+    if not _TABLE_NAME.match(str(name)) or str(name) not in {pg_store.DEFAULT_VECTOR_TABLE,
+                                                                 "chunks"}:
+        fail_precondition("不接受的表名：" + str(name))
+    return str(name)
+
+
+def _row(row, key: str, index: int):
+    """dict_row 与裸 tuple 两种行形状都要能读：生产走前者，测试假连接走后者。"""
+    if isinstance(row, dict):
+        return row.get(key)
+    return row[index]
+
+
+def _scalar(row):
+    if row is None:
+        return 0
+    if isinstance(row, dict):
+        return next(iter(row.values()))
+    return row[0]
+
+
+def _zero_literal(dimension: int) -> str:
+    return "[" + ",".join(["0.0"] * int(dimension)) + "]"
+
+
+def _first_difference(left, right):
+    for position in range(max(len(left), len(right))):
+        left_value = left[position] if position < len(left) else None
+        right_value = right[position] if position < len(right) else None
+        if left_value != right_value:
+            return position
+    return None
+
+
+def connect_read_only(url: str):
+    settings = parse_database_settings(url)
+    if not settings.is_postgresql:
+        fail_precondition("连接串不是 PostgreSQL：" + str(url))
+    connection = open_connection(settings)
+    try:
+        connection.read_only = True  # psycopg3：会话事务只读，误写当场报错
+    except Exception as exc:  # pragma: no cover - 驱动不支持时至少说清楚
+        print("[warn] 无法设成 READ ONLY（" + str(exc) + "）；本脚本仍然只发 SELECT")
+    return connection
+
+
+def read_scope(connection, vector_table: str) -> dict:
+    """读 0010 登记的口径，并确认它和运行时一致；不一致就是前置不满足。"""
+    row = connection.execute(_READ_SCOPE_SQL, (pg_store.VECTOR_SCHEMA_VERSION,)).fetchone()
+    if row is None:
+        fail_precondition(
+            "vector_scope 里没有 schema_version="
+            + str(pg_store.VECTOR_SCHEMA_VERSION)
+            + " 这一行：先跑 0010_pgvector_chunks.sql")
+    dimension = int(_row(row, "dimension", 1) or 0)
+    type_row = connection.execute(_READ_COLUMN_TYPE_SQL, (vector_table,)).fetchone()
+    column_type = str(_row(type_row, "format_type", 0) or "") if type_row is not None else ""
+    if column_type != "vector(" + str(dimension) + ")":
+        fail_precondition(
+            vector_table + ".embedding 实际类型 "
+            + (column_type or "不存在") + "，与声明的 vector(" + str(dimension) + ") 不符")
+    stored = pg_store.VectorScope(
+        embedding_model=str(_row(row, "embedding_model", 0) or ""),
+        dimension=dimension,
+        distance_function=str(_row(row, "distance_function", 2) or ""),
+    )
+    disagreements = pg_store.scope_disagreements(pg_store.configured_embedding_scope(), stored)
+    if disagreements:
+        fail_precondition(
+            "库里口径 model=" + stored.embedding_model
+            + " dimension=" + str(stored.dimension)
+            + " 与运行时不一致（" + ", ".join(disagreements) + "）：先按 R22 重建索引")
+    return {
+        "embedding_model": stored.embedding_model,
+        "dimension": stored.dimension,
+        "distance_function": stored.distance_function,
+        "column_type": column_type,
+    }
+
+
+def open_chroma(chroma_dir: str, collection_name: str):
+    directory = Path(chroma_dir)
+    if not directory.exists():
+        fail_precondition("Chroma 目录不存在：" + str(directory) + "（不要新建）")
+    try:
+        import chromadb
+    except ImportError as exc:  # pragma: no cover
+        fail_precondition("chromadb 不可用：" + str(exc))
+    client = chromadb.PersistentClient(path=str(directory))
+    try:
+        return client.get_collection(name=collection_name)
+    except Exception as exc:
+        fail_precondition(
+            "取不到 collection " + repr(collection_name) + "：" + str(exc)
+            + "（目录真实也不等于集合在里面）")
+
+
+def chroma_distance(collection) -> str:
+    """collection 自己记的相似度函数；没记就返回空串，由调用方判前置。"""
+    metadata = getattr(collection, "metadata", None) or {}
+    space = str(metadata.get("hnsw:space", "") or "").lower()
+    return _CHROMA_SPACES.get(space, "")#: U1 实测的形状常数：样本不够、探针不够、候选并列，全部按"测不出来"处理（退出码 2）。
+U1_SAMPLE_LIMIT = 64
+U1_MIN_SAMPLES = 12
+U1_PROBES = 2
+#: 探针问回来多少名就拿多少名比排序。刻意不在"采样的 64 枚"里比：
+#: collection.query 排的是**整库**，采样集外的命中会挤进前几名，
+#: 拿采样集的去比序，谁都对不上（09-22 第一次真跑就是这么误判成"不属于任何候选算子"）。
+U1_MIN_RESULTS = 12
+_U1_CANDIDATES = ("l2", "cosine", "inner_product")
+
+
+def _u1_order(ids, vectors, probe_index, metric, take):
+    """把一份样本按某个候选算子排序，取前 take 个 id。
+
+    只用排序、不用数值：Chroma 对 l2 返回的是**平方**欧氏距离（R157 真机实测），
+    数值对不上不代表排序对不上，而这张表关心的只有顺序——排序一致才谈得上召回一致。
+    """
+    probe = vectors[probe_index]
+    probe_norm = math.sqrt(sum(value * value for value in probe))
+    scored = []
+    for index, vector in enumerate(vectors):
+        dot = sum(a * b for a, b in zip(vector, probe))
+        if metric == "l2":
+            distance = sum((a - b) ** 2 for a, b in zip(vector, probe))
+        elif metric == "cosine":
+            norm = math.sqrt(sum(value * value for value in vector))
+            if not norm or not probe_norm:
+                return []
+            distance = 1.0 - dot / (norm * probe_norm)
+        else:
+            distance = -dot
+        scored.append((distance, index))
+    scored.sort(key=lambda item: (item[0], item[1]))
+    return [ids[position] for _, position in scored[:take]]
+
+
+def resolve_chroma_distance(collection, *, sample_limit=U1_SAMPLE_LIMIT, probes=U1_PROBES):
+    """U1：这库到底按什么距离排序——先读记录，没记录就当场量，量不拢照旧拒。
+
+    `chroma_distance()` 只看 collection 的 metadata，而真实安装里它一直是 None
+    （app/rag/retriever.py 建集合时不写 hnsw:space，Chroma 用自己的默认值）
+    ⇒ 那条 `space != scope` 在任何一台装过这套的客户机上恒成立，P3 永远跑不了。
+    "没记" 不等于 "不知道"：同一批向量在 l2 / cosine / inner_product 下排序不同，
+    所以拿真 collection 的返回顺序对一遍就知道它用哪个——这一步只读，不写一字节。
+
+    返回 (canonical_name, evidence)；测不拢时名字是空串，调用方仍然走退出码 2。
+    并列（比如向量已归一化，l2 与 cosine 同序）与样本不足都算测不拢：宁可不跑，不猜。
+    """
+    recorded = chroma_distance(collection)
+    evidence = {"source": "metadata", "recorded": recorded, "sampled": 0, "probes": 0,
+                "returned": 0,
+                "matched": [recorded] if recorded else [], "reason": ""}
+    if recorded:
+        return recorded, evidence
+
+    evidence["source"] = "measured"
+    page = collection.get(include=["embeddings"], limit=sample_limit)
+    page = {} if page is None else dict(page)
+    ids = [str(item) for item in (page.get("ids") or [])]
+    rows = page.get("embeddings")
+    # chromadb 1.5 这里给的是 numpy.ndarray，不是 list：`rows or []` 会当场抛
+    # "truth value of an array is ambiguous"（09-22 第一次真跑就是这么死的）。只认 None。
+    vectors = [] if rows is None else [[float(value) for value in row] for row in rows]
+    evidence["sampled"] = len(ids)
+    if len(ids) < U1_MIN_SAMPLES or len(vectors) != len(ids):
+        evidence["reason"] = "样本只有 %d 枚，少于 %d——排序对得上也可能巧合，按前置不满足处理"
+        evidence["reason"] %= (len(ids), U1_MIN_SAMPLES)
+        return "", evidence
+    widths = {len(vector) for vector in vectors}
+    if len(widths) != 1 or 0 in widths:
+        evidence["reason"] = "样本维度不齐（宽度 %s），无法比排序，按前置不满足处理" % sorted(widths)
+        return "", evidence
+
+    probe_slots = [0] if probes <= 1 else [0, len(ids) // 2][:probes]
+    evidence["probes"] = len(probe_slots)
+    known = {name: vector for name, vector in zip(ids, vectors)}
+    matched = None
+    for slot in probe_slots:
+        hit = collection.query(query_embeddings=[vectors[slot]], n_results=U1_MIN_RESULTS) or {}
+        got = [str(item) for item in ((hit.get("ids") or [[]])[0] or [])]
+        evidence["returned"] = len(got)
+        if len(got) < U1_MIN_RESULTS:
+            evidence["reason"] = ("探针只问回 %d 名，少于 %d 枚，排序比不出差别，按前置不满足处理"
+                                  % (len(got), U1_MIN_RESULTS))
+            return "", evidence
+        missing = [name for name in got if name not in known]
+        if missing:
+            rows = collection.get(ids=missing, include=["embeddings"]) or {}
+            got_ids = [str(item) for item in (rows.get("ids") or [])]
+            got_rows = rows.get("embeddings")
+            got_rows = [] if got_rows is None else [[float(v) for v in row] for row in got_rows]
+            known.update(dict(zip(got_ids, got_rows)))
+        probed = [known.get(name) for name in got]
+        if any(row is None for row in probed):
+            evidence["reason"] = "探针返回的命中里取不到向量，无法复算排序，按前置不满足处理"
+            return "", evidence
+        probe_name = ids[slot]
+        if probe_name not in got:
+            # 自己离自己最近，本该排第一；排不进去说明这库的序不是这三种算符算出来的，
+            # 也可能是"距离被归一化过"——无论哪种，都不许拿返回集合的第 0 名顶替探针。
+            evidence["reason"] = "探针没出现在自己返回的前 %d 名里，按前置不满足处理"
+            evidence["reason"] %= U1_MIN_RESULTS
+            return "", evidence
+        probe_index = got.index(probe_name)
+        winners = [metric for metric in _U1_CANDIDATES
+                   if _u1_order(got, probed, probe_index, metric, len(got)) == got]
+        matched = winners if matched is None else [m for m in matched if m in winners]
+        if not matched:
+            evidence["reason"] = "该探针的排序不属于任何候选算子（探针 %d 命中 %s），按前置不满足处理"
+            evidence["reason"] %= (slot, winners or "无")
+            return "", evidence
+    if len(matched) > 1:
+        evidence["matched"] = matched
+        evidence["reason"] = "候选并列：%s 给出同一排序（样本可能同模长或已归一化），排序分不开，按前置不满足处理"
+        evidence["reason"] %= "/".join(matched)
+        return "", evidence
+    evidence["matched"] = matched
+    return matched[0], evidence
+
+
+def canonical_distance(value: str) -> str:
+    """R120：两侧对同一件事有两种拼法 —— 0010 的 CHECK 收 l2|cosine|ip，本脚本与 Chroma
+    把第三种写成 inner_product。比较之前统一拼法，否则哪天真有库用 ip，脚本会报一条
+    假的"[前置不满足] …先核对 0010"，把业主支去改一个没写错的地方。
+    只对拼法，不改判据：认不出来的值原样返回，仍然走"不一致 ⇒ 退出码 2"那条既有路径。"""
+    spelled = str(value or "").strip().lower()
+    return _CHROMA_SPACES.get(spelled, spelled)
+
+
+def chroma_all_ids(collection) -> list:
+    try:
+        page = collection.get(include=[])
+    except Exception:
+        page = collection.get()
+    return sorted(str(item) for item in ((page or {}).get("ids") or []))
+
+
+def corpus_drift(connection, collection, *, vector_table: str, scope: dict) -> dict:
+    """语料级差集：不比分数，只比"同一批向量在不在两边"，先把镜像覆盖率钉住。
+
+    index_version_id_null 是本单故意留的 NULL（retriever 不知道索引版本，编一个就是
+    R22 的静默错位），所以它是"待发布回填"的计数，不是故障计数，读表时要分清。
+    """
+    pg_ids = set()
+    wrong_width = []
+    unversioned = 0
+    for row in connection.execute(_READ_VECTOR_ROWS_SQL + vector_table).fetchall():
+        vector_id = str(_row(row, "vector_id", 0))
+        pg_ids.add(vector_id)
+        if int(_row(row, "dims", 2) or 0) != scope["dimension"]:
+            wrong_width.append(vector_id)
+        if _row(row, "index_version_id", 1) is None:
+            unversioned += 1
+    chroma_ids = set(chroma_all_ids(collection))
+    zero_row = connection.execute(
+        _COUNT_ALL_ZERO_SQL + vector_table + " WHERE embedding = %s::vector",
+        (_zero_literal(scope["dimension"]),),
+    ).fetchone()
+    return {
+        "pg_vectors": len(pg_ids),
+        "chroma_vectors": len(chroma_ids),
+        "only_in_pg": sorted(pg_ids - chroma_ids),
+        "only_in_chroma": sorted(chroma_ids - pg_ids),
+        "wrong_width": wrong_width,
+        "all_zero_rows": int(_scalar(zero_row) or 0),
+        "index_version_id_null": unversioned,
+        "chunks_rows": int(_scalar(connection.execute(_COUNT_CHUNK_ROWS_SQL).fetchone()) or 0),
+        "chunks_with_backfilled_embedding": int(
+            _scalar(connection.execute(_COUNT_CHUNK_EMBEDDED_SQL).fetchone()) or 0
+        ),
+    }
+
+
+def load_questions(paths) -> list:
+    questions = []
+    for path in paths:
+        file_path = ROOT / path if not Path(path).is_absolute() else Path(path)
+        if not file_path.exists():
+            fail_precondition("题集不存在：" + str(file_path))
+        for line in file_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            item = json.loads(line)
+            question = str(item.get("question", "")).strip()
+            if question:
+                questions.append((file_path.name, str(item.get("id", "")), question))
+    return questions
+
+
+def pg_recall(connection, *, vector_table: str, operator: str, literal: str, k: int) -> list:
+    rows = connection.execute(
+        "SELECT vector_id, embedding " + operator + " %s::vector AS distance"
+        " FROM " + vector_table +
+        " ORDER BY embedding " + operator + " %s::vector LIMIT %s",
+        (literal, literal, k),
+    ).fetchall()
+    return [str(_row(row, "vector_id", 0)) for row in rows]
+
+
+def _print_drift(drift: dict) -> None:
+    for key in ("pg_vectors", "chroma_vectors", "chunks_rows",
+                "chunks_with_backfilled_embedding", "index_version_id_null",
+                "all_zero_rows"):
+        print("%-32s %s" % (key, drift[key]))
+    for key in ("only_in_pg", "only_in_chroma", "wrong_width"):
+        print("%-32s %s" % (key, len(drift[key])))
+        for vector_id in drift[key][:20]:
+            print("    " + vector_id)
+
+
+def _write_out(args, result: dict) -> None:
+    if args.out:
+        Path(args.out).write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("结论已写出：" + args.out)
+
+
+def _compare(argv=None) -> int:
+    """逐题/语料两级对比的主体；退出码语义见 main() 与文件 docstring。"""
+    args = parse_args(argv)
+    vector_table = _safe_table(args.vector_table)
+    connection = connect_read_only(args.database_url or pg_store.resolve_database_url())
+    try:
+        scope = read_scope(connection, vector_table)
+        collection = open_chroma(args.chroma_dir, args.collection)
+        space, u1 = resolve_chroma_distance(collection)
+        if space != canonical_distance(scope["distance_function"]):
+            # 这一格以前把"根本没测起来"写成"两边排序天然不同"：空库（样本 0 枚）
+            # 就是被这句话读反的。现在只有真量到"这个序不属于任何候选算子"才提
+            # 排序不同，两条判读分开说。
+            summary = (PRECONDITION_PREFIX + "collection 距离=" + (space or u1["source"])
+                       + "，vector_scope 声明=" + scope["distance_function"])
+            if u1.get("reason"):
+                report = [summary,
+                          "    U1 判读：" + u1["reason"],
+                          "    这一格根本没测起来（样本/探针不足），不出召回结论；"
+                          "不是「两边排序天然不同」，也别去改 0010"]
+            else:
+                report = [summary,
+                          "    两边排序天然不同，不出召回结论；"
+                          "先核对 0010 的 app.vector_distance_function"]
+            for line in report:
+                print(line)  # 判读全文进 stdout：R157 的人读契约钉在这里，搬走就红
+            # 同一句判据再进 stderr 首行：R269 判据④要求照退出码分诊的
+            # 自动化能分开"没跑成"与"跑成了但有差异"，而 stdout 是给人读的。
+            print(summary, file=sys.stderr, flush=True)
+            return EXIT_PRECONDITION
+        drift = corpus_drift(connection, collection, vector_table=vector_table, scope=scope)
+        result = {"scope": scope, "u1": u1, "k": args.k, "drift": drift,
+                "questions": [], "summary": {}}
+        print("-- 口径：" + scope["embedding_model"] + " / "
+              + str(scope["dimension"]) + " 维 / " + scope["distance_function"] + " --")
+        print("-- U1：collection 距离=%s（来源=%s，样本=%d 枚，探针=%d 枚）--" % (
+              space, u1["source"], u1["sampled"], u1["probes"]))
+        _print_drift(drift)
+        gap = bool(drift["only_in_pg"] or drift["only_in_chroma"])
+
+        if args.skip_questions:
+            print("-- 逐题对比已跳过（--skip-questions）--")
+            result["summary"] = {"skipped_questions": True, "corpus_gap": gap}
+            _write_out(args, result)
+            return EXIT_DIFFERENCE if gap else EXIT_NO_DIFFERENCE
+
+        from app.rag.retriever import OllamaEmbeddings  # 要发 embedding：延后 import
+
+        embedder = OllamaEmbeddings()
+        questions = load_questions(args.fixture or list(DEFAULT_FIXTURES))
+        differing = 0
+        print("-- 逐题 top-%d（共 %d 题）--" % (args.k, len(questions)))
+        for source, question_id, question in questions:
+            vector = list(embedder.embed_query(question))
+            literal = "[" + ",".join(repr(float(value)) for value in vector) + "]"
+            pg_ids = pg_recall(connection, vector_table=vector_table,
+                               operator=DISTANCE_OPERATORS[space], literal=literal, k=args.k)
+            hit = collection.query(query_embeddings=[vector], n_results=args.k)
+            chroma_ids = [str(item) for item in ((hit.get("ids") or [[]])[0] or [])]
+            same = pg_ids == chroma_ids
+            first_diff = _first_difference(chroma_ids, pg_ids)
+            differing += 0 if same else 1
+            if args.all or not same:
+                print("%s %s %s first_diff_rank=%s" % (
+                    source, question_id, "OK  " if same else "DIFF", first_diff))
+                print("    chroma: " + repr(chroma_ids))
+                print("    pg    : " + repr(pg_ids))
+            result["questions"].append({
+                "source": source, "id": question_id, "question": question,
+                "chroma": chroma_ids, "pg": pg_ids, "same": same,
+                "first_diff_rank": first_diff,
+            })
+        result["summary"] = {"questions": len(questions), "differing": differing,
+                             "corpus_gap": gap}
+        print("-- 汇总：%d/%d 题 top-%d 不一致%s --" % (
+            differing, len(questions), args.k, "（另有语料级差集）" if gap else ""))
+        _write_out(args, result)
+        return EXIT_DIFFERENCE if (differing or gap) else EXIT_NO_DIFFERENCE
+    finally:
+        connection.close()
+
+
+def main(argv=None) -> int:
+    """R269 判据④：把"没跑成"与"跑成了但有差异"在退出码上彻底分开。
+
+    - 九处前置检查各自 raise SystemExit(EXIT_PRECONDITION)，原样上抛（SystemExit 不是
+      Exception 的后代，下面的兜底不会把它洗掉）；
+    - 量具自己抛出的任何异常（目录被别的进程写坏、chromadb 内部错、PG 连不上、题集读不动）
+      过去会以退出码 1 混进"检出差异"，现在统一按前置不满足记账并写 stderr 首行。
+    反向契约同样有钉：真的检出差异时仍然返回 1，无差异仍然返回 0。
+    """
+    try:
+        return _compare(argv)
+    except Exception as exc:  # noqa: BLE001 - 兜底的意义就是"没跑成不许冒充有差异"
+        fail_precondition("量具自身异常终止：" + type(exc).__name__ + ": " + str(exc)
+                          + "（本次没有产出任何召回结论）")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

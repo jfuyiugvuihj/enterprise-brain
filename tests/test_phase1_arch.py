@@ -32,6 +32,15 @@ class TestClassifyIntent:
 
 
 class TestReflect:
+    @pytest.mark.parametrize('worker,question', [('export', '生成PDF报告'), ('chart', '画柱状图')])
+    def test_explicitly_rejected_action_does_not_trigger_another_model_round(self, worker, question):
+        from app.agents.nodes import reflect_node
+        note = '已拒绝，未执行此操作。'
+        state = {'messages': [HumanMessage(content=question)], 'reflect_count': 0,
+                 'worker_results': {worker: note},
+                 'agent_results': {worker: {'worker': worker, 'status': 'rejected', 'answer': note}}}
+        assert reflect_node(state)['redo'] is False
+
     def test_empty_answer_redo(self):
         from app.agents.nodes import reflect_node
         st = {"messages": [HumanMessage(content="画个图")], "reflect_count": 0}

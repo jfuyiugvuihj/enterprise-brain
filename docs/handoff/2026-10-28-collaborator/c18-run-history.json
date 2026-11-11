@@ -1,0 +1,331 @@
+{
+  "notice": "Each run has an explicit selected scope. passed does not mean the full C18 suite passed. Recorded progress uses the runner outcome aggregation, including setup/call/teardown failures. Older failed groups may have later individual fixes. Raw per-phase events are retained locally; teardown success must not be read as case success. No PIDs, locks, credentials, or raw failure text are transferred.",
+  "runs": [
+    {
+      "run_id": "20261025-132631-50810b",
+      "status": "passed",
+      "started_at": "2026-10-25T13:26:31+08:00",
+      "ended_at": "2026-10-25T13:26:36+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 5.0,
+      "cases": [
+        "tests/test_c18_progress.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 5,
+          "completed": 5,
+          "outcomes": {
+            "passed": 5
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261025-163639-aa1313",
+      "status": "passed",
+      "started_at": "2026-10-25T16:36:39+08:00",
+      "ended_at": "2026-10-25T16:37:31+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 50.1,
+      "cases": [
+        "tests/test_task_review_context.py",
+        "tests/test_quality_approval_lifecycle.py",
+        "tests/test_quality_chart_layout.py",
+        "tests/test_quality_pdf_layout.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 55,
+          "completed": 55,
+          "outcomes": {
+            "passed": 55
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261025-170039-01a6d4",
+      "status": "failed",
+      "started_at": "2026-10-25T17:00:39+08:00",
+      "ended_at": "2026-10-25T17:01:51+08:00",
+      "exit_code": 3,
+      "elapsed_seconds": 70.2,
+      "cases": [
+        "tests/test_task_review_context.py",
+        "tests/test_alert_scan_scope.py",
+        "tests/test_c18_progress.py",
+        "tests/test_r32_lane_contract.py",
+        "tests/test_r42_fallback_upgrade.py",
+        "tests/test_route_fallback_correction.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 137,
+          "completed": 42,
+          "outcomes": {
+            "passed": 42
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261025-170331-e1a515",
+      "status": "passed",
+      "started_at": "2026-10-25T17:03:31+08:00",
+      "ended_at": "2026-10-25T17:04:23+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 50.1,
+      "cases": [
+        "tests/test_c18_progress.py",
+        "tests/test_r32_lane_contract.py",
+        "tests/test_r42_fallback_upgrade.py",
+        "tests/test_route_fallback_correction.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 98,
+          "completed": 98,
+          "outcomes": {
+            "passed": 98
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-102840-f97bbd",
+      "status": "failed",
+      "started_at": "2026-10-27T10:28:40+08:00",
+      "ended_at": "2026-10-27T10:29:11+08:00",
+      "exit_code": 1,
+      "elapsed_seconds": 30.1,
+      "cases": [
+        "tests/test_artifact_list.py",
+        "tests/test_file_upload_security.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 131,
+          "completed": 131,
+          "outcomes": {
+            "passed": 121,
+            "failed": 10
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-103419-0e7e76",
+      "status": "failed",
+      "started_at": "2026-10-27T10:34:19+08:00",
+      "ended_at": "2026-10-27T10:34:45+08:00",
+      "exit_code": 1,
+      "elapsed_seconds": 25.1,
+      "cases": [
+        "tests/test_artifact_list.py",
+        "tests/test_file_upload_security.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 131,
+          "completed": 131,
+          "outcomes": {
+            "passed": 130,
+            "failed": 1
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-103547-c83c28",
+      "status": "passed",
+      "started_at": "2026-10-27T10:35:47+08:00",
+      "ended_at": "2026-10-27T10:36:18+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 30.1,
+      "cases": [
+        "tests/test_file_upload_security.py::test_http_upload_ingests_a_markdown_document",
+        "tests/test_file_upload_security.py::test_http_upload_without_a_subject_is_rejected_before_writing",
+        "tests/test_artifact_list.py::test_an_owner_still_needs_clearance_for_their_artifact"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 3,
+          "completed": 3,
+          "outcomes": {
+            "passed": 3
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-105308-65d1e1",
+      "status": "failed",
+      "started_at": "2026-10-27T10:53:08+08:00",
+      "ended_at": "2026-10-27T10:53:39+08:00",
+      "exit_code": 1,
+      "elapsed_seconds": 30.1,
+      "cases": [
+        "tests/test_document_catalog_sync.py",
+        "tests/test_memory_production_schema.py",
+        "tests/test_phase7_mcp.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 17,
+          "completed": 17,
+          "outcomes": {
+            "passed": 15,
+            "failed": 2
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-110741-eeec11",
+      "status": "passed",
+      "started_at": "2026-10-27T11:07:41+08:00",
+      "ended_at": "2026-10-27T11:08:12+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 30.1,
+      "cases": [
+        "tests/test_document_catalog_sync.py"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 6,
+          "completed": 6,
+          "outcomes": {
+            "passed": 6
+          },
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-111018-72713d",
+      "status": "failed",
+      "started_at": "2026-10-27T11:10:18+08:00",
+      "ended_at": "2026-10-27T11:10:23+08:00",
+      "exit_code": 4,
+      "elapsed_seconds": 5.0,
+      "cases": [
+        "tests/test_r438_correctness_denominator_is_wired_and_both_calibers_publish.py::test_route_lists_both_rulers_for_a_scorable_report"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 0,
+          "completed": 0,
+          "outcomes": {},
+          "collection_errors": []
+        }
+      ]
+    },
+    {
+      "run_id": "20261027-111204-ee2aae",
+      "status": "passed",
+      "started_at": "2026-10-27T11:12:04+08:00",
+      "ended_at": "2026-10-27T11:12:30+08:00",
+      "exit_code": 0,
+      "elapsed_seconds": 25.1,
+      "cases": [
+        "tests/test_r438_correctness_denominator_is_wired_and_both_calibers_publish.py::test_the_route_lists_both_rulers_for_a_scorable_report"
+      ],
+      "serial": true,
+      "workers": "auto",
+      "head_before": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_after": "121f647dcd41d94010014bc4349fdaec24f5b4e1",
+      "head_unchanged": true,
+      "source_unchanged": true,
+      "recorded_progress": [
+        {
+          "worker": "main",
+          "collected": 1,
+          "completed": 1,
+          "outcomes": {
+            "passed": 1
+          },
+          "collection_errors": []
+        }
+      ]
+    }
+  ]
+}

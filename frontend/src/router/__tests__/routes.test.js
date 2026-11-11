@@ -1,0 +1,381 @@
+/**
+ * R104 · 路由表就是全站唯一的「屏 ↔ URL ↔ 面板」真源
+ *
+ * 环境仍是 node + @vue/server-renderer（vitest.config.js 的 environment=node，仓库里没有
+ * jsdom / @vue/test-utils，也不许 npm i）。所以三条腿各管各的事，不假装验过自己验不了的：
+ *   ① 真路由对象：createAppRouter 注入 createMemoryHistory，深链用 router.push 走一遍完整的
+ *      导航解析（重定向、命名路由、meta 合并都参与），不是拿 routes 数组 grep 字符串。
+ *   ② 真渲染：把路由解析出来的组件交给 renderToString，与「直接渲染那个面板」的 HTML 比相等，
+ *      这才叫「深链直达渲染的是同一屏」，而不是名字对上了。
+ *   ③ 源码级：焦点与「不许留第二套真源」是 App.vue <script setup> 里的事，node 拿不到实例，
+ *      于是钉住接线本身；导航与面板映射则已经是可 import 的模块，不必再退化成 grep。
+ *
+ * 三条反证（跑完即还原，不留在树里）：
+ *   删掉 routes 里任意一枚一级路由       → 本文件「路由表 = 导航集合」与深链那两组当场红。
+ *   App.vue 重新留一条 activeTab.value =  → 「App.vue 里没有第二套真源」红。
+ *   图谱路由 meta.primary 翻成可派生      → 「一级导航就是这六枚」红（本文件与 navigation.test.js 各一处）。
+ *
+ * R136 改动的口径（合屏之后哪些数字变了，逐条在这里对账，不留暗改）：
+ *   一级屏 6 → 5：文档与数据并成「喂料」两标签一屏，/docs、/data 降级为老地址重定向。
+ *   R315 判据④ 再把它改口成 5 → 6：「交成果」是真屏（ArtifactList.vue 早在树里，只是没有自己的位置），
+ *   今天有了地址与一级入口。凡钉「一级屏五枚」的定长名单一律逐字加一项，没降成 toContain / >=，也没删条。
+ *   「goto 目标必须是一级屏」→「goto 落点必须可达，且跳完落在一级屏上」。后者更硬：
+ *   前者只看静态名单，后者连重定向后的落点一起看，老屏名从入口掉出去一定红。
+ *   「App.vue 不许 import 面板组件」的覆盖面从 7 块扩到 8 块（喂料的两块标签面板也算面板）。
+ */
+import { readFileSync, readdirSync } from 'node:fs'
+import { describe, expect, it } from 'vitest'
+import { h } from 'vue'
+import { createMemoryHistory } from 'vue-router'
+import { renderToString } from '@vue/server-renderer'
+import AdminPanel from '../../components/AdminPanel.vue'
+import ApprovalPanel from '../../components/ApprovalPanel.vue'
+import ArtifactsPanel from '../../components/ArtifactsPanel.vue'
+import AuditEventsPanel from '../../components/AuditEventsPanel.vue'
+import ChatPanel from '../../components/ChatPanel.vue'
+import DashboardPanel from '../../components/DashboardPanel.vue'
+import DataPanel from '../../components/DataPanel.vue'
+import DocPanel from '../../components/DocPanel.vue'
+import EvaluationsPanel from '../../components/EvaluationsPanel.vue'
+import FeedPanel from '../../components/FeedPanel.vue'
+import GraphPanel from '../../components/GraphPanel.vue'
+import InsightPanel from '../../components/InsightPanel.vue'
+import ProfilePanel from '../../components/ProfilePanel.vue'
+import SloPanel from '../../components/SloPanel.vue'
+import TracePanel from '../../components/TracePanel.vue'
+import { FOCUSABLE_SELECTOR } from '../../components/ui/focus-trap.js'
+import {
+  DEFAULT_SCREEN,
+  cachedScreens,
+  createAppRouter,
+  navigation,
+  routes,
+  screenIds,
+  screenRouteIds,
+} from '../index.js'
+import { focusScreenMain, isRoveKey, navItems, nextNavItem } from '../nav-focus.js'
+import { FEED_SCREEN, FEED_TABS, LEGACY_FEED_NAMES } from '../feed-tabs.js'
+
+const read = rel => readFileSync(new URL(rel, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+const app = read('../../App.vue')
+const workspaceNav = read('../../components/WorkspaceNavigation.vue')
+const main = read('../../main.js')
+
+/** 一屏一条：深链地址、路由名、期望挂载的面板组件。 */
+const SCREENS = [
+  ['/overview', 'overview', DashboardPanel],
+  // R136：文档与数据并成一屏两标签，挂的是 FeedPanel（两块面板由 feed-tabs.js 那张表带来）
+  ['/feed', 'feed', FeedPanel],
+  ['/chat', 'chat', ChatPanel],
+  ['/insights', 'insights', InsightPanel],
+  ['/approval', 'approval', ApprovalPanel],
+  // R315 判据①⑥ 追加一枚屏：/artifacts 深链直达要真渲染出那枚壳，同时它也是一级入口。
+  // 下面两条定长名单（screenIds 与面板名）各多一项，写法仍是逐字 toEqual，多一枚少一枚都红。
+  ['/artifacts', 'artifacts', ArtifactsPanel],
+  // R494 再加一枚屏（员工自己那一屏 /profile）：是一屏、不是一级入口（meta.primary:false，深链直达）。
+  // 写法与 R315/R316/R399 同一形状：只往下面两条定长名单各加一项，toEqual 与 toHaveLength 都不动，
+  // 也没换成包含式——多一枚、少一枚、改名次序，照样当场红。
+  ['/profile', 'profile', ProfilePanel],
+  // 图谱是屏，但不是一级入口：它只有一条非一级路由，深链进得来。
+  ['/graph', 'graph', GraphPanel],
+  // R316 追加一枚屏（判据⑤：只准加不许减）——下面两条精确名单里那个数组各多一项，
+  // 断言强度一分未降：仍然是逐字 toEqual 的定长名单，多一枚少一枚都红。
+  ['/admin', 'admin', AdminPanel],
+  // R399 判据①（甲案）再加一枚屏：与 /admin 同一条形状（是一屏、不是一级入口、只长进管理员那一份
+  // 入口清单）。写法不变：仍然只往同一枚定长名单里加一项，多一枚少一枚都红。
+  ['/traces', 'traces', TracePanel],
+  // R505 判据 A/B/C 再加三枚屏（目标账 / 评测报告 / 审计事件）：三枚都是「是一屏、不是一级入口、
+  // 只长进管理员那一份入口清单」，写法与 R316 / R399 同一形状 —— 下面那两条定长名单各加三项，
+  // toEqual 与 toHaveLength 一枚都不动，也没换成包含式：多一项、少一项、换顺序，照样当场红。
+  ['/slo', 'slo', SloPanel],
+  ['/evaluations', 'evaluations', EvaluationsPanel],
+  ['/audit/events', 'audit-events', AuditEventsPanel],
+]
+
+/** 老屏名：不再是屏，但仍然是入口（总览的卡片与 @goto 还指着它们）。 */
+const LEGACY = [
+  ['/docs', 'docs', DocPanel],
+  ['/data', 'data', DataPanel],
+]
+
+/** 每一枚面板组件都要有人 import，App.vue 一个都不许 import。 */
+const ALL_PANELS = [...SCREENS.map(entry => entry[2]), ...FEED_TABS.map(tab => tab.component)]
+
+const screenRoutes = routes.filter(route => route.meta?.screen)
+
+/** 面板里所有能把用户送去另一屏的字面量：goto 直写、指标卡 target、快捷入口 id。 */
+function gotoTargetsOf(source) {
+  return [
+    ...source.matchAll(/\bemit\(\s*'goto',\s*'([^']+)'\s*\)/g),
+    ...source.matchAll(/\btarget:\s*'([^']+)'/g),
+    ...source.matchAll(/\bid:\s*'([^']+)'/g),
+  ].map(match => match[1])
+}
+
+/** 全部面板扫出来的 goto 落点（DataPanel 的 ask 另算，它不是跨屏目标而是提问）。 */
+function allGotoTargets() {
+  const dir = new URL('../../components/', import.meta.url)
+  const names = readdirSync(dir).filter(name => name.endsWith('.vue'))
+  const targets = new Set()
+  for (const name of names) {
+    const source = readFileSync(new URL(`../../components/${name}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+    if (!/defineEmits\(\[[^\]]*'goto'/.test(source)) continue
+    for (const target of gotoTargetsOf(source)) targets.add(target)
+  }
+  expect(targets.size, '一块面板的 goto 都没扫到，扫描本身失灵了').toBeGreaterThan(0)
+  return [...targets].sort()
+}
+
+async function routerAt(location) {
+  const router = createAppRouter({ history: createMemoryHistory() })
+  await router.push(location)
+  return router
+}
+
+describe('R104 判据 1 · 一级屏一屏一路由，导航是它的派生视图', () => {
+  it('路由表 = 导航集合：一级屏与派生出的导航项逐条对得上', () => {
+    expect(screenIds).toEqual(navigation.map(item => item.id))
+    // R136 判据② · 一级屏五枚：文档 + 数据 合成「喂料」，侧栏于是少一项，不是多一项。
+    // R315 判据④ 换号理由：「交成果」进一级入口，名单加一项就是六枚；断言强度未降——
+    // 仍然逐字相等，多一枚、少一枚、换顺序三种走法都当场红，没有改成 toContain / >=。
+    expect(screenIds).toEqual(['overview', 'feed', 'chat', 'insights', 'approval', 'artifacts'])
+    // 屏的全集比一级多图谱、「账号与角色」、「运行留痕」与 R505 那三枚管理屏（R316 / R399 / R505：
+    // 管理员屏都不派生一级入口）；屏之外的入口（老屏名）不许被当成屏。原断言 = ['graph', ...LEGACY]，
+    // 新断言只是往同一枚定长名单里加项，toEqual 的逐字相等与「不许多一枚」都还在。
+    expect(screenRouteIds.filter(id => !screenIds.includes(id))).toEqual(
+      ['profile', 'graph', 'admin', 'traces', 'slo', 'evaluations', 'audit-events', ...LEGACY_FEED_NAMES],
+    )
+    expect(LEGACY_FEED_NAMES).toEqual(['docs', 'data'])
+    // 一屏一条路由：地址、组件、标题都不许多也不许少
+    expect(screenRoutes.map(route => route.path)).toEqual(SCREENS.map(entry => entry[0]))
+    expect(screenRoutes.map(route => route.name)).toEqual(SCREENS.map(entry => entry[1]))
+  })
+
+  it('每一枚一级路由都有 name、path 与图标，图谱不进导航', () => {
+    for (const item of navigation) {
+      expect(item.id).toBeTruthy()
+      expect(item.label, `${item.id} 缺一级导航文案`).toBeTruthy()
+      expect(item.icon, `${item.id} 缺侧栏图标`).toMatch(/^M/)
+      expect(screenRoutes.some(route => route.name === item.id), item.id).toBe(true)
+    }
+    expect(navigation.map(item => item.id)).not.toContain('graph')
+  })
+
+  it('R316 的「账号与角色」仍不派生一级入口；第六枚是 R315 的「交成果」', () => {
+    // 这条原钉「screenIds 一枚未增」（五枚）。R315 补进第六枚是判据④ 要求的加，不是放宽：
+    // 名单换成六枚后仍逐字相等，admin 那四条断言一字未动 —— 它依旧 primary:false、依旧不在导航里。
+    expect(screenIds).toEqual(['overview', 'feed', 'chat', 'insights', 'approval', 'artifacts'])
+    expect(navigation.map(item => item.id)).not.toContain('admin')
+    expect(screenRouteIds).toContain('admin')
+    const admin = screenRoutes.find(route => route.name === 'admin')
+    expect(admin.meta.primary, 'R316 那一屏被挂成了默认一级').toBe(false)
+  })
+
+  it('meta.title 必填：每一屏都有顶栏要的人话标题', () => {
+    for (const route of screenRoutes) {
+      expect(route.meta.title, `${String(route.name)} 没有 meta.title`).toBeTruthy()
+      // 标题不许把码名/裸标识符塞进给人看的句子（与文案政策同一条规矩）
+      expect(route.meta.title).not.toMatch(/[a-z][a-z0-9]*(_[a-z0-9]+)+/)
+    }
+  })
+
+  it('默认落点有且只有一个：/ 与认错地址都回 overview', async () => {
+    const roots = routes.filter(route => route.path === '/')
+    expect(roots).toHaveLength(1)
+    expect(roots[0].redirect).toEqual({ name: DEFAULT_SCREEN })
+    expect(DEFAULT_SCREEN).toBe('overview')
+    // 通配回落也只指这一枚，不存在第二个「不知道去哪就去这」的落点
+    const fallbacks = routes.filter(route => String(route.name) === 'unknown-screen')
+    expect(fallbacks).toHaveLength(1)
+    expect(fallbacks[0].redirect).toEqual({ path: `/${DEFAULT_SCREEN}` })
+    expect((await routerAt('/')).currentRoute.value.name).toBe('overview')
+    expect((await routerAt('/nothing-like-this')).currentRoute.value.name).toBe('overview')
+  })
+
+  it('认错地址只回默认落点，也不在控制台刷/vue-router 的丢参数警告', async () => {
+    const warnings = []
+    const originalWarn = console.warn
+    console.warn = (...args) => { warnings.push(args.join(' ')) }
+    let landed = ''
+    try {
+      landed = (await routerAt('/nothing-like-this')).currentRoute.value.name
+    } finally {
+      console.warn = originalWarn
+    }
+    expect(landed).toBe(DEFAULT_SCREEN)
+    // 通配记录自带 pathMatch，按名字回落实例会把它带过去再丢掉，每错一次地址就刷一条警告
+    expect(warnings.filter(line => /Discarded invalid param/.test(line))).toEqual([])
+  })
+})
+
+describe('R104 判据 3 · 深链直达解析并渲染同一屏', () => {
+  it('老地址是一枚真落点：/docs、/data 都解析得到记录，不落通配兜底', () => {
+    for (const [path, name] of LEGACY) {
+      const record = routes.find(route => route.path === path && route.name === name)
+      expect(record, `${path} 这条老地址没了`).toBeTruthy()
+      expect(record.meta.screen, `${path} 又变回一屏了`).toBeFalsy()
+      expect(record.meta.legacyScreenOf, `${path} 没记自己落到哪一屏`).toBe(FEED_SCREEN)
+      expect(typeof record.redirect, `${path} 的重定向没了`).toBe('function')
+    }
+  })
+
+  for (const [path, name, panel] of SCREENS) {
+    it(`${path} 解析到 ${name}，渲染出的 HTML 与直接渲染该面板一致`, async () => {
+      const router = await routerAt(path)
+      const current = router.currentRoute.value
+      expect(current.name, `${path} 没落在 ${name} 上`).toBe(name)
+      const resolved = router.resolve(path)
+      expect(resolved.matched.length, `${path} 没有匹配到任何记录`).toBeGreaterThan(0)
+      const mounted = resolved.matched[resolved.matched.length - 1].components.default
+      expect(mounted, `${path} 挂的不是 ${name} 的面板`).toBe(panel)
+      expect(resolved.meta.title).toBeTruthy()
+      const viaRoute = await renderToString(h(mounted))
+      const direct = await renderToString(h(panel))
+      expect(viaRoute.length).toBeGreaterThan(50)
+      expect(viaRoute).toBe(direct)
+    })
+  }
+
+  it('图谱只有深链这一条路：它是一屏，但侧栏派生不出它的入口', async () => {
+    const router = await routerAt('/graph')
+    expect(router.currentRoute.value.name).toBe('graph')
+    expect(navigation.map(item => item.id)).not.toContain('graph')
+    const listed = workspaceNav.match(/nav-\$\{item\.id\}/g) || []
+    // 业务模块与管理员系统模块各一枚派生循环，两处都从 props.items 来。
+    expect(listed.length, '侧栏还是按自己的清单渲染，没用派生出来的导航').toBe(2)
+  })
+})
+
+describe('R104 判据 2 · 面板 @goto 目标可达，且 App.vue 不留第二套真源', () => {
+  const targets = allGotoTargets()
+
+  it('面板发出的每一个 goto 目标都可达，跳完必须落在一级屏上', async () => {
+    // R136 之前这条钉的是「目标本身就是一级屏」。合屏之后 'docs' / 'data' 不再是屏，
+    // 但总览的卡片还在往它们发 @goto —— 所以口径改成看落点：静态名单 + 跳转之后真正
+    // 落脚的那一屏都必须是一级屏。老屏名从入口里掉出去（按钮变死键）与落在非一级屏上，
+    // 两种走法都会红，比原来那枚更硬而不是更松。
+    const router = createAppRouter({ history: createMemoryHistory() })
+    for (const target of targets) {
+      expect(screenRouteIds, `${target} 不是路由表里的落点`).toContain(target)
+      expect(router.resolve({ name: target }).name, `${target} 解析不出地址`).toBe(target)
+      await router.push({ name: target })
+      const landed = router.currentRoute.value.name
+      expect(screenIds, `${target} 跳完之后不在一级屏上`).toContain(landed)
+      expect(landed, `${target} 的落点`).toBe(LEGACY_FEED_NAMES.includes(target) ? FEED_SCREEN : target)
+    }
+  })
+
+  it('goto 目标里不许有图谱：D13① 撤的入口不能从面板后门绕回来', () => {
+    expect(targets).not.toContain('graph')
+  })
+
+  it('App.vue 把 @goto / @ask 接到路由上，而不是接到某个 tab 状态上', () => {
+    expect(app).toMatch(/@goto="openScreen"/)
+    expect(app).toMatch(/@ask="handleAsk"/)
+    expect(app).toMatch(/function openScreen\(screen\)/)
+    expect(app).toMatch(/router\.push\(\{ name \}\)/)
+    // 数据面板的「就这个问题去对话」仍然要落到对话屏，并且等面板挂上才发事件。
+    // nextTick 用回调形式：后端 tests/test_data_file_catalog.py 按源码文本钉这条顺序。
+    expect(app).toMatch(/await openScreen\('chat'\)\s*\n\s*nextTick\(\(\) => window\.dispatchEvent\(new CustomEvent\('chat-ask'/)
+  })
+
+  it('没有任何第二套真源：activeTab / workspaceMap / 手写导航数组都不在 App.vue 里', () => {
+    expect(app).not.toMatch(/activeTab/)
+    expect(app).not.toMatch(/workspaceMap/)
+    // 侧栏清单与「点下去渲染谁」都来自 src/router，App.vue 自己不再抄一份
+    expect(app).not.toMatch(/const navigation = \[/)
+    expect(app).toMatch(/import \{[^}]*navigation[^}]*\} from '\.\/router'/)
+    expect(app).toMatch(/<RouterView/)
+    expect(app).toMatch(/v-slot="\{ Component \}"/)
+    expect(app).toMatch(/:is="Component"/)
+    // 顶栏标题取路由元信息，不再回头查导航数组
+    expect(app).toMatch(/const activeMeta = computed\(\(\) => route\.meta/)
+    expect(app).toMatch(/\{\{ activeMeta\.title \}\}/)
+    // 面板组件的 import 只该存在于路由表那两张文件里（八枚：六屏面板 + 喂料的两块标签面板）
+    for (const panel of ALL_PANELS) {
+      const file = panel.__name || panel.name
+      expect(app, `App.vue 还自己 import 了 ${file}`).not.toContain(`components/${file}.vue`)
+    }
+  })
+
+  it('main.js 装了路由，并等首帧解析完再挂载', () => {
+    expect(main).toMatch(/app\.use\(router\)/)
+    expect(main).toMatch(/router\.isReady\(\)\.then\(\(\) => app\.mount\('#app'\)\)/)
+  })
+})
+
+describe('R104 判据 3 · 切屏不丢会话，也不改别人家的重挂载语义', () => {
+  it('只有对话屏切走不卸载，keep-alive 名单对得上组件自己的名字', () => {
+    const alive = routes.filter(route => route.meta?.screen && route.meta.keepAlive)
+    expect(alive.map(route => String(route.name))).toEqual(['chat'])
+    expect(cachedScreens).toEqual(['ChatPanel'])
+    // keep-alive 的 include 匹配的是组件名；<script setup> 的名字由文件名推断成 __name，
+    // 名单必须真能从 ChatPanel 身上取到，否则 :include 静默失效、会话照丢。
+    expect(ChatPanel.name || ChatPanel.__name).toBe('ChatPanel')
+    expect(app).toMatch(/<KeepAlive :include="cachedScreens">/)
+  })
+
+  it('其余屏照旧每次进来重挂载：没有被塞进 keep-alive 名单', () => {
+    const names = screenRoutes.map(route => route.component.name || route.component.__name)
+    // R316：屏的面板名单加一枚 AdminPanel（定长 toEqual 未改成包含式，强度不降）。
+    // R315 加 ArtifactsPanel、R399 加 TracePanel —— 同样只往同一枚定长名单里加一项，没换成包含式：
+    // 壳改名、多一枚、少一枚，这条都会红（顺序 = 路由表顺序）。
+    // R505 再往这枚定长名单里加三项（顺序 = 路由表顺序），仍然逐字相等，没降成包含式。
+    expect(names).toEqual(['DashboardPanel', 'FeedPanel', 'ChatPanel', 'InsightPanel', 'ApprovalPanel', 'ArtifactsPanel', 'ProfilePanel', 'GraphPanel', 'AdminPanel', 'TracePanel', 'SloPanel', 'EvaluationsPanel', 'AuditEventsPanel'])
+    expect(names.filter(name => cachedScreens.includes(name))).toEqual(['ChatPanel'])
+  })
+})
+
+describe('R104 判据 3 · 焦点与键盘可达（复用 ui 那两份，不造第三套）', () => {
+  const stub = label => ({ label, hits: 0, focus(options) { this.hits += 1; this.last = options } })
+  const items = [stub('总览'), stub('文档'), stub('数据')]
+  const container = selector => ({ seen: selector, querySelectorAll: () => items })
+
+  it('侧栏只接管方向键与 Home/End，Tab / Enter / Space 一概放行', () => {
+    expect(['ArrowUp', 'ArrowDown', 'Home', 'End'].every(isRoveKey)).toBe(true)
+    for (const key of ['Tab', 'Enter', ' ', 'a', 'PageDown', '']) {
+      expect(isRoveKey(key), `${key} 不该被侧栏抢走`).toBe(false)
+      expect(nextNavItem(items, items[0], key), `${key} 被拦下来了`).toBeNull()
+    }
+  })
+
+  it('走位下标用的是 list-nav.js 那一份算绪：首尾循环、跳过禁用项的语义与下拉一致', () => {
+    expect(nextNavItem(items, items[0], 'ArrowDown')).toBe(items[1])
+    expect(nextNavItem(items, items[1], 'ArrowUp')).toBe(items[0])
+    expect(nextNavItem(items, items[2], 'ArrowDown')).toBe(items[0])
+    expect(nextNavItem(items, items[0], 'ArrowUp')).toBe(items[2])
+    expect(nextNavItem(items, null, 'Home')).toBe(items[0])
+    expect(nextNavItem(items, null, 'End')).toBe(items[2])
+    expect(nextNavItem(items, {}, 'ArrowDown')).not.toBeNull()
+    expect(nextNavItem([], items[0], 'ArrowDown')).toBeNull()
+    expect(nextNavItem(undefined, items[0], 'ArrowDown')).toBeNull()
+  })
+
+  it('取可聚焦条目走 focus-trap.js 的选择器，不另写一份 :where 清单', () => {
+    const probe = container(FOCUSABLE_SELECTOR)
+    expect(navItems(probe)).toHaveLength(3)
+    expect(probe.seen).toBe(FOCUSABLE_SELECTOR)
+    expect(FOCUSABLE_SELECTOR).toContain('button:not([disabled])')
+    expect(navItems(null)).toEqual([])
+    expect(navItems({})).toEqual([])
+  })
+
+  it('切屏后焦点交给新屏主区，且带着 preventScroll', () => {
+    const main = stub('主区')
+    expect(focusScreenMain(main)).toBe(true)
+    expect(main.hits).toBe(1)
+    expect(main.last).toEqual({ preventScroll: true })
+    expect(focusScreenMain(null)).toBe(false)
+    expect(focusScreenMain({})).toBe(false)
+  })
+
+  it('App.vue 真的把这三件事接上了：主区可聚焦、切屏有 watch、侧栏有 keydown', () => {
+    expect(app).toMatch(/<main ref="workspaceEl" class="workspace" tabindex="-1"/)
+    expect(app).toMatch(/watch\(\(\) => route\.name,[\s\S]*?await nextTick\(\)[\s\S]*?focusScreenMain\(workspaceEl\.value\)/)
+    expect(app).toMatch(/<nav ref="navEl"[\s\S]*?@keydown="onNavKeydown"/)
+    expect(app).toMatch(/nextNavItem\(navItems\(navEl\.value\), document\.activeElement, event\.key\)/)
+    expect(app).toMatch(/event\.preventDefault\(\)/)
+    // 登录后地址没变、触发不了上面那个 watch，所以焦点由 enterWorkspace 自己收尾
+    expect(app).toMatch(/async function enterWorkspace\(\)[\s\S]*?focusScreenMain\(workspaceEl\.value\)/)
+  })
+})

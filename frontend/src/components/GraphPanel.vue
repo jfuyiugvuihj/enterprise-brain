@@ -1,0 +1,208 @@
+<script setup>
+import { onMounted, ref } from 'vue'
+import { api } from '../lib/api'
+import { errorDetail, isPermissionDenied } from '../lib/http'
+import { UiButton, UiEmptyState, UiErrorState } from './ui'
+
+// 表单不再预填示例关系：写死的「差旅费 / 属于 / 费用科目 / 差旅费报销制度.pdf」
+// 会和真数据混在同一屏里，老板分不出哪条是库里来的。
+function emptyForm() {
+  return { source_entity: '', relation: '', target: '', source: '' }
+}
+
+const form = ref(emptyForm())
+const relations = ref([])
+const loading = ref(false)
+const saving = ref(false)
+const error = ref('')
+const loadError = ref('')
+// 无权限与「服务坏了 / 空列表」是三种不同的脸（R1c）：判据只认稳定码 permission_denied。
+const loadDenied = ref(false)
+const saveDenied = ref(false)
+
+// 关系列表的唯一来源是 GET /api/v1/knowledge-graph/relations；后端按 Principal
+// 收窄部门与密级（app/api/v1/intelligence.py:133）。取不到就摆失败态，
+// 绝不回落到任何常量——失败态与空态必须是两件事。
+async function loadRelations() {
+  loading.value = true
+  loadError.value = ''
+  loadDenied.value = false
+  try {
+    const response = await api.get('/knowledge-graph/relations')
+    const list = response.data?.relations
+    if (!Array.isArray(list)) {
+      loadError.value = '关系列表返回的数据结构不对，未能加载。'
+      relations.value = []
+      return
+    }
+    relations.value = list
+  } catch (err) {
+    // 失败就是失败，绝不在这里回落到任何常量（V7-1 的不变量）。
+    loadDenied.value = isPermissionDenied(err)
+    loadError.value = loadDenied.value
+      ? '当前账号没有查看知识图谱的权限，请联系管理员开通。'
+      : errorDetail(err, '关系列表加载失败')
+    relations.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+async function saveRelation() {
+  saving.value = true
+  error.value = ''
+  saveDenied.value = false
+  try {
+    await api.post('/knowledge-graph/relations', form.value)
+    form.value = emptyForm()
+    await loadRelations()
+  } catch (err) {
+    saveDenied.value = isPermissionDenied(err)
+    error.value = saveDenied.value
+      ? '当前账号没有登记关系的权限，请联系管理员开通。'
+      : errorDetail(err, '关系保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+onMounted(loadRelations)
+</script>
+
+<template>
+  <div class="panel-shell" data-testid="graph-panel">
+    <header class="panel-head">
+      <div>
+        <h3>知识图谱</h3>
+        <p>把制度、指标、部门和责任关系串联起来。</p>
+      </div>
+    </header>
+
+    <div class="panel-grid">
+      <section class="panel-card">
+        <div class="section-head"><h4>新增关系</h4></div>
+        <div class="form-grid">
+          <label><span>起点名称</span><input v-model="form.source_entity" /></label>
+          <label><span>关系</span><input v-model="form.relation" /></label>
+          <label><span>关联名称</span><input v-model="form.target" /></label>
+          <label><span>来源文档</span><input v-model="form.source" /></label>
+        </div>
+        <div class="actions">
+          <UiButton class="primary-btn" variant="primary" :loading="saving" :label="saving ? '保存中' : '保存关系'" data-testid="save-relation" @click="saveRelation" />
+        </div>
+        <!-- 写路径的失败也只经 UiErrorState 出口：这个面板不再留第二套错误呈现。 -->
+        <UiErrorState
+          v-if="error"
+          :title="saveDenied ? '没有权限登记关系' : '这条关系没能保存'"
+          :description="error"
+          :retryable="!saveDenied"
+          retry-text="再试一次"
+          :busy="saving"
+          dense
+          @retry="saveRelation"
+        />
+      </section>
+
+      <section class="panel-card">
+        <div class="section-head">
+          <h4>关系列表</h4>
+          <UiButton class="ghost-btn" type="button" variant="ghost" :loading="loading" :label="loading ? '加载中' : '刷新'" data-testid="reload-relations" @click="loadRelations" />
+        </div>
+        <UiErrorState
+          v-if="loadError"
+          :title="loadDenied ? '没有权限查看关系列表' : '关系列表没加载出来'"
+          :description="loadError"
+          :retryable="!loadDenied"
+          retry-text="重新加载"
+          :busy="loading"
+          @retry="loadRelations"
+        />
+        <UiEmptyState
+          v-else-if="!relations.length"
+          title="知识库里还没有已登记的关系"
+          description="这一格列的是已登记的关系；要添一条，用上面「新增关系」。"
+        />
+        <div v-else class="relation-list">
+          <article v-for="item in relations" :key="item.relation_id" class="relation-item">
+            <div class="relation-main">
+              <strong>{{ item.source_entity }}</strong>
+              <span>{{ item.relation }}</span>
+              <strong>{{ item.target }}</strong>
+            </div>
+            <div class="relation-meta">
+              <span>{{ item.source }}</span>
+              <span :class="['state', item.status]">{{ item.status }}</span>
+            </div>
+          </article>
+        </div>
+      </section>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.panel-grid {
+  display: grid;
+  grid-template-columns: .9fr 1.1fr;
+  gap: 16px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.relation-list {
+  display: grid;
+  gap: 10px;
+}
+
+.relation-item {
+  padding: 13px;
+}
+
+.relation-main,
+.relation-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.relation-main {
+  color: var(--cyan);
+  font-size: 12px;
+}
+
+.relation-main span {
+  color: var(--muted);
+}
+
+.relation-meta {
+  justify-content: space-between;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+@media (max-width: 760px) {
+  .panel-grid,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

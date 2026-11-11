@@ -1,0 +1,118 @@
+/* UiToast —— 右下角堆叠，最多 4 条（toasts.js 里的 MAX_VISIBLE） */
+
+.ui-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3, 12px);
+  width: 100%;
+  max-width: var(--toast-w, 380px);
+  padding: var(--s-3, 12px) var(--s-4, 16px);
+  border: 1px solid var(--border-2);
+  border-left: 3px solid var(--text-3);
+  border-radius: var(--r-md, 12px);
+  background: var(--surface-3);
+  box-shadow: var(--shadow-2);
+  color: var(--text-1);
+  font-family: var(--font-body);
+  font-size: var(--t-md, 14px);
+  line-height: 1.55;
+}
+
+.ui-toast--info {
+  border-left-color: var(--accent);
+}
+
+.ui-toast--success {
+  border-left-color: var(--success);
+}
+
+.ui-toast--warning {
+  border-left-color: var(--warning);
+}
+
+.ui-toast--danger {
+  border-left-color: var(--danger);
+}
+
+.ui-toast__mark {
+  display: inline-flex;
+  flex: none;
+  margin-top: var(--s-1, 4px);
+  color: var(--text-2);
+}
+
+.ui-toast--info .ui-toast__mark {
+  color: var(--accent);
+}
+
+.ui-toast--success .ui-toast__mark {
+  color: var(--success);
+}
+
+.ui-toast--warning .ui-toast__mark {
+  color: var(--warning);
+}
+
+.ui-toast--danger .ui-toast__mark {
+  color: var(--danger);
+}
+
+.ui-toast__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--s-1, 4px);
+}
+
+/* 可报告小字保留在 toast 上，但不进正文朗读 */
+.ui-toast__code {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs, 12px);
+}
+
+.ui-toast__actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--s-2, 8px);
+}
+
+.ui-toast__action {
+  padding: 0 var(--s-2, 8px);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm, 8px);
+  background: none;
+  color: var(--text-1);
+  font-size: var(--t-sm, 13px);
+  min-height: var(--control-h-sm, 32px);
+  cursor: pointer;
+}
+
+.ui-toast__action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.ui-toast__action:focus-visible,
+.ui-toast__dismiss:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ui-toast__dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-sm, 32px);
+  height: var(--control-h-sm, 32px);
+  border: 0;
+  border-radius: var(--r-sm, 8px);
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.ui-toast__dismiss:hover {
+  color: var(--text-1);
+}

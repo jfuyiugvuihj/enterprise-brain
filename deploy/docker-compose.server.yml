@@ -1,0 +1,50 @@
+# Production overlay for a LAN-facing server. The repository root owns the service
+# topology; this file only hardens what a server needs on top of it.
+#
+#   docker compose --env-file deploy/.env.server -f docker-compose.yml \
+#     -f deploy/docker-compose.server.yml up -d --build
+#
+# All secrets and tunables come from deploy/.env.server, the same single source used by
+# the base stack. Literal $ characters there must be written as $$.
+
+x-log-rotation: &log-rotation
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  postgres:
+    <<: *log-rotation
+    restart: always
+    # Every API replica opens its own pool, so the server cap must cover them all.
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-200}"]
+
+  redis:
+    <<: *log-rotation
+    restart: always
+
+  ollama:
+    <<: *log-rotation
+    restart: always
+
+  backend:
+    <<: *log-rotation
+    restart: always
+    environment:
+      MODEL_MAX_CONCURRENCY: ${MODEL_MAX_CONCURRENCY:-1}
+
+  worker:
+    <<: *log-rotation
+    restart: always
+    environment:
+      MODEL_MAX_CONCURRENCY: ${MODEL_MAX_CONCURRENCY:-1}
+
+  scheduler:
+    <<: *log-rotation
+    restart: always
+
+  frontend:
+    <<: *log-rotation
+    restart: always
